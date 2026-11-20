@@ -4,64 +4,24 @@ Real opencode agent, real fleet-acp, throwaway git repo, worktree under ~/.workt
 Local branch only, nothing is pushed. Skips when opencode or the fleet-acp checkout is missing.
 Takes a few minutes (slow task plus a 3s lease).
 """
-import json
 import os
 import shutil
 import signal
-import sqlite3
 import subprocess
 import sys
-import threading
-import time
 import uuid
 from pathlib import Path
 
 import pytest
 
 from fleet import cli
+from pilot_helpers import Sampler, git, row, wait_for
 
 FLEET_ACP = Path(os.environ.get("FLEET_ACP_DIR", Path(__file__).resolve().parents[2] / "fleet-acp"))
 BIN = FLEET_ACP / "bin" / "fleet-acp.js"
 pytestmark = pytest.mark.skipif(
     shutil.which("opencode") is None or shutil.which("node") is None or not BIN.exists(),
     reason="needs opencode, node and a fleet-acp checkout")
-
-
-def git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
-
-
-def row(jid):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
-    r = c.execute("SELECT status, attempts, payload FROM jobs WHERE id=?", (jid,)).fetchone()
-    c.close()
-    return r[0], r[1], json.loads(r[2])
-
-
-def wait_for(pred, timeout, step=0.5):
-    end = time.time() + timeout
-    while time.time() < end:
-        v = pred()
-        if v:
-            return v
-        time.sleep(step)
-    return None
-
-
-class Sampler(threading.Thread):
-    """Poll ps for fleet-acp processes working in the worktree; record every sample."""
-
-    def __init__(self, marker):
-        super().__init__(daemon=True)
-        self.marker, self.samples, self.stop = marker, [], threading.Event()
-
-    def run(self):
-        while not self.stop.is_set():
-            out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
-            pids = {int(l.split(None, 1)[0]) for l in out.splitlines()
-                    if "fleet-acp.js run" in l and self.marker in l}
-            self.samples.append((time.time(), pids))
-            time.sleep(0.2)
 
 
 def test_acp_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
