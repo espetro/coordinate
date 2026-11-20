@@ -8,6 +8,7 @@ State lives in `~/.fleet/queue.db` (override with `FLEET_DB`), WAL mode, `busy_t
 
 ```sh
 uv run fleet enqueue --cwd ~/code/repo -- make test   # job runs payload.cmd in payload.cwd, exit 0 = done
+uv run fleet enqueue --shell -- 'sh -c "echo a  b" | wc -c'   # ONE string, stored and run verbatim via sh -c
 uv run fleet enqueue --acp opencode --cwd ~/code/repo --prompt "fix the bug"   # kind acp, see below
 uv run fleet daemon                                    # dispatcher: claim loop, heartbeat, reaper
 uv run fleet status [id]
@@ -20,6 +21,7 @@ uv run fleet dead retry [id]                           # requeue dead and failed
 
 ## Semantics
 
+- `--shell` takes exactly one command string (stored verbatim, run by `/bin/sh -c`). Multiple tokens are refused instead of being flattened, which used to lose inner quoting.
 - Claim is one `BEGIN IMMEDIATE` transaction: machine cap plus per-repo cap (repo = `payload.repo` or `payload.cwd`), FIFO by priority desc, run_at, id. A blocked job stays `queued`.
 - Lease 30s, heartbeat every lease/3. The reaper requeues expired leases if `attempts < max_attempts`, else `dead`.
 - Nonzero exit is `failed` (terminal, no retry). Only lost leases consume retry attempts.

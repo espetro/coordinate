@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import socket
@@ -114,3 +115,20 @@ def test_waiting_release_and_reaper_dead(env):
     assert q.stats(c) == {"dead": 1}
     assert q.retry_dead(c) == [j]
     assert q.stats(c) == {"queued": 1}
+
+
+def test_shell_string_is_stored_and_run_verbatim(env):
+    out = env / "out.txt"
+    cmd = f"sh -c 'printf \"%s|%s\" \"a  b\" c > {out}'"
+    assert cli.main(["enqueue", "--cwd", str(env), "--shell", "--", cmd]) == 0
+    c = q.connect()
+    assert json.loads(c.execute("SELECT payload FROM jobs WHERE id=1").fetchone()[0])["cmd"] == cmd
+    d = daemon()
+    try:
+        assert wait_for(lambda: job_row(1)[0] == "done", 30)
+    finally:
+        d.kill()
+        d.wait()
+    assert out.read_text() == "a  b|c"
+    with pytest.raises(SystemExit):  # unquoted multi-token argv is ambiguous, refuse instead of flattening
+        cli.main(["enqueue", "--shell", "--", "sh", "-c", "echo hi"])
