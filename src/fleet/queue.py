@@ -4,6 +4,7 @@ Every state transition is one SQL statement or one BEGIN IMMEDIATE transaction.
 """
 import json
 import os
+import signal
 import sqlite3
 import time
 
@@ -38,7 +39,9 @@ CREATE TABLE IF NOT EXISTS jobs(
   waiting_on TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
-  created_at REAL NOT NULL
+  created_at REAL NOT NULL,
+  pgid INTEGER,
+  pidfile TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, priority DESC, run_at, id);
 CREATE TABLE IF NOT EXISTS concurrency_slots(
@@ -59,6 +62,10 @@ def connect() -> sqlite3.Connection:
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA synchronous=NORMAL")
     c.executescript(SCHEMA)
+    have = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
+    for col, typ in (("pgid", "INTEGER"), ("pidfile", "TEXT")):  # migrate pre-orphan-tracking DBs
+        if col not in have:
+            c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
     return c
 
 
@@ -89,9 +96,9 @@ def claim(c, owner: str):
             c.execute("COMMIT")
             return None
         rows = c.execute(
-            "SELECT id, payload FROM jobs WHERE status='queued' AND run_at<=? "
+            "SELECT id, payload, kind FROM jobs WHERE status='queued' AND run_at<=? "
             "ORDER BY priority DESC, run_at, id LIMIT 100", (now,)).fetchall()
-        for jid, raw in rows:
+        for jid, raw, kind in rows:
             payload = json.loads(raw)
             keys = slot_keys(payload)
             if any(k.startswith("repo:") and used.get(k, 0) >= repo_cap() for k in keys):
@@ -103,12 +110,49 @@ def claim(c, owner: str):
             c.executemany("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)",
                           [(k, exp, jid) for k in keys])
             c.execute("COMMIT")
-            return jid, payload
+            return jid, kind, payload
         c.execute("COMMIT")
         return None
     except BaseException:
         c.execute("ROLLBACK")
         raise
+
+
+def set_proc(c, jid: int, owner: str, pgid: int, pidfile: str | None) -> None:
+    """Record the child's process group (and the agent pid file, for acp jobs) so a later reaper can kill it."""
+    c.execute("UPDATE jobs SET pgid=?, pidfile=? WHERE id=? AND status='running' AND lease_owner=?",
+              (pgid, pidfile, jid, owner))
+
+
+def set_session(c, jid: int, owner: str, session: str) -> None:
+    """Persist the ACP session id into the payload so the next attempt resumes it."""
+    c.execute("UPDATE jobs SET payload=json_set(payload,'$.session',?) WHERE id=? AND lease_owner=?",
+              (session, jid, owner))
+
+
+def kill_orphans(pgid: int | None, pidfile: str | None) -> None:
+    """SIGKILL a job's surviving process groups: the child group, plus the agent group named in its pid file.
+
+    fleet-acp starts its agent detached (own group), so killing the child group alone would miss it.
+    Caveat: a recorded pid can be reused after a long outage; we only kill groups of jobs whose lease expired.
+    """
+    pids = [pgid]
+    if pidfile:
+        try:
+            with open(pidfile) as f:
+                pids.append(int(f.read().strip()))
+        except (OSError, ValueError):
+            pass
+        try:
+            os.unlink(pidfile)
+        except OSError:
+            pass
+    for pid in pids:
+        if pid and pid > 1:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 def heartbeat(c, jid: int, owner: str) -> bool:
@@ -125,7 +169,7 @@ def heartbeat(c, jid: int, owner: str) -> bool:
 
 def finish(c, jid: int, owner: str, status: str) -> None:
     c.execute("BEGIN IMMEDIATE")
-    c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL "
+    c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL "
               "WHERE id=? AND status='running' AND lease_owner=?", (status, jid, owner))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "
               "(SELECT 1 FROM jobs WHERE id=? AND status<>'running')", (jid, jid))
@@ -135,9 +179,13 @@ def finish(c, jid: int, owner: str, status: str) -> None:
 def reap(c) -> list[int]:
     """Expired lease: requeue if attempts < max_attempts else dead. Returns affected ids."""
     c.execute("BEGIN IMMEDIATE")
+    # Kill survivors before the requeue commits, so a retry never runs beside the old attempt.
+    for _, pgid, pidfile in c.execute("SELECT id, pgid, pidfile FROM jobs "
+                                      "WHERE status='running' AND lease_expires_at<?", (time.time(),)).fetchall():
+        kill_orphans(pgid, pidfile)
     rows = c.execute(
         "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, "
-        "lease_owner=NULL, lease_expires_at=NULL "
+        "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL "
         "WHERE status='running' AND lease_expires_at<? RETURNING id", (time.time(),)).fetchall()
     c.execute("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')")
     c.execute("COMMIT")

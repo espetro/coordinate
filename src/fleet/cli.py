@@ -1,6 +1,7 @@
 """fleet CLI: enqueue, status, wait-on, release, cancel, stats, dead retry, daemon."""
 import argparse
 import json
+import os
 import sys
 
 from fleet import queue as q
@@ -15,6 +16,9 @@ def build() -> argparse.ArgumentParser:
     e.add_argument("--priority", type=int, default=0)
     e.add_argument("--max-attempts", type=int, default=3)
     e.add_argument("--wait-on", default=None, help="park immediately on this event id")
+    e.add_argument("--acp", metavar="AGENT", default=None, help="enqueue an acp job for this agent (needs --cwd, --prompt)")
+    e.add_argument("--prompt", default=None, help="acp prompt text")
+    e.add_argument("--registry", default=None, help="acp agent registry file")
     e.add_argument("--shell", action="store_true", help="join cmd into one shell string")
     e.add_argument("cmd", nargs=argparse.REMAINDER)
     st = s.add_parser("status", help="list jobs, or one job as JSON")
@@ -45,18 +49,26 @@ def main(argv=None) -> int:
         return 0
     c = q.connect()
     if a.verb == "enqueue":
-        cmd = [t for t in a.cmd if t != "--"] if a.cmd[:1] == ["--"] else a.cmd
-        if not cmd:
-            sys.exit("enqueue: no command given")
-        payload = {"cmd": " ".join(cmd) if a.shell else cmd, "cwd": a.cwd}
+        kind = "acp" if a.acp else "cmd"
+        if kind == "acp":
+            if not (a.cwd and a.prompt):
+                sys.exit("enqueue --acp: --cwd and --prompt are required")
+            payload = {"agent": a.acp, "cwd": os.path.abspath(a.cwd), "prompt": a.prompt}
+            if a.registry:
+                payload["registry"] = os.path.abspath(a.registry)
+        else:
+            cmd = [t for t in a.cmd if t != "--"] if a.cmd[:1] == ["--"] else a.cmd
+            if not cmd:
+                sys.exit("enqueue: no command given")
+            payload = {"cmd": " ".join(cmd) if a.shell else cmd, "cwd": a.cwd}
         if a.repo:
             payload["repo"] = a.repo
-        jid = q.enqueue(c, payload, priority=a.priority, max_attempts=a.max_attempts)
+        jid = q.enqueue(c, payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts)
         if a.wait_on:
             q.wait_on(c, jid, a.wait_on)
         print(jid)
     elif a.verb == "status":
-        cols = "id,kind,status,priority,attempts,max_attempts,waiting_on,lease_owner,lease_expires_at,payload"
+        cols = "id,kind,status,priority,attempts,max_attempts,waiting_on,lease_owner,lease_expires_at,pgid,payload"
         if a.id is not None:
             cur = c.execute(f"SELECT {cols} FROM jobs WHERE id=?", (a.id,))
             row = cur.fetchone()
