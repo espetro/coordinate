@@ -1,7 +1,7 @@
 """Pilot on the `claude` agent: acp job, kill -9 daemon and agent group mid-task, restart, same session resumes.
 
 Real Claude via fleet-acp's registry (isolated CLAUDE_CONFIG_DIR, bypassPermissions), throwaway git repo
-with a local branch, nothing pushed. Skips without Claude credentials (env token or macOS Keychain entry).
+with a local branch, nothing pushed. Skips without Claude credentials (env token, macOS Keychain entry, or ~/.claude/.credentials.json on Linux).
 The isolated config dir lives under tmp (FLEET_ACP_HOME) and is deleted afterwards. Model defaults to haiku
 to keep the cost down; override with FLEET_PILOT_CLAUDE_MODEL.
 """
@@ -26,7 +26,7 @@ def have_credentials():
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return True
     if sys.platform != "darwin":
-        return False
+        return (Path.home() / ".claude" / ".credentials.json").is_file()
     # metadata lookup only: no -w, so the secret is never read here
     return subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials"],
                           capture_output=True).returncode == 0
