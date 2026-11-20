@@ -8,6 +8,7 @@ State lives in `~/.fleet/queue.db` (override with `FLEET_DB`), WAL mode, `busy_t
 
 ```sh
 uv run fleet enqueue --cwd ~/code/repo -- make test   # job runs payload.cmd in payload.cwd, exit 0 = done
+uv run fleet enqueue --acp opencode --cwd ~/code/repo --prompt "fix the bug"   # kind acp, see below
 uv run fleet daemon                                    # dispatcher: claim loop, heartbeat, reaper
 uv run fleet status [id]
 uv run fleet wait-on <id> <event>                      # park a job, frees its slot
@@ -25,10 +26,25 @@ uv run fleet dead retry [id]                           # requeue dead and failed
 - Config env: `FLEET_MACHINE` (laptop:3, vps:6 default caps), `FLEET_CAP`, `FLEET_REPO_CAP` (default 1), `FLEET_LEASE_S`.
 - Idle polling backs off from 50ms to 2s and resets on activity.
 
+## ACP jobs
+
+`enqueue --acp <agent> --cwd <dir> --prompt <text>` creates a job of kind `acp` (payload `agent`, `cwd`, `prompt`, optional `registry`). The daemon runs `fleet-acp run <agent> --cwd --prompt --pid-file ...`; the command is `fleet-acp` or whatever `FLEET_ACP_CMD` says (for example `node /path/to/fleet-acp/bin/fleet-acp.js`).
+
+- The sessionId on stdout line 1 is written to `payload.session` as soon as it appears. A retry after a lost lease runs with `--session <id>` automatically, and must use the same `cwd`.
+- Exit 0 is `done`, nonzero is `failed` (terminal), same as `cmd` jobs.
+
+## Orphans
+
+The daemon records each child process group (`jobs.pgid`) and, for acp jobs, the detached agent pid file (`jobs.pidfile`, under `pids/` next to the DB). The reaper SIGKILLs both groups before it requeues an expired lease, so after a daemon `kill -9` the retry never runs beside the old attempt. A new daemon's reaper does this on its first lease expiry.
+
+Limits: a crash between claim and the pgid write leaves that one child untracked. Recorded pids are trusted, so pid reuse after a long outage could hit an unrelated group. Cancel and wait-on of a running job still rely on a live daemon killing its child at the next heartbeat.
+
 ## Tests
 
 ```sh
 flock /tmp/tsc.lock uv run --with pytest pytest -v
 ```
+
+`tests/test_pilot_acp.py` is the end-to-end pilot (real opencode and a sibling `fleet-acp` checkout, about a minute, skipped when missing; override the checkout with `FLEET_ACP_DIR`).
 
 `spike-ref/` holds the validated Spike B shim and its findings, kept as reference.
