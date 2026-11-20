@@ -3,9 +3,13 @@
 Real Claude via fleet-acp's registry (isolated CLAUDE_CONFIG_DIR, bypassPermissions), throwaway git repo
 with a local branch, nothing pushed. Skips without Claude credentials (env token, macOS Keychain entry, or ~/.claude/.credentials.json on Linux).
 The isolated config dir lives under tmp (FLEET_ACP_HOME) and is deleted afterwards. Model defaults to haiku
-to keep the cost down; override with FLEET_PILOT_CLAUDE_MODEL.
+to keep the cost down; override with FLEET_PILOT_CLAUDE_MODEL. The model is set through a registry copy
+(`model` field, applied by fleet-acp via session/set_model; ANTHROPIC_MODEL is ignored by the adapter) and
+asserted from the session transcript.
 """
+import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -52,7 +56,13 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
 
     acp_home = tmp_path / "fleet-acp-home"
     monkeypatch.setenv("FLEET_ACP_HOME", str(acp_home))
-    monkeypatch.setenv("ANTHROPIC_MODEL", os.environ.get("FLEET_PILOT_CLAUDE_MODEL", "claude-haiku-5-5"))
+    model = os.environ.get("FLEET_PILOT_CLAUDE_MODEL", "haiku")
+    registry = json.loads((FLEET_ACP / "agents.json").read_text())
+    registry["claude"]["model"] = model
+    registry["claude"]["args"] = [a.replace("${root}", str(FLEET_ACP)) for a in registry["claude"]["args"]]
+    registry["claude"]["command"] = registry["claude"]["command"].replace("${root}", str(FLEET_ACP))
+    reg_file = tmp_path / "agents.json"
+    reg_file.write_text(json.dumps(registry))
     monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
     monkeypatch.setenv("FLEET_LEASE_S", "3")
     monkeypatch.setenv("FLEET_CAP", "3")
@@ -64,7 +74,8 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
     sampler = Sampler(str(repo))
     d1 = d2 = None
     try:
-        assert cli.main(["enqueue", "--acp", "claude", "--cwd", str(repo), "--prompt", prompt]) == 0
+        assert cli.main(["enqueue", "--acp", "claude", "--cwd", str(repo), "--prompt", prompt,
+                         "--registry", str(reg_file)]) == 0
         env = os.environ.copy()
         d1 = subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -90,6 +101,10 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
         status, attempts, payload = row(1)
         assert (status, attempts) == ("done", 2)
         assert payload["session"] == session, "resume keeps the same session id"
+        transcripts = list(acp_home.glob(f"claude-config/projects/*/{session}.jsonl"))
+        models = {m for t in transcripts for m in re.findall(r'"model":"([^"]+)"', t.read_text())}
+        assert models, "transcript should record the model that answered"
+        assert all(model in m for m in models), f"requested {model}, transcript shows {models}"
     finally:
         sampler.stop.set()
         for d in (d1, d2):
