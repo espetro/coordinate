@@ -26,19 +26,91 @@ def repo_cap() -> int:
     return int(os.environ.get("FLEET_REPO_CAP", 1))
 
 
-def _slots_config() -> dict[str, int]:
-    """Per-key tool-level slot limits from [slots] in ~/.fleet/config.toml (default 1 each)."""
-    path = os.environ.get("FLEET_CONFIG") or os.path.expanduser("~/.fleet/config.toml")
+CONFIG_PATH = os.environ.get("FLEET_CONFIG") or os.path.expanduser("~/.fleet/config.toml")
+
+
+def _config() -> dict:
+    path = os.environ.get("FLEET_CONFIG") or CONFIG_PATH
     try:
         with open(path, "rb") as f:
-            cfg = tomllib.load(f) if tomllib else {}
+            return tomllib.load(f) if tomllib else {}
     except (OSError, ValueError):
-        cfg = {}
-    return {str(k): int(v) for k, v in (cfg.get("slots") or {}).items()}
+        return {}
+
+
+def _slots_config() -> dict[str, int]:
+    """Per-key tool-level slot limits from [slots] in ~/.fleet/config.toml (default 1 each)."""
+    return {str(k): int(v) for k, v in (_config().get("slots") or {}).items()}
 
 
 def slot_limit(key: str) -> int:
-    return _slots_config().get(key, 1)
+    cfg = _slots_config()
+    if key in cfg:
+        return int(cfg[key])
+    # tool keys are tool:<class>:<project>; allow a per-class wildcard 'tool:<class>:*'
+    if key.startswith("tool:"):
+        parts = key.split(":", 2)
+        if len(parts) == 3:
+            wl = cfg.get(f"{parts[0]}:{parts[1]}:*")
+            if wl is not None:
+                return int(wl)
+    return 1
+
+
+# Heavy tool classes: the spawn shim matches a job's resolved binary basename (and subpath
+# components) against these lists; unmatched binaries are trivial by definition (D4).
+# Each class maps to its slot cost (D3) and the binary names/subpaths that match it.
+DEFAULT_TOOL_CLASSES: dict[str, dict] = {
+    "vitest": {"cost": 2, "match": ["vitest", "jest", "playwright"]},
+    "tsc-build": {"cost": 2, "match": ["tsc", "vite"]},
+    "cargo": {"cost": 2, "match": ["cargo"]},
+    "docker": {"cost": 2, "match": ["docker", "docker-compose"]},
+    "pkg-install": {"cost": 1, "match": ["npm", "pnpm", "yarn", "uv"]},
+}
+
+
+def tool_classes() -> dict[str, dict]:
+    """[tools] from config (class -> {cost, match}) overlaid on the shipped defaults."""
+    cfg = _config().get("tools") or {}
+    classes = {k: {"cost": int(v.get("cost", 1)), "match": list(v.get("match", []))}
+               for k, v in cfg.items()}
+    for k, v in DEFAULT_TOOL_CLASSES.items():
+        classes.setdefault(k, v)
+    return classes
+
+
+def match_tool_class(argv0: str) -> tuple[str, int] | None:
+    """Resolve a command's binary to a heavy tool class: (class, cost) or None if trivial.
+
+    Matches the resolved binary basename plus any path component (so `.venv/bin/vitest`,
+    `node_modules/.bin/tsc` and `npx vitest`-style argv all hit the same class — D2).
+    """
+    parts = [p for p in os.path.normpath(argv0).split(os.sep) if p]
+    if parts and os.path.basename(argv0) == parts[-1] and " " not in parts[-1] and "." not in parts[-1][1:]:
+        pass  # plain name like "npx" still participates via components below
+    names = {os.path.basename(argv0)} | set(parts)
+    for cls, spec in tool_classes().items():
+        if names & set(spec["match"]):
+            return cls, spec["cost"]
+    return None
+
+
+def project_key(cwd: str | None) -> str:
+    """Nearest git root above cwd (D2); falls back to cwd itself."""
+    d = os.path.abspath(cwd or os.getcwd())
+    while True:
+        if os.path.isdir(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return d
+        d = parent
+
+
+def audit_spawn(c, jid: int | None, argv0: str, cls: str, proj: str) -> None:
+    """D9 audit log: every heavy match and every unmatched spawn of a heavy-class binary."""
+    c.execute("INSERT INTO spawn_audit(ts,job_id,argv0,tool_class,project) VALUES(?,?,?,?,?)",
+              (time.time(), jid, argv0, cls, proj))
 
 
 def db_path() -> str:
@@ -67,10 +139,18 @@ CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, priority DESC, run_at,
 CREATE TABLE IF NOT EXISTS concurrency_slots(
   key TEXT NOT NULL,
   lease_expires_at REAL NOT NULL,
-  job_id INTEGER NOT NULL REFERENCES jobs(id)
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  cost INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_slots_key ON concurrency_slots(key);
 CREATE INDEX IF NOT EXISTS idx_slots_job ON concurrency_slots(job_id);
+CREATE TABLE IF NOT EXISTS spawn_audit(
+  ts REAL NOT NULL,
+  job_id INTEGER,
+  argv0 TEXT NOT NULL,
+  tool_class TEXT NOT NULL,
+  project TEXT NOT NULL
+);
 """
 
 
@@ -106,6 +186,12 @@ def enqueue(c, payload: dict, kind="cmd", priority=0, max_attempts=3, run_at=Non
     return cur.lastrowid
 
 
+def q_used_cost(c, key: str) -> int:
+    """Sum of live lease costs for a key (expired rows pruned first by the caller)."""
+    return c.execute("SELECT COALESCE(SUM(cost),0) FROM concurrency_slots WHERE key=?",
+                     (key,)).fetchone()[0]
+
+
 def claim(c, owner: str):
     """Claim the best runnable queued job whose partitions all have a free slot."""
     now = time.time()
@@ -124,7 +210,9 @@ def claim(c, owner: str):
             keys = slot_keys(payload)
             if any(k.startswith("repo:") and used.get(k, 0) >= repo_cap() for k in keys):
                 continue
-            if any(not k.startswith(("machine:", "repo:")) and used.get(k, 0) >= slot_limit(k) for k in keys):
+            # static tool keys honor their [slots] limits at claim time (weighted, D3)
+            if any(not k.startswith(("machine:", "repo:"))
+                   and q_used_cost(c, k) + 1 > slot_limit(k) for k in keys):
                 continue
             exp = now + LEASE_S
             c.execute(
@@ -136,6 +224,34 @@ def claim(c, owner: str):
             return jid, kind, payload
         c.execute("COMMIT")
         return None
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
+
+
+def tool_slot_key(cls: str, proj: str) -> str:
+    return f"tool:{cls}:{proj}"  # D2: tool-class x project-dir
+
+
+def acquire_tool_lease(c, jid: int, key: str, cost: int) -> bool:
+    """Weighted tool lease (D3) inside one transaction; False = at cap.
+
+    Called at spawn time, after the job already holds its machine/repo leases in
+    concurrency_slots — ordered acquisition (D5) holds by construction.
+    """
+    limit = slot_limit(key)
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        c.execute("DELETE FROM concurrency_slots WHERE lease_expires_at < ?", (time.time(),))
+        used = sum(r[0] for r in c.execute(
+            "SELECT COALESCE(SUM(cost), 0) FROM concurrency_slots WHERE key=?", (key,)))
+        if used + cost > limit:
+            c.execute("COMMIT")
+            return False
+        c.execute("INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)",
+                  (key, time.time() + LEASE_S, jid, cost))
+        c.execute("COMMIT")
+        return True
     except BaseException:
         c.execute("ROLLBACK")
         raise
@@ -190,13 +306,21 @@ def heartbeat(c, jid: int, owner: str) -> bool:
     return bool(cur.rowcount)
 
 
-def finish(c, jid: int, owner: str, status: str) -> None:
+def finish(c, jid: int, owner: str, status: str) -> str | None:
+    """Mark a running job terminal and drop its leases. Returns the tool-slot event key
+    whose release should wake parked jobs (the first freed tool: key), or None."""
     c.execute("BEGIN IMMEDIATE")
     c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL "
               "WHERE id=? AND status='running' AND lease_owner=?", (status, jid, owner))
+    event = None
+    for (key,) in c.execute(
+            "SELECT key FROM concurrency_slots WHERE job_id=? AND key LIKE 'tool:%'", (jid,)).fetchall():
+        if event is None:
+            event = key
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "
               "(SELECT 1 FROM jobs WHERE id=? AND status<>'running')", (jid, jid))
     c.execute("COMMIT")
+    return event
 
 
 def reap(c) -> list[int]:
@@ -213,6 +337,11 @@ def reap(c) -> list[int]:
     c.execute("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')")
     c.execute("COMMIT")
     return [r[0] for r in rows]
+
+
+def release_tool_lease(c, jid: int) -> None:
+    """Drop a job's tool leases (spawn failure path; terminal transitions use finish/reap/wait_on)."""
+    c.execute("DELETE FROM concurrency_slots WHERE job_id=?", (jid,))
 
 
 def wait_on(c, jid: int, event: str) -> bool:
@@ -236,7 +365,7 @@ def cancel(c, jid: int) -> bool:
     c.execute("BEGIN IMMEDIATE")
     cur = c.execute("UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL "
                     "WHERE id=? AND status IN ('queued','running','waiting')", (jid,))
-    c.execute("DELETE FROM concurrency_slots WHERE job_id=?", (jid,))
+    c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND cost>0", (jid,))
     c.execute("COMMIT")
     return bool(cur.rowcount)
 
