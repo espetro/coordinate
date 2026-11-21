@@ -42,6 +42,8 @@ def spawn_acp(c, jid: int, owner: str, payload: dict) -> tuple[subprocess.Popen,
         "run", payload["agent"], "--cwd", payload["cwd"], "--prompt", payload["prompt"], "--pid-file", pidfile]
     if payload.get("registry"):
         cmd += ["--registry", payload["registry"]]
+    if payload.get("model"):
+        cmd += ["--model", payload["model"]]
     if payload.get("session"):
         cmd += ["--session", payload["session"]]
     proc = subprocess.Popen(cmd, cwd=payload["cwd"], start_new_session=True, stdout=subprocess.PIPE, text=True)

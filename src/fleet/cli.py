@@ -19,6 +19,9 @@ def build() -> argparse.ArgumentParser:
     e.add_argument("--acp", metavar="AGENT", default=None, help="enqueue an acp job for this agent (needs --cwd, --prompt)")
     e.add_argument("--prompt", default=None, help="acp prompt text")
     e.add_argument("--registry", default=None, help="acp agent registry file")
+    e.add_argument("--model", default=None, help="acp model id, applied via session/set_model (fatal if the agent rejects it)")
+    e.add_argument("--slot", action="append", default=None, metavar="KEY",
+                   help="extra tool-level slot key (repeatable), e.g. --slot tool:vitest")
     e.add_argument("--shell", action="store_true", help="cmd is ONE string, stored and run verbatim via sh -c")
     e.add_argument("cmd", nargs=argparse.REMAINDER)
     st = s.add_parser("status", help="list jobs, or one job as JSON")
@@ -56,6 +59,8 @@ def main(argv=None) -> int:
             payload = {"agent": a.acp, "cwd": os.path.abspath(a.cwd), "prompt": a.prompt}
             if a.registry:
                 payload["registry"] = os.path.abspath(a.registry)
+            if a.model:
+                payload["model"] = a.model
         else:
             cmd = [t for t in a.cmd if t != "--"] if a.cmd[:1] == ["--"] else a.cmd
             if not cmd:
@@ -65,6 +70,8 @@ def main(argv=None) -> int:
             payload = {"cmd": cmd[0] if a.shell else cmd, "cwd": a.cwd}
         if a.repo:
             payload["repo"] = a.repo
+        if a.slot:
+            payload["slots"] = a.slot
         jid = q.enqueue(c, payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts)
         if a.wait_on:
             q.wait_on(c, jid, a.wait_on)

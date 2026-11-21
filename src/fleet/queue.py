@@ -8,6 +8,11 @@ import signal
 import sqlite3
 import time
 
+try:  # tomllib is stdlib from 3.11
+    import tomllib
+except ImportError:  # pragma: no cover
+    tomllib = None
+
 LEASE_S = float(os.environ.get("FLEET_LEASE_S", "30"))
 MACHINE = os.environ.get("FLEET_MACHINE", "laptop")
 MACHINE_CAPS = {"laptop": 3, "vps": 6}
@@ -19,6 +24,21 @@ def machine_cap() -> int:
 
 def repo_cap() -> int:
     return int(os.environ.get("FLEET_REPO_CAP", 1))
+
+
+def _slots_config() -> dict[str, int]:
+    """Per-key tool-level slot limits from [slots] in ~/.fleet/config.toml (default 1 each)."""
+    path = os.environ.get("FLEET_CONFIG") or os.path.expanduser("~/.fleet/config.toml")
+    try:
+        with open(path, "rb") as f:
+            cfg = tomllib.load(f) if tomllib else {}
+    except (OSError, ValueError):
+        cfg = {}
+    return {str(k): int(v) for k, v in (cfg.get("slots") or {}).items()}
+
+
+def slot_limit(key: str) -> int:
+    return _slots_config().get(key, 1)
 
 
 def db_path() -> str:
@@ -74,6 +94,7 @@ def slot_keys(payload: dict) -> list[str]:
     repo = payload.get("repo") or payload.get("cwd")
     if repo:
         keys.append(f"repo:{os.path.abspath(repo)}")
+    keys.extend(payload.get("slots") or [])  # tool-level keys, e.g. tool:vitest
     return keys
 
 
@@ -102,6 +123,8 @@ def claim(c, owner: str):
             payload = json.loads(raw)
             keys = slot_keys(payload)
             if any(k.startswith("repo:") and used.get(k, 0) >= repo_cap() for k in keys):
+                continue
+            if any(not k.startswith(("machine:", "repo:")) and used.get(k, 0) >= slot_limit(k) for k in keys):
                 continue
             exp = now + LEASE_S
             c.execute(
