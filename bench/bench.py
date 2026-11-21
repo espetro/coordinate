@@ -206,11 +206,11 @@ def scenario_priority(tree, backend, tmp):
     log = tmp / "spans"
     f.start()
     time.sleep(3)
-    f.enqueue(span_cmd(log, "blocker", 3.0))
+    f.enqueue(span_cmd(log, "blocker", 25.0))
     time.sleep(1.0)
     for tag, p in (("p0", 0), ("p5", 5), ("p1", 1), ("p9", 9)):
         f.enqueue(span_cmd(log, tag, 0.3), priority=p)
-    wait_done(log, 5, 60)
+    wait_done(log, 5, 90)
     ev = read_spans(log)
     order = [t for t, _ in sorted(((t, e["s"][0]) for t, e in ev.items() if t != "blocker" and e.get("s")),
                                   key=lambda x: x[1])]
