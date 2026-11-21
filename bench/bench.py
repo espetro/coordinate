@@ -8,6 +8,7 @@ write themselves, so the same script runs against the SQLite backend and FLEET_B
 import argparse
 import json
 import os
+import shlex
 import signal
 import statistics
 import subprocess
@@ -16,6 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
+CLI_OVERRIDE = None  # set from --cli: the adapter command prefix, e.g. "mytool --flag"
 STAMP = "perl -MTime::HiRes=time -e 'printf \"%.3f\\n\", time'"
 
 
@@ -23,6 +25,7 @@ class Fleet:
     def __init__(self, tree: Path, backend: str, workdir: Path, cap: int, lease: float = 5):
         self.tree, self.dir = tree, workdir
         self.py = str(tree / ".venv" / "bin" / "python")
+        self.cmd = shlex.split(CLI_OVERRIDE) if CLI_OVERRIDE else [self.py, "-m", "fleet"]
         env = {k: v for k, v in os.environ.items() if not k.startswith("FLEET_")}
         env.update(FLEET_DB=str(workdir / "queue.db"), FLEET_CAP=str(cap), FLEET_REPO_CAP="1",
                    FLEET_MACHINE="bench", FLEET_LEASE_S=str(lease), FLEET_CONFIG=str(workdir / "none.toml"))
@@ -31,14 +34,14 @@ class Fleet:
         self.env, self.daemon = env, None
 
     def cli(self, *args) -> str:
-        r = subprocess.run([self.py, "-m", "fleet", *args], env=self.env, capture_output=True, text=True, cwd=self.dir)
+        r = subprocess.run([*self.cmd, *args], env=self.env, capture_output=True, text=True, cwd=self.dir)
         if r.returncode:
             raise RuntimeError(r.stderr[-400:])
         return r.stdout.strip()
 
     def start(self):
         log = open(self.dir / "daemon.log", "ab")
-        self.daemon = subprocess.Popen([self.py, "-m", "fleet", "daemon"], env=self.env, cwd=self.dir,
+        self.daemon = subprocess.Popen([*self.cmd, "daemon"], env=self.env, cwd=self.dir,
                                        stdout=log, stderr=log, start_new_session=True)
         return self.daemon
 
@@ -53,21 +56,24 @@ class Fleet:
     def kill9(self):
         self.stop(signal.SIGKILL)
 
+    def _group(self, col: str) -> list[str]:
+        """ps column for every process in the daemon's process group (the whole resident stack,
+        server plus worker; job children start their own session so they are excluded)."""
+        out = subprocess.run(["ps", "-axo", f"pgid=,{col}="], capture_output=True, text=True).stdout
+        return [ln.split(None, 1)[1].strip() for ln in out.splitlines()
+                if ln.split(None, 1)[0] == str(self.daemon.pid) and len(ln.split(None, 1)) == 2]
+
     def rss_mb(self) -> float:
-        # daemon plus any descendants that are not job children is just the daemon itself
-        out = subprocess.run(["ps", "-o", "rss=", "-p", str(self.daemon.pid)], capture_output=True, text=True).stdout
-        return int(out.strip() or 0) / 1024
+        return sum(int(x) for x in self._group("rss") if x.isdigit()) / 1024
 
     def cpu_s(self) -> float:
-        out = subprocess.run(["ps", "-o", "time=", "-p", str(self.daemon.pid)], capture_output=True, text=True).stdout
-        t = out.strip()
-        if not t:
-            return 0.0
-        parts = [float(x) for x in t.replace("-", ":").split(":")]
-        s = 0.0
-        for x in parts:
-            s = s * 60 + x
-        return s
+        total = 0.0
+        for t in self._group("time"):
+            s = 0.0
+            for x in t.replace("-", ":").split(":"):
+                s = s * 60 + float(x)
+            total += s
+        return total
 
     def enqueue(self, shell: str, repo: Path | None = None, priority: int = 0):
         repo = repo or (self.dir / "repos" / f"r{time.time_ns()}")
@@ -278,11 +284,14 @@ SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": s
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tree", required=True)
+    ap.add_argument("--tree", default=".")
+    ap.add_argument("--cli", default=None, help="adapter command prefix replacing `python -m fleet` (see docs/tool-search-rubric.md)")
     ap.add_argument("--backend", default="sqlite", choices=["sqlite", "dbos"])
     ap.add_argument("--only", default=",".join(SCENARIOS))
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
+    global CLI_OVERRIDE
+    CLI_OVERRIDE = a.cli
     tree = Path(a.tree).resolve()
     res = {"backend": a.backend, "tree": str(tree)}
     for name in a.only.split(","):
