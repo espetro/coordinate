@@ -6,6 +6,8 @@ import sys
 
 from fleet import queue as q
 
+DBOS = os.environ.get("FLEET_BACKEND") == "dbos"
+
 
 def build() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fleet")
@@ -25,14 +27,14 @@ def build() -> argparse.ArgumentParser:
     e.add_argument("--shell", action="store_true", help="cmd is ONE string, stored and run verbatim via sh -c")
     e.add_argument("cmd", nargs=argparse.REMAINDER)
     st = s.add_parser("status", help="list jobs, or one job as JSON")
-    st.add_argument("id", type=int, nargs="?")
+    st.add_argument("id", nargs="?")
     w = s.add_parser("wait-on", help="park a job on an event id")
     w.add_argument("id", type=int)
     w.add_argument("event")
     r = s.add_parser("release", help="release jobs waiting on an event id")
     r.add_argument("event")
     x = s.add_parser("cancel")
-    x.add_argument("id", type=int)
+    x.add_argument("id")
     s.add_parser("stats")
     d = s.add_parser("dead", help="dead-letter operations")
     d.add_argument("action", choices=["retry"])
@@ -41,15 +43,55 @@ def build() -> argparse.ArgumentParser:
     return p
 
 
+def _main_dbos(a) -> int:
+    from fleet import dbos_backend as b
+    if a.verb == "enqueue":
+        kind = "acp" if a.acp else "cmd"
+        if kind == "acp":
+            payload = {"agent": a.acp, "cwd": os.path.abspath(a.cwd), "prompt": a.prompt}
+            for k in ("registry", "model"):
+                if getattr(a, k):
+                    payload[k] = getattr(a, k)
+        else:
+            cmd = [t for t in a.cmd if t != "--"] if a.cmd[:1] == ["--"] else a.cmd
+            if not cmd:
+                sys.exit("enqueue: no command given")
+            payload = {"cmd": cmd[0] if a.shell else cmd, "cwd": a.cwd}
+        if a.repo:
+            payload["repo"] = a.repo
+        print(b.enqueue(payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts))
+    elif a.verb == "status":
+        for r in b.status(a.id):
+            print(json.dumps(r))
+    elif a.verb == "cancel":
+        b.cancel(a.id)
+    elif a.verb == "stats":
+        print(json.dumps(b.stats()))
+    elif a.verb == "dead":
+        print(*b.retry_dead(a.id))
+    else:
+        sys.exit(f"{a.verb}: not supported on the dbos backend (spike)")
+    return 0
+
+
 def main(argv=None) -> int:
     a = build().parse_args(argv)
     if a.verb == "daemon":
+        if DBOS:
+            from fleet import dbos_backend
+            try:
+                dbos_backend.run()
+            except KeyboardInterrupt:
+                pass
+            return 0
         from fleet import daemon
         try:
             daemon.run()
         except KeyboardInterrupt:
             pass
         return 0
+    if DBOS:
+        return _main_dbos(a)
     c = q.connect()
     if a.verb == "enqueue":
         kind = "acp" if a.acp else "cmd"
