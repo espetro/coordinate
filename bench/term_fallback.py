@@ -51,6 +51,19 @@ def note(s):
     print(f"[{time.strftime('%H:%M:%S')}] {s}", file=sys.stderr, flush=True)
 
 
+def pid_verified(pid, iso, cmdline_needle):
+    """True only if /proc/<pid> looks like a process this bench started:
+    its cmdline mentions the tool binary and its environment carries our
+    isolated TMPDIR. Never trust a pid parsed from tool output or a walk
+    up the process tree without this check."""
+    try:
+        cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+        env = Path(f"/proc/{pid}/environ").read_bytes().replace(b"\0", b"\n").decode()
+    except (OSError, ValueError):
+        return False
+    return cmdline_needle in cmd and str(iso.tmpdir) in env
+
+
 class Isolation:
     """Isolated HOME plus XDG dirs under a parent dir, plus machine context."""
 
@@ -94,7 +107,7 @@ class Tool:
     def close_session(self, iso, name): ...
     def list_sessions(self, iso): ...
     def server_rss(self): ...  # sum RSS MB over server pids
-    def stop_server(self, kill9=False): ...
+    def stop_server(self, iso, kill9=False): ...
     def session_pids(self, iso, name): ...  # workload pids by exact match
 
 
@@ -113,22 +126,27 @@ class TmuxTool(Tool):
             iso, "new-session", "-d", "-s", PREFIX + "hold", "sleep 600")
         rc, out, _ = self._run(iso, "list-panes", "-a", "-F", "#{pane_pid}")
         pids = [p for p in out.split() if p.isdigit()]
-        self.server_pids = self._descend(int(pids[0])) if pids else []
+        self.server_pids = self._descend(int(pids[0]), iso) if pids else []
         return rc == 0
 
-    def _descend(self, pid):
-        """tmux server is the parent of the hold session's shell."""
-        pids = []
+    def _descend(self, pid, iso):
+        """tmux server is the parent of the hold session's shell. Walk up
+        the tree but only accept an ancestor whose /proc environment carries
+        our isolated TMPDIR (i.e. a server this bench started), and never
+        walk past PID 1 to an unverified ancestor."""
         p = pid
-        for _ in range(4):
+        for _ in range(6):
             _, out, _ = sh(["ps", "-o", "ppid=", "-p", str(p)])
-            pp = int(out.strip())
-            _, cmd, _ = sh(["ps", "-o", "comm=", "-p", str(pp)])
-            if "tmux" in cmd:
-                pids = [pp]
+            try:
+                pp = int(out.strip().split()[0])
+            except (ValueError, IndexError):
                 break
+            if pp <= 1 or pp == p:
+                break
+            if pid_verified(pp, iso, "tmux"):
+                return [pp]
             p = pp
-        return pids
+        return []
 
     def create_session(self, iso, name, extra_env=None):
         cmd = f"{sys.executable} {shlex.quote(str(WORKER))}"
@@ -178,8 +196,11 @@ class TmuxTool(Tool):
                 tot += s
         return tot
 
-    def stop_server(self, kill9=False):
+    def stop_server(self, iso, kill9=False):
         for pid in self.server_pids:
+            if not pid_verified(pid, iso, "tmux"):
+                note(f"tmux: refusing to signal unverified pid {pid}")
+                continue
             try:
                 os.kill(pid, signal.SIGKILL if kill9 else signal.SIGTERM)
             except ProcessLookupError:
@@ -225,12 +246,16 @@ class HerdrTool(Tool):
         rc, out, _ = sh(["ss", "-xlp"], )
         self.server_pids = []
         for line in out.splitlines():
-            if "herdr.sock" in line and "herdr" in line:
+            # scope strictly to our isolated home: a bare "herdr.sock" match
+            # can hit another user's herdr server on the same box
+            if "herdr.sock" in line and str(iso.home) in line:
                 m = re.search(r"pid=(\d+)", line)
-                if m:
+                if m and pid_verified(int(m.group(1)), iso, "herdr"):
                     self.server_pids.append(int(m.group(1)))
+                elif m:
+                    note(f"herdr: socket pid {m.group(1)} failed ownership check, ignored")
         if not self.server_pids and p.poll() is None:
-            self.server_pids = [p.pid]
+            self.server_pids = [p.pid]  # direct child we spawned ourselves
         return bool(self.server_pids)
 
     def _label_pane(self, iso, name):
@@ -333,8 +358,13 @@ class HerdrTool(Tool):
                 tot += s
         return tot
 
-    def stop_server(self, kill9=False):
+    def stop_server(self, iso, kill9=False):
         for pid in self.server_pids:
+            # the fallback p.pid from start_server is excluded: by now the
+            # Popen handle may be gone and the pid recycled, so verify too
+            if not pid_verified(pid, iso, "herdr"):
+                note(f"herdr: refusing to signal unverified pid {pid}")
+                continue
             try:
                 os.kill(pid, signal.SIGKILL if kill9 else signal.SIGTERM)
             except ProcessLookupError:
@@ -389,7 +419,14 @@ class ZmxTool(Tool):
                     if line.startswith(f"name={name}"):
                         m = re.search(r"pid=(\d+)", line)
                         if m:
-                            self.daemon_pids[name] = int(m.group(1))
+                            cand = int(m.group(1))
+                            # only record daemons whose env carries our
+                            # isolated TMPDIR; zmx list output is not scoped
+                            # to this bench's runtime dir
+                            if pid_verified(cand, iso, "zmx"):
+                                self.daemon_pids[name] = cand
+                            else:
+                                note(f"zmx: pid {cand} for {name} failed ownership check, ignored")
                 return True, None
             time.sleep(0.1)
         return False, "worker READY not seen"
@@ -439,8 +476,11 @@ class ZmxTool(Tool):
                 tot += s
         return tot
 
-    def stop_server(self, kill9=False):
+    def stop_server(self, iso, kill9=False):
         for pid in self.daemon_pids.values():
+            if not pid_verified(pid, iso, "zmx"):
+                note(f"zmx: refusing to signal unverified pid {pid}")
+                continue
             try:
                 os.kill(pid, signal.SIGKILL if kill9 else signal.SIGTERM)
             except ProcessLookupError:
@@ -508,7 +548,7 @@ def bench_tool(tool, parent: Path):
     # kill -9 the server, then check workloads and reattachability
     workload_names = [f"{PREFIX}{tool.name}-0"]
     pids_before = tool.session_pids(iso, workload_names[0])
-    tool.stop_server(kill9=True)
+    tool.stop_server(iso, kill9=True)
     time.sleep(1.0)
     pids_after = []
     for p in pids_before:
@@ -538,7 +578,7 @@ def bench_tool(tool, parent: Path):
     # cleanup: close remaining sessions by exact name, stop restarted server
     for name in set(lst):
         tool2.close_session(iso, name)
-    tool2.stop_server(kill9=True)
+    tool2.stop_server(iso, kill9=True)
     time.sleep(0.5)
     return res
 
