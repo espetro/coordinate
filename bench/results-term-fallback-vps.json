@@ -1,0 +1,282 @@
+{
+  "date": "2026-11-22T22:27:36",
+  "host": "vps-ef376962",
+  "kernel": "6.12.117+deb13-amd64",
+  "tools": {
+    "tmux": {
+      "tool": "tmux",
+      "counts": {
+        "1": {
+          "create_s_median": 0.0096,
+          "create_s_p95": null,
+          "create_errors": [],
+          "server_rss_mb": 4.8,
+          "rss_context": {
+            "uptime": "22:27:44 up 2 days, 19 min,  1 user,  load average: 0.62, 0.70, 0.63",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7567MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0072,
+          "roundtrip_s_p95": 0.0073,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-tmux-0": true
+          }
+        },
+        "5": {
+          "create_s_median": 0.0103,
+          "create_s_p95": 0.0189,
+          "create_errors": [],
+          "server_rss_mb": 4.9,
+          "rss_context": {
+            "uptime": "22:27:51 up 2 days, 19 min,  1 user,  load average: 0.65, 0.71, 0.63",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7569MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0074,
+          "roundtrip_s_p95": 0.0086,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-tmux-0": true,
+            "tfspike-tmux-1": true,
+            "tfspike-tmux-2": true,
+            "tfspike-tmux-3": true,
+            "tfspike-tmux-4": true
+          }
+        },
+        "20": {
+          "create_s_median": 0.0083,
+          "create_s_p95": 0.0114,
+          "create_errors": [],
+          "server_rss_mb": 4.9,
+          "rss_context": {
+            "uptime": "22:27:59 up 2 days, 19 min,  1 user,  load average: 0.55, 0.69, 0.62",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7567MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0068,
+          "roundtrip_s_p95": 0.0085,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-tmux-0": true,
+            "tfspike-tmux-1": true,
+            "tfspike-tmux-2": true,
+            "tfspike-tmux-3": true,
+            "tfspike-tmux-4": true
+          }
+        }
+      },
+      "kill9": {
+        "workload_pids_before": [
+          604294
+        ],
+        "workload_pids_alive_after": [],
+        "sessions_listed_after_restart": [
+          "tfspike-hold"
+        ],
+        "roundtrip_after_restart": null,
+        "roundtrip_after_restart_error": "can't find pane: tfspike-tmux-0\n"
+      },
+      "rss_mb_per_session": 0.0,
+      "rss_idle_server_mb": 4.8
+    },
+    "herdr": {
+      "tool": "herdr",
+      "counts": {
+        "1": {
+          "create_s_median": 0.1393,
+          "create_s_p95": null,
+          "create_errors": [],
+          "server_rss_mb": 46.2,
+          "rss_context": {
+            "uptime": "22:28:10 up 2 days, 19 min,  1 user,  load average: 0.76, 0.73, 0.64",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7568MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.004,
+          "roundtrip_s_p95": 0.0044,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-herdr-0": true
+          }
+        },
+        "5": {
+          "create_s_median": 0.1238,
+          "create_s_p95": 0.1241,
+          "create_errors": [],
+          "server_rss_mb": 46.9,
+          "rss_context": {
+            "uptime": "22:28:18 up 2 days, 19 min,  1 user,  load average: 0.70, 0.72, 0.63",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7570MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0035,
+          "roundtrip_s_p95": 0.0063,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-herdr-0": true,
+            "tfspike-herdr-1": true,
+            "tfspike-herdr-2": true,
+            "tfspike-herdr-3": true,
+            "tfspike-herdr-4": true
+          }
+        },
+        "20": {
+          "create_s_median": 0.1294,
+          "create_s_p95": 0.2283,
+          "create_errors": [],
+          "server_rss_mb": 48.0,
+          "rss_context": {
+            "uptime": "22:28:27 up 2 days, 20 min,  1 user,  load average: 0.81, 0.74, 0.64",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7565MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.004,
+          "roundtrip_s_p95": 0.0047,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-herdr-0": true,
+            "tfspike-herdr-1": true,
+            "tfspike-herdr-2": true,
+            "tfspike-herdr-3": true,
+            "tfspike-herdr-4": true
+          }
+        }
+      },
+      "kill9": {
+        "workload_pids_before": [
+          603651,
+          604612,
+          604801,
+          604824,
+          604845,
+          604869,
+          605132,
+          605154,
+          605175,
+          605197,
+          605219,
+          605239,
+          605262,
+          605285,
+          605308,
+          605331,
+          605353,
+          605374,
+          605395,
+          605417,
+          605441
+        ],
+        "workload_pids_alive_after": [],
+        "sessions_listed_after_restart": [
+          "tfspike-herdr-0",
+          "tfspike-herdr-1",
+          "tfspike-herdr-2",
+          "tfspike-herdr-3",
+          "tfspike-herdr-4",
+          "tfspike-herdr-5",
+          "tfspike-herdr-6",
+          "tfspike-herdr-7",
+          "tfspike-herdr-8",
+          "tfspike-herdr-9",
+          "tfspike-herdr-10",
+          "tfspike-herdr-11",
+          "tfspike-herdr-12",
+          "tfspike-herdr-13",
+          "tfspike-herdr-14",
+          "tfspike-herdr-15",
+          "tfspike-herdr-16",
+          "tfspike-herdr-17",
+          "tfspike-herdr-18",
+          "tfspike-herdr-19"
+        ],
+        "roundtrip_after_restart": null,
+        "roundtrip_after_restart_error": "no echo within 5s"
+      },
+      "rss_mb_per_session": 0.09,
+      "rss_idle_server_mb": 46.3
+    },
+    "zmx": {
+      "tool": "zmx",
+      "counts": {
+        "1": {
+          "create_s_median": 0.1239,
+          "create_s_p95": null,
+          "create_errors": [],
+          "server_rss_mb": 0.0,
+          "rss_context": {
+            "uptime": "22:28:44 up 2 days, 20 min,  1 user,  load average: 0.89, 0.76, 0.65",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7566MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0014,
+          "roundtrip_s_p95": 0.0017,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-zmx-0": true
+          }
+        },
+        "5": {
+          "create_s_median": 0.1186,
+          "create_s_p95": 0.1201,
+          "create_errors": [],
+          "server_rss_mb": 0.0,
+          "rss_context": {
+            "uptime": "22:28:52 up 2 days, 20 min,  1 user,  load average: 0.81, 0.75, 0.65",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7566MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0018,
+          "roundtrip_s_p95": 0.0025,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-zmx-0": true,
+            "tfspike-zmx-1": true,
+            "tfspike-zmx-2": true,
+            "tfspike-zmx-3": true,
+            "tfspike-zmx-4": true
+          }
+        },
+        "20": {
+          "create_s_median": 0.125,
+          "create_s_p95": 0.1298,
+          "create_errors": [],
+          "server_rss_mb": 0.0,
+          "rss_context": {
+            "uptime": "22:29:00 up 2 days, 20 min,  1 user,  load average: 0.76, 0.74, 0.64",
+            "free_m_head": "total        used        free      shared  buff/cache   available",
+            "free_m_available": "7566MB"
+          },
+          "idle_cpu_pct": 0.0,
+          "roundtrip_s_median": 0.0017,
+          "roundtrip_s_p95": 0.0024,
+          "roundtrip_error": null,
+          "sessions_alive_after_client_exit": {
+            "tfspike-zmx-0": true,
+            "tfspike-zmx-1": true,
+            "tfspike-zmx-2": true,
+            "tfspike-zmx-3": true,
+            "tfspike-zmx-4": true
+          }
+        }
+      },
+      "kill9": {
+        "workload_pids_before": [],
+        "workload_pids_alive_after": [],
+        "sessions_listed_after_restart": [],
+        "roundtrip_after_restart": null,
+        "roundtrip_after_restart_error": "no sessions listed"
+      },
+      "rss_mb_per_session": 0.0,
+      "rss_idle_server_mb": 0.0
+    }
+  }
+}
