@@ -156,7 +156,7 @@ Conclusion: no candidate beats our own SQLite scheduler on the gates. The plan i
 | Module | Responsibility | Today | Interface |
 |---|---|---|---|
 | Connector | Reach other devices, publish device state, delegate work | T3 links over Tailscale | `connect`, `publish_state`, `delegate`, `read_remote` |
-| Dispatcher | Start, prompt, cancel, resume a session on a harness | ACP, tmux fallback (Herdr or zmx candidates) | `start`, `prompt`, `cancel`, `load`, `export_context` |
+| Dispatcher | Start, prompt, cancel, resume a session on a harness | ACP, tmux fallback (spiked: stay on tmux) | `start`, `prompt`, `cancel`, `load`, `export_context` |
 | Session store | Durable session records, TTL and GC | fleet SQLite, T3 threads | `put`, `get`, `park`, `wake`, `expire` |
 | Scheduler | Queue, soft caps, priority, placement, park and wake | fleet daemon | `enqueue`, `admit`, `park`, `wake`, `stats` |
 | Coordination | Locks, tool leases, rate limits, awaits | fleet toolcaps | `acquire`, `release`, `await`, `signal` |
