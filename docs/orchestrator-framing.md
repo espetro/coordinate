@@ -100,16 +100,44 @@ Proposed config (not implemented): the user lists harnesses with a priority, rol
 Role claims are mostly practitioner opinion: oh-my-opencode (now oh-my-openagent) routes Claude to planning and the main agent and GPT to deep work and plan review, without a cited benchmark. Only Aider's architect/editor mode (85% vs 79.7%) and Anthropic's research eval (+90.2% at about 15x tokens) publish numbers. Cognition's single-threaded agent argument, the MAST failure taxonomy and Anthropic's note that coding parallelises poorly push back.
 Position: use roles as a scheduling tool (spread quota, cross-provider review, cheap exploration on light harnesses), not as a capability claim, and measure before trusting any role mapping.
 
+## Assessment 7: how other orchestrators do it
+
+Two reports cover 27 products from the landscape table the user shared plus Claude Squad, Vibe Kanban and Xum (`docs/research/orchestrators-landscape-a.md`, `docs/research/orchestrators-landscape-b.md`, table image in `docs/research/assets/`). The table's star counts and feature dots are stale or wrong in places (Orca 132.9k, T3 Code 71.4k; Supacode is FSL-1.1; Traycer's host is closed; OpenHands orchestration moved to `software-agent-sdk`).
+None passes our gates as a whole orchestrator: Multica, Paperclip, QM and Paradev's cloud need Postgres or Redis; OpenClaw, Paseo, OpenChamber and Paperclip have open unbounded-memory bugs; Orca, bb, Nimbalyst and Traycer have open orphaned-process bugs; no desktop tool resumes every session after reboot by default.
+Nobody parks agents when a cap is hit (only after idle time), throttles launches by provider quota, adapts limits to user presence, or publishes density benchmarks. Those remain our differentiators.
+Patterns to copy:
+- Park and wake: Cloudroom stops an agent after 30 minutes idle and resumes the same conversation on the next message, restarts only sessions with queued or recent work after reboot, and marks mid-turn work at crash time as unknown instead of resending it. T3 Code also stops idle sessions after 30 minutes and records decisions with pending side effects in one SQLite transaction.
+- Session survival: Orchestrator.inc runs a detached ACP host per session so the agent outlives orchestrator restarts.
+- Work as data: Paperclip's short runs with the next step stored as a row.
+- Scheduling: OpenClaw lanes and bb's weighted queue with priority aging (every 15s in bb), Multica's one-claim-per-(issue, agent) rule as a per-repo cap, Cloudroom's start-rate limit and disk guard, Orca's per-dispatch retry, Ghostex's retry clock that ignores offline time.
+- Locks: OpenHands file leases with a generation counter.
+- Multi-device: Podium (each device keeps its own SQLite, one writer per record, hub merges on reconnect, CRDTs and sync engines rejected with reasons) and Emdash (device is source of truth) match our Assessment 2 and 3 positions.
+- Quota: OpenChamber falls back to another account or model on provider limits.
+- Reaper: drive it from our session store, not a UI's tab list.
+Adoptable as libraries: Herdr (single Rust binary, one server per machine over SSH, 22MB idle and 0% CPU measured (M)) or zmx (MIT, 2.3k stars) as the M2 tmux fallback.
+
+## Assessment 8: self-improvement
+
+Report: `docs/research/self-improving-stack.md`. Every working loop (Karpathy's autoresearch, AlphaEvolve and OpenEvolve, GEPA) mutates one bounded artifact, scores it with an evaluator the loop cannot edit, and keeps or reverts. The 2026 evidence is cautionary: classical optimizers (CMA-ES, TPE) beat LLM agents on fixed numeric search spaces, evolved agents regress on previously solved tasks, the Darwin Godel Machine gamed its own check, and DGM or SICA runs cost USD 7,000 to 22,000. RSA (population aggregation) is proven on reasoning, unknown for repo-level coding. DeepSeek Harness makes everything a plugin with effects undone on unload, but has no metric-driven loop and runs agent-installed plugins in-process.
+Position, four tiers:
+- Immutable: durable store, safety gates, the bench, the metrics, the improvement loop itself.
+- Numeric config (caps, presence thresholds, harness weights): Bayesian or bandit tuning, applied automatically, auto-revert on regression.
+- Prompts and briefs: GEPA-style evolution behind a no-regression gate.
+- Agent-written plugins: out of process, promoted only by a human.
+Fitness is hard constraints from the bench plus several objectives, never one scalar. Promotion path: offline bench, replay of past tasks, shadow, one-device canary, each change a git commit with automatic revert. A live A/B on task success needs about 390 tasks per arm, months at personal volume, so task success comes from replay and only frequent metrics (wake latency, RSS) tune on live telemetry. First step: measure the bench noise floor.
+This requires every module to sit behind the interfaces below, so the loop swaps implementations rather than editing source.
+
 ## Modules
 
 | Module | Responsibility | Today | Interface |
 |---|---|---|---|
 | Connector | Reach other devices, publish device state, delegate work | T3 links over Tailscale | `connect`, `publish_state`, `delegate`, `read_remote` |
-| Dispatcher | Start, prompt, cancel, resume a session on a harness | ACP, tmux fallback | `start`, `prompt`, `cancel`, `load`, `export_context` |
+| Dispatcher | Start, prompt, cancel, resume a session on a harness | ACP, tmux fallback (Herdr or zmx candidates) | `start`, `prompt`, `cancel`, `load`, `export_context` |
 | Session store | Durable session records, TTL and GC | fleet SQLite, T3 threads | `put`, `get`, `park`, `wake`, `expire` |
 | Scheduler | Queue, soft caps, priority, placement, park and wake | fleet daemon | `enqueue`, `admit`, `park`, `wake`, `stats` |
 | Coordination | Locks, tool leases, rate limits, awaits | fleet toolcaps | `acquire`, `release`, `await`, `signal` |
 | Context | Shared notes and handoffs across harnesses and devices | git, T3 threads | `append`, `read`, `handoff` |
 | Control panel | Human view and control | T3 Code, Orca | consumes the modules above |
+| Improver | Propose, evaluate, keep or revert config, prompts and plugins | none | `propose`, `evaluate`, `promote`, `revert` |
 
 The rubric in `docs/tool-search-rubric.md` scores candidates per module, so a stack can combine several tools.

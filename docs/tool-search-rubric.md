@@ -48,9 +48,9 @@ Scored criteria (0 absent, 1 workaround of 150 lines or more, 2 workaround under
 
 Anti-goals. Do not reward: deterministic step replay of code inside the worker (our agents resume from transcripts), workflow versioning, serverless or HTTP push to hosted functions, HA clusters, multi-tenant billing, hosted-only clouds, dashboards.
 
-Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail, beads and Gas Town or Gas City.
+Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail, beads and Gas Town or Gas City, and every product in `docs/research/orchestrators-landscape-a.md` and `-b.md` (Conductor alternatives such as Multica, OpenHands, Paperclip, OpenClaw, Herdr, Paseo, Cloudroom, Podium, bb, zmx).
 
-Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas, presence or load aware schedulers (BOINC style "in use" profiles), harness routers that assign roles to models. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
+Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas, presence or load aware schedulers (BOINC style "in use" profiles), harness routers that assign roles to models, metric-driven config tuners and plugin hosts that support safe self-improvement loops. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
 
 Evidence rules. Rank sources: the project's own docs and source, then its issue tracker and changelog, then independent write-ups, then marketing. Tag numbers from blogs or landing pages as B and do not trust them. Unknown stays unknown, never inferred from the name or the category. Every field needs a URL.
 
@@ -128,6 +128,7 @@ Planned, needed for the concurrency-first and multi-device requirements (not imp
 | `partition` | cut the hub link: spokes keep running and queueing, global overshoot stays within the sum of allowances, nothing is dropped, state converges after reconnect | G4, S5 |
 | `presence-drop` | switch the device from away to focus with 6 live sessions: QoS drops at once, surplus parks at the next turn boundary, no turn is killed, level does not flap | S14, S1 |
 | `live-density` | live sessions per GiB per harness, counting child processes, plus the fixed overhead | G2, S12 |
+| `noise-floor` | repeat each scenario 10 times on an idle machine, report variance, so the improvement loop ignores changes inside the noise | improver prerequisite |
 | `lock-contention` | two agents request the same file lease: one waits parked, wakes on release or TTL | S6, S7 |
 
 ## 5. Decision rule

@@ -17,6 +17,9 @@ Under that framing, the question per candidate is which module it could own, not
 | T3 Code | MIT (K) | Control panel, M1 connector (links, `delegate_task`, read-only remote threads), placement hint (auto balance by CPU and memory at thread creation) (R) | Links are one way and do not chain, threads are not replicated, no global caps (R) | Keep as M1 and the panel |
 | MCP Agent Mail (Dicklesworthstone, Python and Rust versions) | unknown | M5 locks (advisory file leases with TTL, exclusive or shared, pre-commit guard), M6 messages (identities, inboxes, threads, Git plus SQLite) (R, repo descriptions) | Advisory only; star count and maintenance not checked | Candidate for M5 locks and M6 |
 | beads (`gastownhall/beads`), Gas Town, Gas City | unknown | M6 context and M5 claims: hash ids, dependency graph, `supersedes`, claims (R) | Now Dolt-backed; open issues on stuck merges, dropped comments, unbounded Dolt memory, agent mode not engaging (R) | Copy the data model, not the implementation (`docs/research/shared-context-crdt.md`) |
+| Herdr (52.3k stars) | unknown, check | M2 tmux fallback: single Rust binary owning terminals, one server per machine over SSH, 22MB idle (M) | No queue, no locks | Adopt candidate for the tmux fallback |
+| zmx (2.3k stars) | MIT (R) | M2 tmux fallback | Not measured | Compare with Herdr |
+| Cloudroom, Podium, Paperclip, Orchestrator.inc | various | Patterns only: park after idle and resume, single-writer device stores, work as rows, detached ACP host (R) | Postgres, closed parts or scope | Copy patterns (`docs/research/orchestrators-landscape-*.md`) |
 | River OSS | OSS core, Pro paid (R) | M4 per device | Go rewrite, SQLite experimental, keyed limits are Pro | Weaker now: no park and wake, no awaits |
 | OpenWorkflow | unknown | M4 later | No concurrency controls yet (R) | Watch |
 | Absurd | Apache-2.0 (R) | M5 design ideas (first-emit-wins events, lease claims) | Postgres (R) | Reference only |
@@ -31,6 +34,8 @@ Proposed stack to test, per module:
 - M5: Restate awakeables for awaits if the spike passes, MCP Agent Mail style leases for files, our toolcaps for tools.
 - M6: append-only, single-writer files per device synced through a bare git repo on kinosmac, with a beads-style data model; Automerge or Loro only for shared notes if concurrent edits prove real.
 - Harness choice: priority, roles and learned footprint per harness (`docs/research/harness-footprint-and-roles.md`).
+- Tmux fallback: Herdr or zmx.
+- Improver: tiered self-improvement loop (`docs/research/self-improving-stack.md`).
 - Caps: three presence levels per device (`docs/research/presence-aware-concurrency.md`).
 - Panel: T3 Code, with Orca as a second client.
 
