@@ -53,8 +53,9 @@ async def exec_job(ctx: Context, job: dict) -> None:
     def spawn_and_wait() -> int:
         os.makedirs(data_dir, exist_ok=True)
         log_path = os.path.join(data_dir, f"job-{job['id']}.log")
+        env = {**os.environ, **job.get("env", {})}
         with open(log_path, "ab") as log:
-            p = subprocess.Popen(["/bin/sh", "-c", job["cmd"]], cwd=job["cwd"],
+            p = subprocess.Popen(["/bin/sh", "-c", job["cmd"]], cwd=job["cwd"], env=env,
                                  stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                                  start_new_session=True)
             return p.wait()
@@ -73,12 +74,11 @@ async def run(ctx: Context, job: dict) -> str:
         proj = repo_key(job["cwd"])
         lk = f"t{hashlib.sha1(f'{cls}:{proj}'.encode()).hexdigest()[:12]}"
         limit = cfg.get(f"{cls}:*") or cfg.get(f"tool:{cls}:*") or 1
-        aid, fut = ctx.awakeable()
-        await ctx.service_send(ToolLease_acquire, {"key": lk, "limit": limit, "cost": cost,
-                                                   "awakeable": aid})
-        await fut
+        while not await ctx.object_call(ToolLease_acquire, lk, {"key": lk, "limit": limit,
+                                                                "cost": cost}):
+            await ctx.sleep(timedelta(milliseconds=200))
         await exec_job(ctx, job)
-        await ctx.service_send(ToolLease_release, lk)
+        await ctx.object_call(ToolLease_release, lk, cost)
     else:
         await exec_job(ctx, job)
     return "done"
@@ -87,30 +87,20 @@ async def run(ctx: Context, job: dict) -> str:
 @lease.handler()
 async def acquire(ctx: ObjectContext, req: dict) -> bool:
     held = await ctx.get("held") or 0
-    waiters = await ctx.get("waiters") or []
-    if held + req["cost"] <= req["limit"]:
-        await ctx.set("held", held + req["cost"])
-        await ctx.resolve_awakeable(req["awakeable"], True)
+    if int(held) + req["cost"] <= req["limit"]:
+        ctx.set("held", int(held) + req["cost"])
         return True
-    waiters.append({"awakeable": req["awakeable"], "cost": req["cost"]})
-    await ctx.set("waiters", waiters)
     return False
 
 
 @lease.handler()
-async def release(ctx: ObjectContext, key: str) -> None:
-    waiters = await ctx.get("waiters") or []
+async def release(ctx: ObjectContext, cost: int) -> None:
     held = await ctx.get("held") or 0
-    if waiters:
-        w = waiters.pop(0)
-        await ctx.set("waiters", waiters)
-        await ctx.resolve_awakeable(w["awakeable"], True)
-    else:
-        await ctx.set("held", max(0, held - 1))
+    ctx.set("held", max(0, int(held) - int(cost)))
 
 
 app = app([service, lease])
 
 
-ToolLease_acquire = lease.handlers["acquire"]
-ToolLease_release = lease.handlers["release"]
+ToolLease_acquire = lease.handlers["acquire"].fn
+ToolLease_release = lease.handlers["release"].fn

@@ -74,7 +74,7 @@ def cmd_daemon(a) -> None:
     os.makedirs(data_dir, exist_ok=True)
     cap = int(os.environ.get("FLEET_CAP", "4"))
     repo_cap = int(os.environ.get("FLEET_REPO_CAP", "1"))
-    cfg = f"""data-dir = "{data_dir}/restate"
+    cfg = f"""base-dir = "{data_dir}/restate"
 disable-prometheus = true
 log-disable-ansi-codes = true
 disable-telemetry = true
@@ -129,7 +129,8 @@ def cmd_enqueue(a) -> None:
     repo = os.path.abspath(a.cwd)
     rkey = "r" + hashlib.sha1(repo.encode()).hexdigest()[:16]
     job = {"id": f"job-{int(time.time() * 1000):x}-{os.getpid():x}",
-           "cmd": a.cmd, "cwd": repo, "priority": a.priority}
+           "cmd": a.cmd, "cwd": repo, "priority": a.priority,
+           "env": {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "FLEET_LEASE_S")}}
     inv = send_job(job, rkey, int(os.environ.get("FLEET_CAP", "4")),
                    int(os.environ.get("FLEET_REPO_CAP", "1")))
     print(inv)
