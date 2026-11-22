@@ -127,6 +127,30 @@ Position, four tiers:
 Fitness is hard constraints from the bench plus several objectives, never one scalar. Promotion path: offline bench, replay of past tasks, shadow, one-device canary, each change a git commit with automatic revert. A live A/B on task success needs about 390 tasks per arm, months at personal volume, so task success comes from replay and only frequent metrics (wake latency, RSS) tune on live telemetry. First step: measure the bench noise floor.
 This requires every module to sit behind the interfaces below, so the loop swaps implementations rather than editing source.
 
+## Assessment 9: spike results (2026-11-22, VPS)
+
+Four spikes ran on the VPS against the adapter contract and bench (`docs/restate-spike.md`, `docs/rivet-spike.md`, `docs/term-fallback-spike.md`, `docs/bench-v2.md`). All numbers are M on the shared VPS, load recorded in each result file.
+
+| | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
+|---|---|---|---|
+| Idle RSS, whole stack | 18.5MB | 532MB | 128MB |
+| Enqueue median | 160ms (119ms in the noise run) | 169ms via shim, 22ms via curl | n/a |
+| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | n/a |
+| kill -9 recovery | 14.5s | 3.5s | 10-20s restart |
+| Caps, repo cap, tool park | pass | pass (park via sleep-poll, frees slot) | n/a |
+| Global priority | pass | fail (planned upstream) | n/a |
+| 10,000 parked sessions | not yet measured | not measured | 1,489MB RSS, 24KB disk each |
+| Wake latency | not yet measured | not measured | p50 5-6ms, p99 10.6ms at 10k |
+| License | ours | BSL-1.1, internal use allowed | Apache-2.0 |
+| Verdict | keep and extend | reject for M4 and M5, watch | borrow the design only |
+
+Our scheduler under the new bench (`docs/bench-v2.md`): fixed overhead 18.5MB plus about 0.4MB per live session; with a 60MB-class harness about 14 live sessions per GiB. After kill -9 of the daemon mid-turn, 3 of 3 stub ACP sessions resumed via `session/load` with one duplicate turn each. Noise floor: enqueue cv 4.9%, cap makespan cv 1.0%, chaos recovery cv 0.07% (measured under load, redo on an idle machine).
+Terminal fallback (`docs/term-fallback-spike.md`): stay on tmux (4.8MB idle, flat to 20 sessions, 10ms create, 7ms input/output roundtrip). Herdr idles at 46MB and needs a JSON client; zmx's per-session daemon model fits best architecturally but needs a structured wrapper and its RSS was not measured validly.
+Gap found: when the daemon stops, ACP agents of in-flight jobs keep running (consistent with requirement 3), but a restarted daemon cannot re-adopt them; it orphan-kills and resumes via `session/load`, costing one duplicate turn. Re-adoption (as in Orchestrator.inc's detached ACP host) is the next design item for M2.
+Process note: two spike agents were SIGKILLed during other sessions' kill -9 tests; the term-fallback bench now verifies PID ownership before signalling. Any kill test must do the same.
+
+Conclusion: no candidate beats our own SQLite scheduler on the gates. The plan is glue plus borrowed designs: Rivet-style hibernate and wake for parked sessions, Restate-style suspension without holding a slot (we already have it), detached ACP hosts for re-adoption, and the remaining bench scenarios (park-density, wake-latency, harness-swap, partition, presence-drop, lock-contention) to measure each step.
+
 ## Modules
 
 | Module | Responsibility | Today | Interface |

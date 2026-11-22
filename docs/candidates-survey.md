@@ -10,14 +10,14 @@ Under that framing, the question per candidate is which module it could own, not
 
 | Candidate | License | Modules it could own | Main blocker | Fit |
 |---|---|---|---|---|
-| Restate | runtime BSL per a 2024 comment (B), verify | M4 scheduler (keyed limits per scope and limit key), M5 awaits (awakeables, durable promises), M3 (Virtual Object state per session key) (R) | Handlers run as an HTTP service, push model; idle RSS, parking semantics and license unverified | Best single fit for M4 plus M5, spike first |
-| Rivet Actors (`rivet-dev/rivet`, 7k stars) | Apache-2.0 (R) | M3 and M4 in spirit: one hibernating Actor per session, 72KB per Actor, wake on demand, SQLite per Actor, scheduling (R) | Needs its Rust control plane plus object storage; a local filesystem backend exists "for trying Rivet on one machine" (R). Actors run agent loops in-process, our agents are external CLIs | Design reference for park and wake density; G1 and G2 unverified for a local filesystem setup |
+| Restate | BSL-1.1 with an Additional Use Grant for internal use (R, LICENSE read in spike) | M4 scheduler (keyed limits per scope and limit key), M5 awaits (awakeables, durable promises), M3 (Virtual Object state per session key) (R) | Handlers run as an HTTP service, push model; idle RSS, parking semantics and license unverified | Spiked: rejected for M4 and M5 (532MB idle, no global priority), watch list (`docs/restate-spike.md`) |
+| Rivet Actors (`rivet-dev/rivet`, 7k stars) | Apache-2.0 (R) | M3 and M4 in spirit: one hibernating Actor per session, 72KB per Actor, wake on demand, SQLite per Actor, scheduling (R) | Needs its Rust control plane plus object storage; a local filesystem backend exists "for trying Rivet on one machine" (R). Actors run agent loops in-process, our agents are external CLIs | Spiked: borrow the design only (128MB idle, 1.5GB at 10k parked actors, 3.1% idle CPU) (`docs/rivet-spike.md`) |
 | Sandbox Agent (`rivet-dev/agents`, 1.7k stars for the repo) | Apache-2.0 (R) | M2 dispatcher: one HTTP API over Claude Code, Codex, OpenCode, Amp and Pi with unified events and sessions (B, landing page) | Overlaps ACP; runs as a server per sandbox | Compare against ACP as the M2 interface |
 | Orca (`stablyai/orca`) | MIT (R) | Control panel, plus M4 and M5 patterns: Run inbox, Tasks, Dispatches, heartbeats, `worker_done` with dispatch ids, `ask`, decision gates, federated workers on other hosts, nested worker depth 4 (R) | A desktop app that owns its state, not a library; no concurrency caps found in the orchestration docs | Second control panel and the best reference for await tracking; check its CLI as an M1 or M4 driver |
 | T3 Code | MIT (K) | Control panel, M1 connector (links, `delegate_task`, read-only remote threads), placement hint (auto balance by CPU and memory at thread creation) (R) | Links are one way and do not chain, threads are not replicated, no global caps (R) | Keep as M1 and the panel |
 | MCP Agent Mail (Dicklesworthstone, Python and Rust versions) | unknown | M5 locks (advisory file leases with TTL, exclusive or shared, pre-commit guard), M6 messages (identities, inboxes, threads, Git plus SQLite) (R, repo descriptions) | Advisory only; star count and maintenance not checked | Candidate for M5 locks and M6 |
 | beads (`gastownhall/beads`), Gas Town, Gas City | unknown | M6 context and M5 claims: hash ids, dependency graph, `supersedes`, claims (R) | Now Dolt-backed; open issues on stuck merges, dropped comments, unbounded Dolt memory, agent mode not engaging (R) | Copy the data model, not the implementation (`docs/research/shared-context-crdt.md`) |
-| Herdr (52.3k stars) | unknown, check | M2 tmux fallback: single Rust binary owning terminals, one server per machine over SSH, 22MB idle (M) | No queue, no locks | Adopt candidate for the tmux fallback |
+| Herdr (52.3k stars) | unknown, check | M2 tmux fallback: single Rust binary owning terminals, one server per machine over SSH, 22MB idle (M) | No queue, no locks | Spiked: stay on tmux (46MB idle vs 4.8MB) (`docs/term-fallback-spike.md`) |
 | zmx (2.3k stars) | MIT (R) | M2 tmux fallback | Not measured | Compare with Herdr |
 | Cloudroom, Podium, Paperclip, Orchestrator.inc | various | Patterns only: park after idle and resume, single-writer device stores, work as rows, detached ACP host (R) | Postgres, closed parts or scope | Copy patterns (`docs/research/orchestrators-landscape-*.md`) |
 | River OSS | OSS core, Pro paid (R) | M4 per device | Go rewrite, SQLite experimental, keyed limits are Pro | Weaker now: no park and wake, no awaits |
@@ -30,11 +30,11 @@ What no candidate covers: soft global caps across devices with partition toleran
 Proposed stack to test, per module:
 - M1 connector: T3 links over Tailscale, kinosmac as hub (no change).
 - M2 dispatcher: ACP, with Sandbox Agent evaluated as an alternative interface.
-- M3 and M4: Restate spike first, compared against our SQLite scheduler extended with parked sessions.
-- M5: Restate awakeables for awaits if the spike passes, MCP Agent Mail style leases for files, our toolcaps for tools.
+- M3 and M4: our SQLite scheduler, extended with parked sessions (Restate and Rivet spiked and rejected, see framing Assessment 9).
+- M5: our own await records (Restate rejected), MCP Agent Mail style leases for files, our toolcaps for tools.
 - M6: append-only, single-writer files per device synced through a bare git repo on kinosmac, with a beads-style data model; Automerge or Loro only for shared notes if concurrent edits prove real.
 - Harness choice: priority, roles and learned footprint per harness (`docs/research/harness-footprint-and-roles.md`).
-- Tmux fallback: Herdr or zmx.
+- Tmux fallback: stay on tmux.
 - Improver: tiered self-improvement loop (`docs/research/self-improving-stack.md`).
 - Caps: three presence levels per device (`docs/research/presence-aware-concurrency.md`).
 - Panel: T3 Code, with Orca as a second client.
