@@ -1,0 +1,8 @@
+{
+  "name": "fleet-rivet-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "rivetkit": "^3.1.1"
+  }
+}

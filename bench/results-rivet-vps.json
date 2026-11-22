@@ -1,0 +1,60 @@
+{
+  "backend": "rivet",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/rivet",
+  "date": "2026-11-22",
+  "versions": {
+    "rivetkit": "3.1.1",
+    "rivet_engine": "3.1.1 (rivetdev/engine v3, musl x64 via @rivetkit/engine-cli-linux-x64-musl)",
+    "bun": "1.4.3",
+    "adapter": "bench/adapters/rivet (session actor: park/wake/status/spawnDetached)"
+  },
+  "host": "Linux x86_64, 6 cores, 11.7GB RAM, shared with 3 other spike sessions; uptime 1d23h; free-m available 8.3GB at idle measurement",
+  "processes": { "count": 2, "detail": "bun runner (rivetkit registry) + rivet-engine (Rust child spawned by runner, filesystem storage backend)" },
+  "idle": {
+    "runner_rss_kb": 70500,
+    "engine_rss_kb": 60812,
+    "total_rss_mb": 128.3,
+    "engine_cpu_pct_20s": 3.11,
+    "runner_cpu_pct_20s": 0.05,
+    "note": "measured after 20s idle, 0 actors; engine CPU is background maintenance, sampled from /proc over 20s, 6-core machine"
+  },
+  "fresh_boot": { "store_bytes_0_actors": 134252527, "note": "engine provisions its log shard and object store on first boot; ~134MB floor before any actor exists" },
+  "parked_1000": {
+    "create_seconds": 9.03,
+    "creates_per_s": 110.7,
+    "runner_rss_kb": 160288,
+    "engine_rss_kb": 263916,
+    "total_rss_mb": 414,
+    "store_bytes": 152419159,
+    "marginal_bytes_per_actor": 18153
+  },
+  "parked_10000": {
+    "create_seconds": 104.7,
+    "creates_per_s": 86,
+    "runner_rss_kb": 287632,
+    "engine_rss_kb": 1242228,
+    "total_rss_mb": 1489,
+    "store_bytes": 378326232,
+    "marginal_bytes_per_actor": 24404,
+    "engine_cpu_pct_20s": 3.26,
+    "runner_cpu_pct_20s": 0.0,
+    "note": "engine RSS kept climbing during create (peak 1.69GB) then settled to ~1.24GB after ~3min; store includes log shard 143MB + objects 224MB"
+  },
+  "wake_latency": {
+    "at_1k_parked": { "n": 40, "p50_ms": 4.9, "p99_ms": 2034, "min_ms": 3, "max_ms": 2034, "raw_ms": [4,5,4,6,4,4,4,3,4,4,6,6,6,4,5,5,5,11,6,5,6,3,19,2030,1740,3,6,4,6,6,5,1326,2034,4,8,6,7,7,9,15], "note": "1.3-2s spikes appear in bursts (3 of 40), p50 and most samples 3-9ms" },
+    "at_10k_parked": { "n": 40, "p50_ms": 6.4, "p99_ms": 10.6, "min_ms": 3.6, "max_ms": 10.6, "note": "no spikes in this run; sample = park, wait 300ms for sleep, then wake" }
+  },
+  "kill9_survival": {
+    "identity_survives": true,
+    "ephemeral_vars_survive": false,
+    "detail": "after kill -9 of runner and engine at 1k and at 10k parked actors, restart took ~10-20s to health-ok; getOrCreate handles resolve, status/wake actions work on pre-existing keys. But c.vars (the documented in-memory vars) reset to createVars defaults: harness/sessionId/cwd/status/waitingOn/pid all lost. Durable per-session fields must go in actor SQLite (c.db), which we did not model in this spike.",
+    "spawned_child_survives_engine_kill": true,
+    "spawned_child_detail": "spawnDetached runs /bin/sh -c CMD detached in its own process group (verified pgid == pid); child kept running after kill -9 of both runner and engine"
+  },
+  "gates": {
+    "G1_pass": true,
+    "G2_pass": false,
+    "G3_pass": "partial: actor identity survives kill -9; unmodeled durable fields (SQLite) expected to survive but unverified",
+    "G4_pass": true
+  }
+}
