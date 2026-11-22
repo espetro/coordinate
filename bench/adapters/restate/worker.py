@@ -62,7 +62,7 @@ async def exec_job(ctx: Context, job: dict) -> None:
 
     code = await ctx.run("exec", spawn_and_wait)
     if code != 0:
-        raise TerminalError(f"job {job['id']} exited {code}", status_code=500)
+        raise TerminalError(f"job {job['id']} exited {code}", status_code=400)
 
 
 @service.handler()
