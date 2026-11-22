@@ -277,9 +277,282 @@ def scenario_tool_park(tree, backend, tmp):
             "tool_trivial_ran_while_parked": bool(triv_start and v1_end and triv_start < v1_end)}
 
 
+def _stat_block(vals) -> dict:
+    """mean, stdev, min, max and coefficient of variation (percent) for one metric."""
+    xs = [float(v) for v in vals]
+    mean = statistics.mean(xs)
+    sd = statistics.stdev(xs) if len(xs) > 1 else 0.0
+    return {"mean": round(mean, 3), "stdev": round(sd, 3), "min": round(min(xs), 3),
+            "max": round(max(xs), 3), "cv_pct": round(sd / mean * 100, 2) if mean else None,
+            "n": len(xs)}
+
+
+def scenario_noise_floor(tree, backend, tmp, repeats=10, subset=None):
+    """Repeat a chosen subset of the existing scenarios N times and report the spread of every metric.
+
+    Only the metrics of the repeated scenarios change; existing scenario semantics are untouched.
+    Each repeat runs in its own temporary directory, so each repeat starts from a fresh store.
+    """
+    names = [n.strip() for n in (subset or "").split(",") if n.strip()]
+    names = names or ["cli", "cap", "chaos"]
+    for n in names:
+        if n not in SCENARIOS:
+            raise ValueError(f"unknown scenario for the noise floor: {n}")
+    out = {"noise_repeats": repeats, "noise_scenarios": names, "noise_per_scenario": {}}
+    for name in names:
+        runs = []
+        for i in range(repeats):
+            with tempfile.TemporaryDirectory(prefix=f"fleetnoise-{name}-") as t:
+                try:
+                    runs.append(SCENARIOS[name](tree, backend, Path(t)))
+                except Exception as e:  # a failed repeat still counts as a sample
+                    runs.append({"_error": repr(e)[:200]})
+            print(f"[noise] {name} repeat {i + 1}/{repeats} done", file=sys.stderr, flush=True)
+        keys = sorted({k for r in runs for k, v in r.items() if isinstance(v, (int, float)) and not isinstance(v, bool)})
+        metrics = {k: _stat_block([r[k] for r in runs if k in r]) for k in keys}
+        bools = {k: _stat_block([1 if r.get(k) else 0 for r in runs]) for k in sorted(
+            {k for r in runs for k, v in r.items() if isinstance(v, bool)})}
+        out["noise_per_scenario"][name] = {"metrics": metrics, "bools": bools,
+                                           "errors": sum(1 for r in runs if "_error" in r)}
+    return out
+
+
+def _acp_registry(tree: Path, tmp: Path) -> str:
+    """Registry file for the stub ACP agent, used by fleet's ACP job path."""
+    reg = tmp / "agents.stub.json"
+    reg.write_text(json.dumps({"stub": {"command": str(tree / ".venv" / "bin" / "python"),
+                                         "args": [str(Path(__file__).parent / "stub_acp_agent.py")]}}))
+    return str(reg)
+
+
+def _acp_fleet(tree: Path, backend: str, tmp: Path, cap: int, lease: float = 5) -> Fleet:
+    """A fleet instance whose ACP lane runs the bench's stub agent through bench/acp_client.py.
+
+    No change to fleet's adapter contract is needed: FLEET_ACP_CMD already selects the ACP
+    command, so the bench points it at the stdlib client instead of fleet-acp.
+    """
+    f = Fleet(tree, backend, tmp, cap=cap, lease=lease)
+    f.env["FLEET_ACP_CMD"] = f"{tree / '.venv' / 'bin' / 'python'} {Path(__file__).parent / 'acp_client.py'}"
+    return f
+
+
+def _agent_pids(db: Path) -> dict[int, int]:
+    """job id -> agent pid, from the pid files fleet's daemon writes next to the store."""
+    pids = {}
+    pdir = db.parent / "pids"
+    if pdir.is_dir():
+        for pf in pdir.glob("*.agent"):
+            try:
+                pids[int(pf.stem)] = int(pf.read_text().strip())
+            except (OSError, ValueError):
+                pass
+    return pids
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _kill_group(pid: int) -> None:
+    """SIGKILL a process group we started (agents run in their own session)."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _rss_kb(pid: int) -> int:
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout
+        return int(out.strip() or 0)
+    except ValueError:
+        return 0
+
+
+def scenario_orchestrator_kill(tree, backend, tmp, k=3, turn_ms=20000, lease=4):
+    """K stub ACP sessions through fleet; kill -9 the daemon group mid-turn; restart; every session must complete.
+
+    Counts duplicate turns (the stub records completed turns per session in its state file),
+    sessions resumed through ACP session/load (same session id across two agent processes)
+    and sessions that were restarted from scratch (a new session id).
+    """
+    reg = _acp_registry(tree, tmp)
+    f = _acp_fleet(tree, backend, tmp, cap=max(k, 1), lease=lease)
+    f.env["STUB_TURN_MS"] = str(turn_ms)
+    f.env["STUB_CHUNKS"] = "20"
+    log = tmp / "acp.log"
+    f.start()
+    time.sleep(3)
+    jids = []
+    for i in range(k):
+        repo = tmp / f"job{i}"
+        repo.mkdir(parents=True, exist_ok=True)
+        jids.append(int(f.cli("enqueue", "--acp", "stub", "--cwd", str(repo), "--prompt", f"turn {i}",
+                              "--registry", reg)))
+    # wait until every agent process exists (session id persisted in the payload)
+    deadline = time.time() + 60
+    sessions = {}
+    while time.time() < deadline and len(sessions) < k:
+        for jid in jids:
+            if jid in sessions:
+                continue
+            st = json.loads(f.cli("status", str(jid)))
+            payload = json.loads(st["payload"]) if isinstance(st["payload"], str) else (st["payload"] or {})
+            if payload.get("session"):
+                sessions[jid] = payload["session"]
+        time.sleep(0.2)
+    pids = _agent_pids(Path(f.env["FLEET_DB"]))
+    alive_before = sum(1 for p in pids.values() if _alive(p))
+    t_kill = time.time()
+    f.kill9()
+    time.sleep(0.3)
+    alive_after_kill = sum(1 for p in pids.values() if _alive(p))
+    f.start()
+    # wait for every job to reach a terminal state
+    done = 0
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        done = sum(1 for jid in jids if json.loads(f.cli("status", str(jid)))["status"] in ("done", "failed"))
+        if done == k:
+            break
+        time.sleep(0.5)
+    recovery = time.time() - t_kill
+    # the agents of the killed daemon keep running (G4); the daemon only reaps an orphan
+    # when its lease expires, so the resumed attempt can briefly run beside the old agent.
+    # Measure that overlap and then clean up every survivor we started (by exact pid and
+    # process group), including the agents of the retried attempts.
+    survivors = [p for p in pids.values() if _alive(p)]
+    for p in survivors:
+        _kill_group(p)
+    time.sleep(0.5)
+    for p in survivors:
+        if _alive(p):
+            try:
+                os.kill(p, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    # the retried attempts' own agents, whose pid files the daemon overwrote
+    for p in _agent_pids(Path(f.env["FLEET_DB"])).values():
+        if p not in survivors and _alive(p):
+            _kill_group(p)
+            if _alive(p):
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+    dup = resumed = restarted = 0
+    per_job = []
+    for i, jid in enumerate(jids):
+        st = json.loads(f.cli("status", str(jid)))
+        sf = tmp / f"job{i}" / ".stub-acp-sessions.json"
+        sid = None
+        rec = {}
+        if sf.exists():
+            recs = json.loads(sf.read_text())["sessions"]
+            if recs:
+                sid = next(iter(recs))
+                rec = recs[sid]
+        stored = (json.loads(st["payload"]) if isinstance(st["payload"], str) else (st["payload"] or {})).get("session")
+        # turns_started counts every attempt (completed or not), so a killed mid-turn
+        # attempt counts as a duplicate even though no second end_turn was recorded
+        dup += max(0, rec.get("turns_started", 0) - 1)
+        if st["attempts"] > 1 and stored and stored == sid and rec.get("loads", 0) > 0:
+            resumed += 1
+        elif st["attempts"] > 1:
+            restarted += 1
+        per_job.append({"job": jid, "status": st["status"], "attempts": st["attempts"],
+                        "session_id": sid, "payload_session": stored,
+                        "turns_started": rec.get("turns_started", 0), "turns_done": rec.get("turns_done", 0),
+                        "loads": rec.get("loads", 0)})
+    f.stop()
+    return {"orchkill_jobs": k, "orchkill_all_done": done == k, "orchkill_done": done,
+            "orchkill_recovery_s": round(recovery, 2),
+            "orchkill_agents_alive_before_kill": alive_before, "orchkill_agents_alive_after_kill": alive_after_kill,
+            "orchkill_orphan_agents_surviving": len(survivors),
+            "orchkill_duplicate_turns": dup, "orchkill_resumed_via_session_load": resumed,
+            "orchkill_restarted": restarted, "orchkill_per_job": per_job}
+
+
+def scenario_live_density(tree, backend, tmp, steps=(1, 2, 4), ballast_mb=60, turn_ms=60000):
+    """Step up concurrent stub ACP sessions at a fixed ballast; report orchestrator RSS apart from agent RSS.
+
+    Fixed overhead is the orchestrator RSS with no live session; agent RSS is the sum over the
+    live agent processes (each holding `ballast_mb` MiB of ballast plus its interpreter).
+    """
+    reg = _acp_registry(tree, tmp)
+    steps = list(steps)
+    f = _acp_fleet(tree, backend, tmp, cap=max(steps), lease=120)
+    f.env["STUB_BALLAST_MB"] = str(ballast_mb)
+    f.env["STUB_TURN_MS"] = str(turn_ms)
+    f.env["STUB_CHUNKS"] = "200"
+    f.start()
+    time.sleep(4)
+    overhead = f.rss_mb()
+    out = {"density_ballast_mb": ballast_mb, "density_fixed_overhead_mb": round(overhead, 1),
+           "density_fixed_overhead_host": _host_state(), "density_steps": []}
+    for n in steps:
+        repos = []
+        for i in range(n):
+            r = tmp / f"live{n}_{i}"
+            r.mkdir(parents=True, exist_ok=True)
+            repos.append(r)
+        for r in repos:
+            f.cli("enqueue", "--acp", "stub", "--cwd", str(r), "--prompt", "hold", "--registry", reg)
+        # wait until all n agents are live
+        deadline = time.time() + 120
+        pids = []
+        while time.time() < deadline:
+            pids = [p for p in _agent_pids(Path(f.env["FLEET_DB"])).values() if _alive(p)]
+            if len(pids) >= n:
+                break
+            time.sleep(0.3)
+        time.sleep(2)
+        orch = f.rss_mb()
+        agent_total = sum(_rss_kb(p) for p in pids) / 1024
+        per_session = agent_total / n if n else None
+        out["density_steps"].append({
+            "live_sessions": n, "orchestrator_rss_mb": round(orch, 1),
+            "agent_rss_total_mb": round(agent_total, 1),
+            "agent_rss_per_session_mb": round(per_session, 1) if per_session else None,
+            "total_rss_mb": round(orch + agent_total, 1),
+            "live_sessions_per_gib_agents": round(1024 / per_session, 1) if per_session else None,
+            "host": _host_state(),
+        })
+        # let this step's turns finish and the agents exit before the next step
+        deadline = time.time() + turn_ms / 1000 + 60
+        while time.time() < deadline:
+            if not any(_alive(p) for p in pids):
+                break
+            time.sleep(0.5)
+    f.stop()
+    return out
+
+
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
              "cap": scenario_cap, "repo": scenario_repo_contention, "priority": scenario_priority,
-             "chaos": scenario_chaos, "toolpark": scenario_tool_park}
+             "chaos": scenario_chaos, "toolpark": scenario_tool_park,
+             "orchestrator-kill": scenario_orchestrator_kill, "live-density": scenario_live_density,
+             "noise-floor": scenario_noise_floor}
+
+
+def _host_state() -> dict:
+    """Machine state next to RSS measurements (the VPS is shared with other spike sessions)."""
+    load1, load5, load15 = os.getloadavg()
+    mem = {}
+    try:
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":", 1)
+            if k in ("MemTotal", "MemAvailable"):
+                mem[k] = int(v.strip().split()[0]) // 1024
+    except OSError:
+        pass
+    return {"load_1m": round(load1, 2), "load_5m": round(load5, 2), "load_15m": round(load15, 2),
+            "mem_total_mb": mem.get("MemTotal"), "mem_available_mb": mem.get("MemAvailable"),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
 
 def main():
@@ -289,16 +562,24 @@ def main():
     ap.add_argument("--backend", default="sqlite", choices=["sqlite", "dbos"])
     ap.add_argument("--only", default=",".join(SCENARIOS))
     ap.add_argument("--out", required=True)
+    ap.add_argument("--repeats", type=int, default=10, help="noise-floor: repeats per scenario")
+    ap.add_argument("--noise-scenarios", default=None, help="noise-floor: comma separated subset of scenarios")
     a = ap.parse_args()
     global CLI_OVERRIDE
     CLI_OVERRIDE = a.cli
     tree = Path(a.tree).resolve()
-    res = {"backend": a.backend, "tree": str(tree)}
+    res = {"backend": a.backend, "tree": str(tree), "host": _host_state()}
     for name in a.only.split(","):
+        if name not in SCENARIOS:
+            raise SystemExit(f"unknown scenario {name}; known: {', '.join(SCENARIOS)}")
         with tempfile.TemporaryDirectory(prefix=f"fleetbench-{name}-") as t:
             t0 = time.time()
             try:
-                res.update(SCENARIOS[name](tree, a.backend, Path(t)))
+                if name == "noise-floor":
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), repeats=a.repeats,
+                                             subset=a.noise_scenarios))
+                else:
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t)))
             except Exception as e:  # keep going, record the failure
                 res[f"{name}_error"] = repr(e)[:300]
             print(f"[{a.backend}] {name} done in {time.time() - t0:.1f}s", file=sys.stderr, flush=True)

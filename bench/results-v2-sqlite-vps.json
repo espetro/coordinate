@@ -1,0 +1,149 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/bench2",
+  "host": {
+    "load_1m": 0.64,
+    "load_5m": 0.6,
+    "load_15m": 0.81,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 7980,
+    "timestamp": "2026-11-22T21:49:54+0000"
+  },
+  "enqueue_cli_median_ms": 106.3,
+  "enqueue_cli_p95_ms": 117.4,
+  "idle_rss_mb": 18.6,
+  "idle_cpu_pct": 0.0,
+  "throughput_jobs": 60,
+  "throughput_all_done": true,
+  "enqueue_total_s": 6.91,
+  "throughput_makespan_s": 7.2,
+  "throughput_jobs_per_s": 8.33,
+  "peak_rss_mb": 18.9,
+  "cap": 3,
+  "cap_jobs": 9,
+  "cap_all_done": true,
+  "cap_max_concurrency": 3,
+  "cap_holds": true,
+  "cap_makespan_s": 6.38,
+  "cap_ideal_s": 3.0,
+  "repo_all_done": true,
+  "repo_shared_max_concurrency": 1,
+  "repo_cap_holds": true,
+  "priority_order": [
+    "p9",
+    "p5",
+    "p1",
+    "p0"
+  ],
+  "priority_ok": true,
+  "chaos_all_done": true,
+  "chaos_recovery_to_all_done_s": 14.46,
+  "chaos_total_executions": 12,
+  "chaos_duplicated_jobs": 3,
+  "tool_all_done": true,
+  "tool_vitest_max_concurrency": 1,
+  "tool_cap_holds": true,
+  "tool_trivial_ran_while_parked": true,
+  "orchkill_jobs": 3,
+  "orchkill_all_done": true,
+  "orchkill_done": 3,
+  "orchkill_recovery_s": 28.21,
+  "orchkill_agents_alive_before_kill": 3,
+  "orchkill_agents_alive_after_kill": 3,
+  "orchkill_orphan_agents_surviving": 0,
+  "orchkill_duplicate_turns": 3,
+  "orchkill_resumed_via_session_load": 3,
+  "orchkill_restarted": 0,
+  "orchkill_per_job": [
+    {
+      "job": 1,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-579490-1795384317435004561",
+      "payload_session": "stub-579490-1795384317435004561",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    },
+    {
+      "job": 2,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-579488-1795384317434465647",
+      "payload_session": "stub-579488-1795384317434465647",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    },
+    {
+      "job": 3,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-579513-1795384319463220343",
+      "payload_session": "stub-579513-1795384319463220343",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    }
+  ],
+  "density_ballast_mb": 60,
+  "density_fixed_overhead_mb": 18.5,
+  "density_fixed_overhead_host": {
+    "load_1m": 0.41,
+    "load_5m": 0.57,
+    "load_15m": 0.77,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 7976,
+    "timestamp": "2026-11-22T21:52:32+0000"
+  },
+  "density_steps": [
+    {
+      "live_sessions": 1,
+      "orchestrator_rss_mb": 19.1,
+      "agent_rss_total_mb": 73.0,
+      "agent_rss_per_session_mb": 73.0,
+      "total_rss_mb": 92.1,
+      "live_sessions_per_gib_agents": 14.0,
+      "host": {
+        "load_1m": 0.41,
+        "load_5m": 0.57,
+        "load_15m": 0.77,
+        "mem_total_mb": 11682,
+        "mem_available_mb": 7920,
+        "timestamp": "2026-11-22T21:52:36+0000"
+      }
+    },
+    {
+      "live_sessions": 2,
+      "orchestrator_rss_mb": 19.7,
+      "agent_rss_total_mb": 146.0,
+      "agent_rss_per_session_mb": 73.0,
+      "total_rss_mb": 165.7,
+      "live_sessions_per_gib_agents": 14.0,
+      "host": {
+        "load_1m": 0.44,
+        "load_5m": 0.53,
+        "load_15m": 0.74,
+        "mem_total_mb": 11682,
+        "mem_available_mb": 7779,
+        "timestamp": "2026-11-22T21:53:38+0000"
+      }
+    },
+    {
+      "live_sessions": 4,
+      "orchestrator_rss_mb": 20.3,
+      "agent_rss_total_mb": 292.0,
+      "agent_rss_per_session_mb": 73.0,
+      "total_rss_mb": 312.3,
+      "live_sessions_per_gib_agents": 14.0,
+      "host": {
+        "load_1m": 0.71,
+        "load_5m": 0.61,
+        "load_15m": 0.75,
+        "mem_total_mb": 11682,
+        "mem_available_mb": 7657,
+        "timestamp": "2026-11-22T21:54:39+0000"
+      }
+    }
+  ]
+}
