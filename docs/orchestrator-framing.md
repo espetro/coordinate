@@ -33,13 +33,17 @@ The Node.js analogy holds once a session is split into two states:
 
 The scheduler is the event loop. Awaiting a human, a subtask, a lock or CI parks the session and frees its slot. "Thousands of concurrent agents" then means thousands of open sessions, with a small number live at once.
 
-This is the same trick behind Rivet's numbers. The "~7K" on github.com/rivet-dev is the star count of the `rivet` repo, not an agent count (R). Rivet's actual density claim is 72KB RAM per Actor, 4.99ms p99 cold start, and "hundreds of thousands" per server, achieved by keeping the agent loop and state in a hibernating Actor and reaching the sandbox only through tools ("separating the head from the hands") (R, vendor benchmark with a published repo).
+Rivet's "7,242x more agents per server" is 512 MiB (E2B's default sandbox allocation, a limit, not measured use) divided by 72.4 KiB per Actor (R). Its own benchmark repo measured 314.6 KiB per actor plus 367 KiB on the backend, about 769x counted fully, and excludes a fixed overhead of 1 to 5.7 GiB. The "agent" is an idle Actor that answers a ping inside a shared process, with no model loop and no CLI harness (details in `docs/research/rivet-density-claim.md`). The number does not transfer to external harness processes, but the idea does: keep parked sessions cheap and outside any process.
+
+Harness footprint varies by 6x, so harness choice is a scheduling input (`docs/research/harness-footprint-and-roles.md`, idle RSS after ACP `initialize`, M): maki 57MB and Codex app-server 59MB (Rust), Devin 107MB, Claude Code 237MB, Cursor 239MB, OpenCode 288MB, Kimi 355MB. MCP servers add about 241MB per Claude Code or Devin process. A live Claude Code turn measured 297 to 407MB, 598 to 613MB with children (M). Live RSS for the other harnesses is still unknown.
 
 The defensible numbers we can publish are therefore:
-- Parked sessions per device at a fixed orchestrator RSS, and storage per parked session.
-- Wake latency: from event to a resumed harness producing its first token, p50 and p99, per harness.
-- Live sessions per GB of device memory, per harness.
+- Live sessions per GiB of device memory, per harness, counting child processes.
+- Parked sessions per device at a fixed orchestrator RSS, and bytes per parked session, using a step-up memory test like Rivet's.
+- Wake latency: from event to a resumed harness producing its first token, p50 and p99, split by stage, per harness.
 - Scheduler overhead: CPU and RSS at N parked and M live sessions.
+- Maximum sustained live sessions before memory pressure or provider rate limits.
+Two rules: never put parked and live sessions in one ratio, and always publish the fixed overhead.
 
 ## Assessment 2: one orchestrator per device or one central orchestrator
 
@@ -67,6 +71,11 @@ So T3 gives cross-device delegation and visibility, not shared context. A contex
 - Session-scoped context: the session record plus a transcript pointer, exported on handoff so a different harness can resume with a summary.
 - Cross-agent messages and leases: an inbox with ack and advisory leases, as in MCP Agent Mail (R, see survey) or Orca's run inbox (R).
 
+Research on beads, Gas Town and CRDTs (`docs/research/shared-context-crdt.md`): beads (`gastownhall/beads`) now stores everything in Dolt; its old git JSONL plus SQLite design survives in `Dicklesworthstone/beads_rust`. Its open issues (stuck merges over ssh, sibling children that cannot merge, silently dropped comments, migrations breaking cross-machine merges, unbounded Dolt memory, agent mode not engaging under Claude Code) argue for copying its data model (hash ids, claims, dependency graph, `supersedes` links, device-local leases) and not its implementation.
+The adversarial point holds: each device is already the single writer of its own records, CRDTs merge bytes and not intent, and contradicting facts need `supersedes` links, expiry and a hub-side compaction pass rather than a CRDT.
+Position for M6: append-only files with one writer per device and kind, synced through a bare git repo on kinosmac. A git-bug style operation log for work items if they need automatic merges. Automerge or Loro only for shared notes, and only if a spike shows real concurrent edits. Ruled out: Dolt-based beads, cr-sqlite (stalled), ElectricSQL, PowerSync, Letta, mem0, LiteFS.
+Open: whether spokes can open connections to kinosmac over Tailscale (T3 links are one way, Tailscale itself may not be).
+
 ## Assessment 4: tracking awaits, state of the art
 
 Every system surveyed models a wait as a durable record plus a wake condition, so the waiter can release its resources:
@@ -76,6 +85,20 @@ Every system surveyed models a wait as a durable record plus a wake condition, s
 - Rate limits: per-provider usage tracking is now in control panels (Orca shows limits and reset times) (R). None of the surveyed tools throttles agent launches by provider quota. That stays our glue.
 
 For us, an await is one of: human (permission request or question), agent (subtask result), resource (lock, tool lease, rate limit), external (CI, PR review, timer). Each parks the session with a wake condition, and the scheduler wakes it when the condition fires or the TTL expires.
+
+## Assessment 5: concurrency levels by presence
+
+No agent tool surveyed changes agent count by user presence (`docs/research/presence-aware-concurrency.md`). T3 Code reads idle, lock, thermal and battery state only for its own polling, Claude Squad has a fixed limit of 10.
+Prior art is volunteer computing: BOINC has "in use" and "not in use" profiles (default memory limit 50% in use, 90% idle), Folding@home treats display sleep, screensaver, login window or lock as idle and waits 1 to 20s before switching, then resumes from a checkpoint. macOS background scheduling asks jobs to finish the current step and pause.
+Signals available on macOS without root: HID idle time, `pmset` assertions (caffeinate holds them, which hides real idleness), memory pressure level, `pmset -g therm`, battery. `taskpolicy -b -p <pid>` lowered a running process from priority 31 to 4 and `-B` restored it (M).
+Adversarial points: memory, not agent count, is the binding constraint; lowering QoS is instant but frees no memory; idle time misses video calls and reading; provider quota may bind before the device does.
+Position: three levels per device (focus, away, overnight). Drop a level immediately on user activity, raise only after the condition holds for a while (hysteresis). Memory pressure, heat and low battery can only lower the cap. On a drop, first lower QoS of background agents, then park the surplus at the next turn boundary; never kill a running turn. Alternatives kept: a memory budget that reserves more while present, or keep the count and only lower QoS while present.
+
+## Assessment 6: harness priority and roles
+
+Proposed config (not implemented): the user lists harnesses with a priority, roles, provider quota pool, allowed devices and a seed footprint. The scheduler applies pins, filters on role, quota and memory headroom, then ranks by role match, priority, quota headroom and footprint, and learns typical and worst-case RSS per harness from live sessions.
+Role claims are mostly practitioner opinion: oh-my-opencode (now oh-my-openagent) routes Claude to planning and the main agent and GPT to deep work and plan review, without a cited benchmark. Only Aider's architect/editor mode (85% vs 79.7%) and Anthropic's research eval (+90.2% at about 15x tokens) publish numbers. Cognition's single-threaded agent argument, the MAST failure taxonomy and Anthropic's note that coding parallelises poorly push back.
+Position: use roles as a scheduling tool (spread quota, cross-provider review, cheap exploration on light harnesses), not as a capability claim, and measure before trusting any role mapping.
 
 ## Modules
 

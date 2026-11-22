@@ -16,6 +16,7 @@ Under that framing, the question per candidate is which module it could own, not
 | Orca (`stablyai/orca`) | MIT (R) | Control panel, plus M4 and M5 patterns: Run inbox, Tasks, Dispatches, heartbeats, `worker_done` with dispatch ids, `ask`, decision gates, federated workers on other hosts, nested worker depth 4 (R) | A desktop app that owns its state, not a library; no concurrency caps found in the orchestration docs | Second control panel and the best reference for await tracking; check its CLI as an M1 or M4 driver |
 | T3 Code | MIT (K) | Control panel, M1 connector (links, `delegate_task`, read-only remote threads), placement hint (auto balance by CPU and memory at thread creation) (R) | Links are one way and do not chain, threads are not replicated, no global caps (R) | Keep as M1 and the panel |
 | MCP Agent Mail (Dicklesworthstone, Python and Rust versions) | unknown | M5 locks (advisory file leases with TTL, exclusive or shared, pre-commit guard), M6 messages (identities, inboxes, threads, Git plus SQLite) (R, repo descriptions) | Advisory only; star count and maintenance not checked | Candidate for M5 locks and M6 |
+| beads (`gastownhall/beads`), Gas Town, Gas City | unknown | M6 context and M5 claims: hash ids, dependency graph, `supersedes`, claims (R) | Now Dolt-backed; open issues on stuck merges, dropped comments, unbounded Dolt memory, agent mode not engaging (R) | Copy the data model, not the implementation (`docs/research/shared-context-crdt.md`) |
 | River OSS | OSS core, Pro paid (R) | M4 per device | Go rewrite, SQLite experimental, keyed limits are Pro | Weaker now: no park and wake, no awaits |
 | OpenWorkflow | unknown | M4 later | No concurrency controls yet (R) | Watch |
 | Absurd | Apache-2.0 (R) | M5 design ideas (first-emit-wins events, lease claims) | Postgres (R) | Reference only |
@@ -28,7 +29,9 @@ Proposed stack to test, per module:
 - M2 dispatcher: ACP, with Sandbox Agent evaluated as an alternative interface.
 - M3 and M4: Restate spike first, compared against our SQLite scheduler extended with parked sessions.
 - M5: Restate awakeables for awaits if the spike passes, MCP Agent Mail style leases for files, our toolcaps for tools.
-- M6: git plus an inbox (Agent Mail or Orca style).
+- M6: append-only, single-writer files per device synced through a bare git repo on kinosmac, with a beads-style data model; Automerge or Loro only for shared notes if concurrent edits prove real.
+- Harness choice: priority, roles and learned footprint per harness (`docs/research/harness-footprint-and-roles.md`).
+- Caps: three presence levels per device (`docs/research/presence-aware-concurrency.md`).
 - Panel: T3 Code, with Orca as a second client.
 
 ## Scheduler-only view (2026-11-21)

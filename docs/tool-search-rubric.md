@@ -11,7 +11,7 @@ Paste everything between the lines.
 
 You are a research agent. Find open source tools, or small stacks of them, that can serve as modules of a personal orchestration layer for AI coding-agent sessions. Run `date` first. Do not recommend anything you have not checked against its own docs or source.
 
-Context. One person runs coding agents (Claude Code, Codex, OpenCode and others) on three devices: a laptop, a VPS and an old MacBook, connected over Tailscale in a hub and spoke shape (the laptop links to the other two). Agents are driven mostly from a control panel (T3 Code, or an agent IDE such as Orca), but the orchestration layer must also run on its own. Agents are external processes started through ACP (Agent Client Protocol), with tmux as a fallback, and resume through their own session transcripts (ACP `session/load`). A live agent process costs about 370MB, so most sessions must be parked (no process, a small durable record) and woken on events, Node.js event-loop style: hundreds to thousands of open sessions, a few live per device.
+Context. One person runs coding agents (Claude Code, Codex, OpenCode and others) on three devices: a laptop, a VPS and an old MacBook, connected over Tailscale in a hub and spoke shape (the laptop links to the other two). Agents are driven mostly from a control panel (T3 Code, or an agent IDE such as Orca), but the orchestration layer must also run on its own. Agents are external processes started through ACP (Agent Client Protocol), with tmux as a fallback, and resume through their own session transcripts (ACP `session/load`). Live agent processes cost from about 60MB (Rust harnesses such as Codex or maki, idle) to about 600MB (Claude Code with children, mid-turn), so most sessions must be parked (no process, a small durable record) and woken on events, Node.js event-loop style: hundreds to thousands of open sessions, a few live per device.
 
 The layer is split into modules with a single responsibility each. A candidate may cover one module or several:
 - M1 Connector: reach other devices, publish device state, delegate work.
@@ -44,12 +44,13 @@ Scored criteria (0 absent, 1 workaround of 150 lines or more, 2 workaround under
 - S11 [1] Composable: a library or a small binary with a CLI or API we can wrap, not a full app that must own the UI.
 - S12 [1] Published density or concurrency benchmarks with a reproducible method.
 - S13 [1] Contribution path (we may patch it) and language fit (TypeScript or Python best, then Go or Rust as a single binary).
+- S14 [1] Adaptive caps: concurrency levels or limits driven by user presence, memory pressure, thermal state or battery, with hysteresis.
 
 Anti-goals. Do not reward: deterministic step replay of code inside the worker (our agents resume from transcripts), workflow versioning, serverless or HTTP push to hosted functions, HA clusters, multi-tenant billing, hosted-only clouds, dashboards.
 
-Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail.
+Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail, beads and Gas Town or Gas City.
 
-Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
+Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas, presence or load aware schedulers (BOINC style "in use" profiles), harness routers that assign roles to models. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
 
 Evidence rules. Rank sources: the project's own docs and source, then its issue tracker and changelog, then independent write-ups, then marketing. Tag numbers from blogs or landing pages as B and do not trust them. Unknown stays unknown, never inferred from the name or the category. Every field needs a URL.
 
@@ -60,7 +61,7 @@ Output. First a ranked list of at most 8 candidates with the modules each covers
   "name": "", "url": "", "version": "", "last_release": "YYYY-MM-DD", "stars": null, "license": "", "language": "",
   "modules": [], "store": "", "extra_processes": [],
   "gates": {"G1": {"pass": null, "evidence": ""}, "G2": {}, "G3": {}, "G4": {}, "G5": {}, "G6": {}, "G7": {}},
-  "scores": {"S1": {"score": null, "evidence": ""}, "S2": {}, "S3": {}, "S4": {}, "S5": {}, "S6": {}, "S7": {}, "S8": {}, "S9": {}, "S10": {}, "S11": {}, "S12": {}, "S13": {}},
+  "scores": {"S1": {"score": null, "evidence": ""}, "S2": {}, "S3": {}, "S4": {}, "S5": {}, "S6": {}, "S7": {}, "S8": {}, "S9": {}, "S10": {}, "S11": {}, "S12": {}, "S13": {}, "S14": {}},
   "unknowns": [], "weighted_total": null, "suggested_glue_lines": null
 }
 ```
@@ -83,7 +84,7 @@ These are the M4 scheduler numbers measured so far. Use them to sanity check an 
 | S10 enqueue median | 234 to 293ms under load (M) | 2431ms (M) |
 
 The S10 numbers were taken with other heavy jobs running on the machine, so treat them as upper bounds.
-For scale: one live Claude Code process measured 366MB RSS (M), so the G2 budget excludes agent processes.
+For scale: idle harnesses measured 57MB (maki) to 355MB (Kimi), and a live Claude Code turn 598 to 613MB with children (M), so the G2 budget excludes agent processes.
 
 ## 3. Adapter contract (M4 scheduler)
 
@@ -125,10 +126,12 @@ Planned, needed for the concurrency-first and multi-device requirements (not imp
 | `orchestrator-kill` | kill -9 the orchestrator with live ACP sessions: agents keep running, the restarted orchestrator re-adopts them or resumes them via `session/load` | G4, S3 |
 | `harness-swap` | resume a parked session on a different harness from its exported context | S3, S4 |
 | `partition` | cut the hub link: spokes keep running and queueing, global overshoot stays within the sum of allowances, nothing is dropped, state converges after reconnect | G4, S5 |
+| `presence-drop` | switch the device from away to focus with 6 live sessions: QoS drops at once, surplus parks at the next turn boundary, no turn is killed, level does not flap | S14, S1 |
+| `live-density` | live sessions per GiB per harness, counting child processes, plus the fixed overhead | G2, S12 |
 | `lock-contention` | two agents request the same file lease: one waits parked, wakes on release or TTL | S6, S7 |
 
 ## 5. Decision rule
 
 Pick per module, not per tool. A candidate is adopted for a module when it passes every gate, scores at least 60% of the weighted points relevant to that module, and the glue it needs is smaller than the code it replaces.
-Weights sum to 26, so the ceiling is 78 points over all modules.
+Weights sum to 27, so the ceiling is 81 points over all modules.
 Where no candidate qualifies, keep our own module (the SQLite scheduler, with leases reaped at daemon start) and record the gap as a contribution target.
