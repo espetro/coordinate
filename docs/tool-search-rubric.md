@@ -1,7 +1,7 @@
-# Tool search rubric for fleet
+# Tool search rubric for the agent orchestration layer
 
-Purpose: a reference spec and acceptance test. Hand section 1 to a web search agent so it looks for tools or stacks that satisfy it (the reverse prompt), then run section 4 on the shortlist.
-Derived from the DBOS spike (`docs/dbos-spike.md`): every gate and score below exists because a candidate failed or won on it.
+Purpose: a reference spec and acceptance test. Hand section 1 to a web search agent so it looks for tools or stacks that satisfy it (the reverse prompt), then run sections 3 and 4 on the shortlist.
+The requirements and the reasoning behind them are in `docs/orchestrator-framing.md`. The scheduler gates come from measured failures in the DBOS spike (`docs/dbos-spike.md`).
 
 ## 1. Prompt for the search agent
 
@@ -9,75 +9,83 @@ Paste everything between the lines.
 
 ---
 
-You are a research agent. Find tools, libraries or small stacks that could replace the queue, lease and concurrency-cap layer of a per-machine job dispatcher. Do not recommend anything you have not checked against its own docs or source.
+You are a research agent. Find open source tools, or small stacks of them, that can serve as modules of a personal orchestration layer for AI coding-agent sessions. Run `date` first. Do not recommend anything you have not checked against its own docs or source.
 
-Context. The dispatcher, called fleet, runs on three machines (a laptop, a VPS, an old MacBook), each with its own local store and no shared database. It queues and runs external processes: shell commands and AI coding agents, lasting minutes to hours. An agent that crashes is resumed by its own session transcript, so we do NOT need step-replay workflow semantics. Agents enqueue work by calling a CLI many times per day. Machine caps are 2, 3 and 6 concurrent jobs. At most 1 job per git repo at a time. Some jobs also take weighted leases on heavy tools (for example a test runner costing 2 of 2 units per project).
+Context. One person runs coding agents (Claude Code, Codex, OpenCode and others) on three devices: a laptop, a VPS and an old MacBook, connected over Tailscale in a hub and spoke shape (the laptop links to the other two). Agents are driven mostly from a control panel (T3 Code, or an agent IDE such as Orca), but the orchestration layer must also run on its own. Agents are external processes started through ACP (Agent Client Protocol), with tmux as a fallback, and resume through their own session transcripts (ACP `session/load`). A live agent process costs about 370MB, so most sessions must be parked (no process, a small durable record) and woken on events, Node.js event-loop style: hundreds to thousands of open sessions, a few live per device.
 
-Hard gates. Reject a candidate that fails any, citing evidence.
-- G1 No external server process to operate: no Postgres, Redis, Kafka or cluster. A single embedded store, or one self-contained binary.
-- G2 State lives in a local file or embedded store and survives kill -9 and reboot.
-- G3 Whole resident stack idles at 200MB RSS or less (60MB or less is the target), and about 0% CPU.
-- G4 Enqueue from a fresh shell process takes 300ms or less median (100ms or less is the target).
-- G5 Atomic machine-wide cap N plus a per-key cap (key = repo path) of 1, with zero violations under load.
-- G6 After kill -9 of the daemon, all in-flight jobs finish with no manual action, and the process group of the dead attempt is killed.
-- G7 Runs on macOS (arm64 and x86_64) and Linux.
-- G8 License allows internal use and modification. Flag SSPL, BSL and paid tiers explicitly.
+The layer is split into modules with a single responsibility each. A candidate may cover one module or several:
+- M1 Connector: reach other devices, publish device state, delegate work.
+- M2 Dispatcher: start, prompt, cancel and resume a session on any harness behind one interface.
+- M3 Session store: durable session records with TTL and garbage collection.
+- M4 Scheduler: queue, soft concurrency caps per device and per key, priority, placement across devices, park and wake.
+- M5 Coordination: locks and leases on files and tools, provider rate limits, awaits (waiting on a human, another agent, a lock, CI).
+- M6 Context: shared notes and handoffs across harnesses and devices.
+
+Hard gates. Reject a candidate that fails any gate for the modules it claims, citing evidence.
+- G1 No external server to operate: no Postgres, Redis, Kafka, NATS, object storage or cluster. Embedded stores, files, or one self-contained binary only.
+- G2 Its resident footprint fits a 200-300MB budget for the whole orchestration stack on one device, excluding the agent processes themselves (under 60MB per module is the target), with about 0% idle CPU.
+- G3 State survives kill -9 and reboot, and stored state can be bounded by TTL or retention.
+- G4 Availability over consistency: when the candidate's process or the network is down, already running agents keep running and new work queues locally. Nothing is dropped.
+- G5 Runs on macOS (arm64 and x86_64) and Linux.
+- G6 Open source license that allows internal use and modification. Flag SSPL, BSL and paid tiers explicitly.
+- G7 Maintained: 10 or more GitHub stars and a release or commits within the last 6 months, as of the date you ran.
 
 Scored criteria (0 absent, 1 workaround of 150 lines or more, 2 workaround under 150 lines or partial, 3 native). Weight in brackets.
-- S1 [3] Priority is honored globally across keys, not only within a partition.
-- S2 [3] A job waiting on a cap or a tool lease does not hold a machine slot.
-- S3 [2] Weighted per-key costs, or a documented extension point to add them.
-- S4 [2] We own the subprocess lifecycle: a pre-exec hook, or the worker is our own code.
-- S5 [2] Long jobs stay leased without step boundaries (heartbeat or liveness based).
-- S6 [2] A running job can persist a small value (the agent session id) so a retry resumes it.
-- S7 [2] Cancel a running job and kill its process group.
-- S8 [2] How much of our 576 lines of queue and daemon code it removes.
-- S9 [1] Status and stats from the CLI or SQL.
-- S10 [2] Maintenance health: release in the last 6 months, more than one maintainer, issues answered.
-- S11 [1] Contribution path (we may patch it).
-- S12 [1] Language fit: Python best, then TypeScript, then Go or Rust as a single binary.
+- S1 [3] Park and wake: a waiting session holds no process and no slot, and is woken by an event (durable promise, signal, message, timer).
+- S2 [3] Soft caps: per-device and per-key (repo) concurrency limits, where surplus work queues instead of failing. Weighted costs per key score higher.
+- S3 [3] Resume after the orchestrator dies, with the same harness or a different one, from a persisted session id or transcript.
+- S4 [2] Harness-agnostic dispatch: ACP or an equivalent universal agent API, not tied to one vendor's agent.
+- S5 [2] Cross-device: delegation or placement across machines without a shared database, tolerant of partitions.
+- S6 [2] Locks and leases for agents: advisory file or tool leases with TTL.
+- S7 [2] Await tracking: each session records what it waits on, visible from a CLI or API.
+- S8 [2] Rate limiting by provider quota or token budget, not only by count.
+- S9 [2] Priority honored across keys, not only within a partition.
+- S10 [2] Enqueue or dispatch from a fresh shell in 300ms or less (100ms is the target).
+- S11 [1] Composable: a library or a small binary with a CLI or API we can wrap, not a full app that must own the UI.
+- S12 [1] Published density or concurrency benchmarks with a reproducible method.
+- S13 [1] Contribution path (we may patch it) and language fit (TypeScript or Python best, then Go or Rust as a single binary).
 
-Anti-goals. Do not reward: deterministic replay, workflow versioning, serverless or HTTP push, HA clusters, multi-tenant billing, hosted cloud, dashboards.
+Anti-goals. Do not reward: deterministic step replay of code inside the worker (our agents resume from transcripts), workflow versioning, serverless or HTTP push to hosted functions, HA clusters, multi-tenant billing, hosted-only clouds, dashboards.
 
-Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River.
+Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail.
 
-Where to look. Job queues with keyed or partitioned concurrency, embedded or SQLite-backed queues, process supervisors with queues, durable task runners, agent orchestrators, queue libraries in Python, TypeScript, Go and Rust. Vocabulary: "concurrency key", "partition", "group concurrency", "per-key limit", "lease", "visibility timeout", "heartbeat", "reaper", "embedded", "SQLite", "single binary". Do not limit yourself to things called workflow engines.
+Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
 
-Evidence rules. Rank sources: the project's own docs and source, then its issue tracker and changelog, then independent write-ups, then marketing. A number from a blog is tagged B and not trusted. Run `date` first and check release dates against it. Unknown stays unknown, never inferred from the name or the category. Every field needs a URL.
+Evidence rules. Rank sources: the project's own docs and source, then its issue tracker and changelog, then independent write-ups, then marketing. Tag numbers from blogs or landing pages as B and do not trust them. Unknown stays unknown, never inferred from the name or the category. Every field needs a URL.
 
-Output. First a ranked list of at most 8 candidates, then one JSON object per candidate using the schema below, then a section "rejected, and the first gate each failed".
+Output. First a ranked list of at most 8 candidates with the modules each covers, then one JSON object per candidate using the schema below, then a section "rejected, and the first gate each failed", then a proposed stack: one candidate or our own glue per module.
 
 ```json
 {
-  "name": "", "url": "", "version": "", "last_release": "YYYY-MM-DD", "license": "", "language": "",
-  "store": "", "extra_processes": [],
-  "gates": {"G1": {"pass": null, "evidence": ""}, "G2": {}, "G3": {}, "G4": {}, "G5": {}, "G6": {}, "G7": {}, "G8": {}},
-  "scores": {"S1": {"score": null, "evidence": ""}, "S2": {}, "S3": {}, "S4": {}, "S5": {}, "S6": {}, "S7": {}, "S8": {}, "S9": {}, "S10": {}, "S11": {}, "S12": {}},
-  "unknowns": [], "weighted_total": null, "suggested_adapter_effort_lines": null
+  "name": "", "url": "", "version": "", "last_release": "YYYY-MM-DD", "stars": null, "license": "", "language": "",
+  "modules": [], "store": "", "extra_processes": [],
+  "gates": {"G1": {"pass": null, "evidence": ""}, "G2": {}, "G3": {}, "G4": {}, "G5": {}, "G6": {}, "G7": {}},
+  "scores": {"S1": {"score": null, "evidence": ""}, "S2": {}, "S3": {}, "S4": {}, "S5": {}, "S6": {}, "S7": {}, "S8": {}, "S9": {}, "S10": {}, "S11": {}, "S12": {}, "S13": {}},
+  "unknowns": [], "weighted_total": null, "suggested_glue_lines": null
 }
 ```
 
-For the top 3, also write the adapter shim described in section 3 and say what you could not verify without running it.
+For the top 3, describe the adapter shim from section 3 for the modules they cover, and say what you could not verify without running it.
 
 ---
 
-## 2. Calibration: how our own backends score
+## 2. Calibration: how our own scheduler backends score
 
-Use these to sanity check an agent's scorecard. M means measured with `bench/bench.py`.
+These are the M4 scheduler numbers measured so far. Use them to sanity check an agent's scorecard. M means measured with `bench/bench.py`.
 
 | Item | SQLite (current) | DBOS spike |
 |---|---|---|
-| G3 idle RSS | 25MB (M) | 82MB (M) |
-| G4 enqueue median | 234 to 293ms under load (M) | 2431ms (M) |
-| G5 caps hold | yes (M) | yes (M) |
-| G6 recovery time | 16.7s, waits for the lease (M) | 2.7s (M) |
-| S1 global priority | 3 (M) | 0 (M) |
-| S2 park frees slot | 3 (M) | 0 (M) |
-| S3 weighted costs | 3, own code | 1, glue table |
+| G2 idle RSS | 25MB (M) | 82MB (M) |
+| G3 recovery after kill -9 | 16.7s, waits for the lease (M) | 2.7s (M) |
+| S1 waiting job frees its slot | 3 (M) | 0 (M), suspend is Enterprise only |
+| S2 caps hold | 3 (M), weighted costs in own code | 2 (M), weights via a glue table |
+| S9 global priority | 3 (M) | 0 (M), per partition only |
+| S10 enqueue median | 234 to 293ms under load (M) | 2431ms (M) |
 
-The G4 numbers were taken with other heavy jobs running on the machine, so treat them as upper bounds.
+The S10 numbers were taken with other heavy jobs running on the machine, so treat them as upper bounds.
+For scale: one live Claude Code process measured 366MB RSS (M), so the G2 budget excludes agent processes.
 
-## 3. Adapter contract
+## 3. Adapter contract (M4 scheduler)
 
 A candidate is tested by wrapping it in an executable shim, so the same benchmark runs against any of them.
 Invocation: `python bench/bench.py --cli "<shim command>" --backend custom --out result.json`.
@@ -91,22 +99,36 @@ Environment the shim reads: `FLEET_DB` (state path, inside a temp dir), `FLEET_C
 
 Semantics the shim must preserve: a nonzero exit marks the job failed and is not retried, except after a daemon crash, where in-flight jobs run again (at-least-once).
 
-## 4. Acceptance test, mapped to gates
+## 4. Acceptance test
+
+Implemented in `bench/bench.py` (M4 scheduler, with shell jobs standing in for agents):
 
 | Scenario (`--only`) | Checks | Gate or score |
 |---|---|---|
-| `cli` | median and p95 enqueue time from a cold process | G4 |
-| `idle` | RSS and CPU of the whole stack after 20s idle | G3 |
-| `throughput` | 60 trivial jobs at cap 6, makespan and peak RSS | G3, S8 context |
-| `cap` | cap 3, 9 jobs, max observed concurrency from job-written timestamps | G5 |
-| `repo` | 4 jobs on one repo plus 2 others, shared repo concurrency must be 1 | G5 |
-| `priority` | cap 1, blocker running, jobs queued with priorities 0, 5, 1, 9 on different repos, expected order 9, 5, 1, 0 | S1 |
-| `chaos` | kill -9 the daemon group at 1.5s, restart, all 9 jobs must finish, reports recovery time and duplicate runs | G6 |
-| `toolpark` | two cost-2 tool jobs on one project with limit 2, plus a trivial job at cap 2: tool concurrency must be 1, and the trivial job should run while one is parked | G5, S2, S3 |
+| `cli` | median and p95 enqueue time from a cold process | S10 |
+| `idle` | RSS and CPU of the whole stack after 20s idle | G2 |
+| `throughput` | 60 trivial jobs at cap 6, makespan and peak RSS | G2 |
+| `cap` | cap 3, 9 jobs, max observed concurrency from job-written timestamps | S2 |
+| `repo` | 4 jobs on one repo plus 2 others, shared repo concurrency must be 1 | S2 |
+| `priority` | cap 1, blocker running, jobs queued with priorities 0, 5, 1, 9 on different repos, expected order 9, 5, 1, 0 | S9 |
+| `chaos` | kill -9 the daemon group at 1.5s, restart, all 9 jobs must finish, reports recovery time and duplicate runs | G3, G4 |
+| `toolpark` | two cost-2 tool jobs on one project with limit 2, plus a trivial job at cap 2: tool concurrency must be 1, and the trivial job should run while one is parked | S1, S2, S6 |
 
-A candidate passes the acceptance test when `cap_holds`, `repo_cap_holds`, `chaos_all_done` and `tool_cap_holds` are true and `enqueue_cli_median_ms` is 300 or less. `priority_ok` and `tool_trivial_ran_while_parked` decide S1 and S2.
+A scheduler passes when `cap_holds`, `repo_cap_holds`, `chaos_all_done` and `tool_cap_holds` are true and `enqueue_cli_median_ms` is 300 or less. `priority_ok` and `tool_trivial_ran_while_parked` decide S9 and S1.
+
+Planned, needed for the concurrency-first and multi-device requirements (not implemented yet):
+
+| Scenario | Checks | Gate or score |
+|---|---|---|
+| `park-density` | open 1,000 then 10,000 parked sessions, orchestrator RSS and bytes per session, then TTL expiry reclaims storage | G2, G3, S12 |
+| `wake-latency` | event to first agent output for a parked ACP session, p50 and p99, per harness | S1, S12 |
+| `orchestrator-kill` | kill -9 the orchestrator with live ACP sessions: agents keep running, the restarted orchestrator re-adopts them or resumes them via `session/load` | G4, S3 |
+| `harness-swap` | resume a parked session on a different harness from its exported context | S3, S4 |
+| `partition` | cut the hub link: spokes keep running and queueing, global overshoot stays within the sum of allowances, nothing is dropped, state converges after reconnect | G4, S5 |
+| `lock-contention` | two agents request the same file lease: one waits parked, wakes on release or TTL | S6, S7 |
 
 ## 5. Decision rule
 
-Adopt only if the candidate passes every gate, scores at least 45 weighted points out of 69, and removes at least half of the 576 lines.
-Otherwise keep the SQLite backend and take the cheap win: reap expired leases at daemon start.
+Pick per module, not per tool. A candidate is adopted for a module when it passes every gate, scores at least 60% of the weighted points relevant to that module, and the glue it needs is smaller than the code it replaces.
+Weights sum to 26, so the ceiling is 78 points over all modules.
+Where no candidate qualifies, keep our own module (the SQLite scheduler, with leases reaped at daemon start) and record the gap as a contribution target.
