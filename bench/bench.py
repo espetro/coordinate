@@ -357,6 +357,14 @@ def _alive(pid: int) -> bool:
         return False
 
 
+def _kill_group(pid: int) -> None:
+    """SIGKILL a process group we started (agents run in their own session)."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def _rss_kb(pid: int) -> int:
     try:
         out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout
@@ -413,6 +421,29 @@ def scenario_orchestrator_kill(tree, backend, tmp, k=3, turn_ms=20000, lease=4):
             break
         time.sleep(0.5)
     recovery = time.time() - t_kill
+    # the agents of the killed daemon keep running (G4); the daemon only reaps an orphan
+    # when its lease expires, so the resumed attempt can briefly run beside the old agent.
+    # Measure that overlap and then clean up every survivor we started (by exact pid and
+    # process group), including the agents of the retried attempts.
+    survivors = [p for p in pids.values() if _alive(p)]
+    for p in survivors:
+        _kill_group(p)
+    time.sleep(0.5)
+    for p in survivors:
+        if _alive(p):
+            try:
+                os.kill(p, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    # the retried attempts' own agents, whose pid files the daemon overwrote
+    for p in _agent_pids(Path(f.env["FLEET_DB"])).values():
+        if p not in survivors and _alive(p):
+            _kill_group(p)
+            if _alive(p):
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
     dup = resumed = restarted = 0
     per_job = []
     for i, jid in enumerate(jids):
@@ -441,6 +472,7 @@ def scenario_orchestrator_kill(tree, backend, tmp, k=3, turn_ms=20000, lease=4):
     return {"orchkill_jobs": k, "orchkill_all_done": done == k, "orchkill_done": done,
             "orchkill_recovery_s": round(recovery, 2),
             "orchkill_agents_alive_before_kill": alive_before, "orchkill_agents_alive_after_kill": alive_after_kill,
+            "orchkill_orphan_agents_surviving": len(survivors),
             "orchkill_duplicate_turns": dup, "orchkill_resumed_via_session_load": resumed,
             "orchkill_restarted": restarted, "orchkill_per_job": per_job}
 
