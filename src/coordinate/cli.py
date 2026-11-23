@@ -74,6 +74,9 @@ def build() -> argparse.ArgumentParser:
     sv = s.add_parser("service", help="install/uninstall/status the per-user daemon service")
     sv.add_argument("action", choices=["install", "uninstall", "status"])
     s.add_parser("daemon", help="run the dispatcher")
+    pl = s.add_parser("plugins", help="list or run config-dir plugins (see .agents/docs/extensibility.md)")
+    pl.add_argument("action", choices=["list", "run"], nargs="?", default="list")
+    pl.add_argument("--interface", default=None, help="only plugins with this interface (run)")
     return p
 
 
@@ -86,6 +89,10 @@ def main(argv=None) -> int:
         except KeyboardInterrupt:
             pass
         return 0
+    if a.verb == "plugins":
+        from . import plugins
+        argv = [a.action] + (["--interface", a.interface] if a.interface else [])
+        return plugins.main(argv)
     if a.verb == "migrate":
         written = paths.migrate()
         if not written:

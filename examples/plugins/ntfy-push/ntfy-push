@@ -1,0 +1,14 @@
+#!/bin/sh
+# Example coordinate plugin: metrics/lifecycle hook (interface: hook).
+# Reads one JSON event per invocation on stdin; forwards it to an ntfy topic if configured,
+# otherwise logs to stderr so the example is observable out of the box.
+# Spec: .agents/docs/extensibility.md sections 1.2 and 1.3.
+topic="${NTFY_TOPIC:-}"
+payload=$(cat)
+if [ -n "$topic" ]; then
+    # best effort; a hook must never fail loudly on delivery problems
+    printf '%s' "$payload" | curl -s -m 3 -d @- "https://ntfy.sh/$topic" >/dev/null 2>&1 || true
+else
+    printf 'ntfy-push: no NTFY_TOPIC set, event: %s\n' "$payload" >&2
+fi
+exit 0
