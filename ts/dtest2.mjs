@@ -1,0 +1,15 @@
+import "koffi";
+import "@cutils/sqlite/node-binding";
+process.env.COORDINATE_DB = "/tmp/tstest4b/queue.db";
+process.env.COORDINATE_CAP = "3";
+process.env.COORDINATE_LEASE_S = "5";
+process.env.COORDINATE_MACHINE = "bench";
+import * as fs from "node:fs";
+fs.rmSync("/tmp/tstest4b", { recursive: true, force: true });
+const q = await import("./src/queue.ts");
+const d = await import("./src/daemon.ts");
+const db = q.connect();
+q.enqueue(db, { cmd: ["true"], cwd: "/tmp" });
+q.enqueue(db, { cmd: ["false"], cwd: "/tmp" });
+setTimeout(() => process.exit(0), 4000);
+d.run();
