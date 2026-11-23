@@ -11,6 +11,7 @@ coordinate <verb> [args]
 | Verb | What it does |
 | --- | --- |
 | `daemon` | Runs the claim loop on this machine |
+| `doctor` | Prints a health report (version, DB, config, daemon liveness, queue stats); exits non-zero on failed checks |
 | `enqueue [options] -- <command...>` | Adds a job and prints its id |
 | `status [id]` | Lists jobs, or shows one |
 | `status --self` | Shows the job whose id is in `COORDINATE_JOB_ID` |
