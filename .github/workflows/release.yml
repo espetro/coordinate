@@ -192,18 +192,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build the wheel and sdist
-        run: uv build
-
-      - name: Checksums
-        run: |
-          cd dist
-          sha256sum -- ./*.whl ./*.tar.gz > SHA256SUMS
-          cat SHA256SUMS
-
       - name: Download the binaries
         uses: actions/download-artifact@v4
         with:
@@ -222,9 +210,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.whl
-            dist/*.tar.gz
-            dist/SHA256SUMS
             dist/SHA256SUMS-binaries
             dist/coordinate-*
           generate_release_notes: true
