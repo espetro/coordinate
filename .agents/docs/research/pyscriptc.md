@@ -128,3 +128,24 @@ Smallest experiment, if we want a number for the compiled path (half a day):
 4. Diff the output against the CPython path on fixtures that include NULL columns, REAL deadlines and a non-ASCII prompt in the payload.
 
 Go criteria: at least 5x lower median latency on the VPS, byte-identical JSON on every fixture (or a contract change we accept, such as numbers as strings), zero busy errors, and both platform builds under 5 minutes in CI. With today's adapter the non-ASCII fixture fails (M), so the realistic expected outcome is no-go until pyscriptc fixes JSON non-ASCII and the sqlite adapter gains typed columns and parameter binding. If the latency gain is wanted before that, a 100-line Go or Rust `coordinate-status` reader is the more predictable route to the same 5ms.
+
+## Tracker and dev branch status (checked 2026-11-23)
+
+Default branch `master` is 35 commits ahead of v0.10.0 (released 2026-11-17), last push 2026-11-19. The assessment above ran on bb923e63, which is already past v0.10.0. On `master` (8f0eaf45) none of our blockers is implemented: `start_new_session`, `add_subparsers`, `lastrowid` and `rowcount` appear only in vendored typeshed stubs, and `signal` support is limited to POSIX constants plus `os.kill`/`os.killpg` (#1244), not handlers. The unreleased JSON work (db49c022) lowers `ensure_ascii=False` and documents non-ASCII escaping, which may fix the writer side of the "migración" crash; the reader and I/O side belong to the code-point epic, still open.
+
+| Blocker | Tracked | State |
+|---|---|---|
+| `sqlite3` module (params, rowcount, lastrowid, NULL as None) | no | only adapter-style libs are planned (#90 ONNX, #91 DuckDB, #1209 Arrow) |
+| `subprocess.Popen(env=, start_new_session=)` | partly: #503, #877 closed for basic `Popen` | kwargs not tracked |
+| Non-ASCII text in JSON, stdin/stdout, env | yes: #477 (S5 data formats), #478 (S6 UTF-8 I/O), #1226 (heterogeneous JSON) | open |
+| `argparse` subcommands | no: #510 closed covers `type=`, `default=`, `store_true` | not tracked |
+| `signal.signal` handlers | no: #1244 closed covers constants and `os.kill` | not tracked |
+
+How soon: the open epics have no milestone, and recent commits went to asyncio, http.server, inference and design notes, not to these. At the current pace (35 commits in the 6 days after the release, then quiet), expect weeks rather than days, and only if someone files and prioritizes the four untracked items.
+
+Draft issues (not filed; filing on GitHub needs the author's approval):
+
+1. `stdlib: sqlite3 surface for a job queue (connect, execute with ? params, executemany, fetchone/fetchall, rowcount, lastrowid, None for NULL, isolation_level=None, PRAGMA)`. Repro: coordinate's `queue.py` binds parameters in about 40 statements.
+2. `stdlib: subprocess.Popen(env=, start_new_session=, cwd=) and Popen.pid/poll/wait(timeout=)`. Repro: a daemon that spawns agents in their own session and reaps them.
+3. `argparse: add_subparsers(dest=, required=) with per-subcommand add_argument`. Repro: a CLI with enqueue, status, stats, daemon subcommands.
+4. `signal: signal.signal(SIGTERM, handler) for graceful shutdown in a long-running loop`.
