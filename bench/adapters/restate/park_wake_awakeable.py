@@ -99,8 +99,10 @@ def shim_env(workdir: Path, fakebin: Path, cap: int) -> dict:
 
 def enqueue(env: dict, cwd: Path, cmd: str, service: str) -> str:
     # SUSPENSION: the scoped send targets JobRunnerSuspended/run.
+    # SUSPENSION: the scoped send targets JobRunnerSuspended/run_suspended (the handler name
+    # on the service is run_suspended; there is no 'run' handler on this service).
     rkey = "r" + __import__("hashlib").sha1(str(cwd).encode()).hexdigest()[:16]
-    url = f"http://127.0.0.1:5500/restate/scope/machine/send/{service}/run"
+    url = f"http://127.0.0.1:5500/restate/scope/machine/send/{service}/run_suspended"
     job = {"id": f"job-{int(time.time() * 1000):x}-{os.getpid():x}-{len(str(time.time()))}",
            "cmd": cmd, "cwd": str(cwd), "priority": 0,
            "env": {k: v for k, v in os.environ.items()
@@ -250,11 +252,20 @@ def main() -> int:
 
         deadline = time.time() + 180
         c = {}
+        max_suspended = 0
+        max_running = 0
+        samples = []
         while time.time() < deadline:
             c = counts()
+            max_suspended = max(max_suspended, c.get("suspended", 0))
+            max_running = max(max_running, c.get("running", 0))
+            samples.append({"t": round(time.time() - t0, 2), **c})
             if c.get("suspended", 0) >= a.parked:
                 break
             time.sleep(1)
+        out["counts_samples"] = samples
+        out["max_suspended_seen"] = max_suspended
+        out["max_running_seen"] = max_running
         out["counts_parked"] = counts()
         out["parked_suspended"] = c.get("suspended", 0)
         out["parked_running"] = c.get("running", 0)
@@ -295,7 +306,12 @@ def main() -> int:
                           "completion) -> the first parked invocation completing its job (the " \
                           "second completion); the parked invocation is woken by the release " \
                           "handler resolving its awakeable, no polling"
+        out["tool_lease_state"] = sql("SELECT key, value FROM state WHERE service_name='ToolLease'")
+        out["tool_lease_calls"] = sql("SELECT target_handler_name, COUNT(*) AS c FROM sys_invocation "
+                                      "WHERE target_service_name='ToolLease' GROUP BY target_handler_name")
         out["counts_after_wake"] = counts()
+        # SUSPENSION: ToolLease state residue diagnostic (a nonzero residual `held` after
+        # everything completed would mean acquires leaked, e.g. dropped wake retries).
         out["host_after"] = host_state()
     finally:
         if not a.keep:
