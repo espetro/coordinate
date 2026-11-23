@@ -17,5 +17,7 @@
     "@types/node": "24.0.0",
     "koffi": "2.14.1",
     "typescript": "~5.9.0"
-  }
+  },
+  "author": "Joaquin Terrasa",
+  "license": "Apache-2.0"
 }
