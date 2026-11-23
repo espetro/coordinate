@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/social.png" alt="coordinate" width="640" /></p>
+
 <h1 align="center">coordinate</h1>
 
 <p align="center">A durable job queue for your machines and your coding agents.</p>
