@@ -6,3 +6,5 @@ bench/results/
 
 # scriptc build outputs (distributed as release assets, not source)
 ts/bin/coordinate-*
+ts/dist/
+ts/node_modules/

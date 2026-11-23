@@ -7,9 +7,125 @@ on:
 permissions:
   contents: write
 
+env:
+  SCRIPTC_VERSION: "0.4.16"
+
 jobs:
+  # scriptc binaries for the TS port. macos runners are native builds (the
+  # compiler only targets the host it runs on; cross-compilation is not
+  # exposed by scriptc build as of 0.4.16). linux-x64-musl is the --static
+  # link, matching the spike: `scriptc build main-elf.ts --npm-static
+  # @cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json
+  # [--static]` (see .agents/docs/ts-port-spike.md, all figures (M) there).
+  binaries:
+    name: scriptc binaries (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            os: macos-14
+            static: ""
+          - target: darwin-x64
+            os: macos-15-intel
+            static: ""
+          - target: linux-x64-gnu
+            os: ubuntu-24.04
+            static: ""
+          - target: linux-x64-musl
+            os: ubuntu-24.04
+            static: "--static"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+
+      - name: Install scriptc ${{ env.SCRIPTC_VERSION }}
+        run: npm install -g scriptc@${{ env.SCRIPTC_VERSION }}
+
+      - name: Install ts dependencies
+        working-directory: ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: ts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          scriptc build main-elf.ts \
+            --npm-static @cutils/sqlite,@cutils/cli \
+            --ffi node_modules/@cutils/sqlite/ffi.json \
+            ${{ matrix.static }} \
+            -o "./coordinate-${VERSION}-${{ matrix.target }}"
+
+      - name: Smoke test
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          "./coordinate-${VERSION}-${{ matrix.target }}" --help
+
+      - name: Checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="coordinate-${VERSION}-${{ matrix.target }}"
+          sha256sum "$NAME" > "$NAME.sha256"
+          cat "$NAME.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinate-${{ github.ref_name }}-${{ matrix.target }}
+          path: |
+            ./coordinate-*
+            !./coordinate-*.sha256
+          if-no-files-found: error
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinate-${{ github.ref_name }}-${{ matrix.target }}-sha256
+          path: ./coordinate-*.sha256
+          if-no-files-found: error
+
+  # DISABLED: Windows binaries wait on the scriptc windows spike. The
+  # compiler ships a win32-x64-msvc cli package (0.4.16), and @cutils/sqlite
+  # is untested there; when spike/windows-spike reports go, uncomment this
+  # job and add coordinate-v<ver>-windows-x64.exe to install.ps1 (see
+  # .agents/docs/v0.1.0-release.md for the spec).
+  # windows:
+  #   name: scriptc binaries (windows-x64)
+  #   runs-on: windows-latest
+  #   timeout-minutes: 20
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 24
+  #     - run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+  #     - run: npm install -g scriptc@${{ env.SCRIPTC_VERSION }}
+  #     - working-directory: ts
+  #       run: pnpm install --frozen-lockfile
+  #     - working-directory: ts
+  #       shell: bash
+  #       run: |
+  #         VERSION="${GITHUB_REF_NAME#v}"
+  #         scriptc build main-elf.ts \
+  #           --npm-static @cutils/sqlite,@cutils/cli \
+  #           --ffi node_modules/@cutils/sqlite/ffi.json \
+  #           -o "../coordinate-${VERSION}-windows-x64.exe"
+  #     - shell: bash
+  #       run: |
+  #         VERSION="${GITHUB_REF_NAME#v}"
+  #         sha256sum coordinate-${VERSION}-windows-x64.exe > coordinate-${VERSION}-windows-x64.exe.sha256
+
   release:
-    name: build and attach to a GitHub Release
+    name: attach to the GitHub Release
+    needs: binaries
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -21,10 +137,32 @@ jobs:
       - name: Build the wheel and sdist
         run: uv build
 
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- ./*.whl ./*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: coordinate-*
+          merge-multiple: true
+
+      - name: Verify binary checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c -- ./*.sha256
+          ls -la
+
       - name: Attach to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/coordinate-*
           generate_release_notes: true
