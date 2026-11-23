@@ -299,7 +299,8 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
-  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio: "ignore" as const };
+  const stdio: ("ignore" | "inherit")[] = ["ignore", "inherit", "inherit"];
+  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio };
   const win = process.platform === "win32";
   const proc =
     typeof cmd === "string"

@@ -431,7 +431,7 @@ test("X4: SIGTERM stops the daemon even while a job is running", { todo: "stoppi
   }
 });
 
-test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { todo: "spawnRaw uses stdio: 'ignore'", timeout: DAEMON_T }, async () => {
+test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--shell", "--", "echo OUT-FROM-JOB; echo ERR-FROM-JOB >&2");
