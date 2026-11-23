@@ -1,30 +1,33 @@
 #!/bin/sh
-# Build the scriptc binaries for the host platform. Run from ts/ with deps installed.
+# Build the scriptc binaries. Run from ts/ with deps installed and scriptc 0.4.16 on PATH.
 # usage: build-bin.sh [outdir]
+# Linux binaries build natively; macOS binaries cross-compile with zig
+# (SCRIPTC_TARGET, @scriptc/runtime-darwin-arm64 dev dependency) and are not
+# runnable on the build host, so they get no smoke test here.
 set -eu
 cd "$(dirname "$0")"
 OUT="${1:-dist}"
+VERSION="$(node -p "require('./package.json').version")"
 mkdir -p "$OUT"
 COMMON="--npm-static @cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json --no-keep-llvm"
+SQLITE=node_modules/@cutils/sqlite
+
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
-    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-v0.1.0-linux-x64-gnu"
-    scriptc build main-elf.ts $COMMON --static -o "$OUT/coordinate-v0.1.0-linux-x64-musl"
-    ;;
-  Linux-aarch64)
-    scriptc build main-elf.ts $COMMON --static -o "$OUT/coordinate-v0.1.0-linux-arm64-musl"
+    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-$VERSION-linux-x64-gnu"
+    scriptc build main-elf.ts $COMMON --static -o "$OUT/coordinate-$VERSION-linux-x64-musl"
     ;;
   Darwin-arm64)
-    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-v0.1.0-darwin-arm64"
-    ;;
-  Darwin-x86_64)
-    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-v0.1.0-darwin-x64"
+    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-$VERSION-darwin-arm64"
+    scriptc build main-elf.ts $COMMON -o "$OUT/coordinate-$VERSION-darwin-x64" &
+    wait
     ;;
   *)
-    echo "unsupported platform: $(uname -s)-$(uname -m)" >&2
+    echo "unsupported build host: $(uname -s)-$(uname -m)" >&2
     exit 1
     ;;
 esac
+
 echo "built into $OUT:"
 ls -la "$OUT"
 # checksums, so the local and CI artifacts are interchangeable
