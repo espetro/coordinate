@@ -1,5 +1,0 @@
-#!/bin/sh
-# rivet-fill adapter shim (adapter contract, docs/tool-search-rubric.md section 3).
-# The engine port is a shim parameter so parallel daemons on the shared host never
-# collide; FLEET_DB must still point at a per-run temp dir.
-exec bun "/home/own-agents/.worktrees/fleet-spikes/rivetfill/bench/adapters/rivet/src/qclient.ts" "$@"
