@@ -1,0 +1,29 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/park",
+  "host": {
+    "load_1m": 0.29,
+    "load_5m": 0.3,
+    "load_15m": 0.5,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8635,
+    "timestamp": "2026-11-23T01:22:08+0000"
+  },
+  "wake_park_n": 200,
+  "wake_samples": 200,
+  "wake_p50_ms": 217.6,
+  "wake_p99_ms": 392.1,
+  "wake_min_ms": 172.5,
+  "wake_max_ms": 1442.1,
+  "wake_mean_ms": 226.6,
+  "wake_park_s": 20.73,
+  "wake_def": "release event -> job status 'running' (agent spawned, ACP session/load done); first session/update chunk follows within STUB_TURN_MS/10",
+  "wake_host": {
+    "load_1m": 2.17,
+    "load_5m": 1.26,
+    "load_15m": 0.85,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8377,
+    "timestamp": "2026-11-23T01:25:08+0000"
+  }
+}

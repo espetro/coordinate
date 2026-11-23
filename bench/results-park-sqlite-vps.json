@@ -1,0 +1,41 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/park",
+  "host": {
+    "load_1m": 0.63,
+    "load_5m": 0.66,
+    "load_15m": 0.5,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8557,
+    "timestamp": "2026-11-23T00:57:32+0000"
+  },
+  "park_n": 1000,
+  "park_enqueue_s": 98.88,
+  "park_total_s": 98.99,
+  "park_parked": 1000,
+  "park_all_parked": true,
+  "orch_rss_idle_mb": 18.5,
+  "orch_rss_parked_mb": 18.7,
+  "orch_rss_per_parked_mb": 0.2,
+  "db_bytes_total": 4443640,
+  "db_bytes_per_session": 4443.6,
+  "stats_latency_ms": 105.6,
+  "extrapolated_10k_rss_mb": 20.6,
+  "extrapolated_10k_db_mb": 42.4,
+  "park_host": {
+    "load_1m": 1.28,
+    "load_5m": 0.9,
+    "load_15m": 0.6,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8612,
+    "timestamp": "2026-11-23T00:59:19+0000"
+  },
+  "reclaim_bytes_before": 4443640,
+  "reclaim_bytes_after": 4509272,
+  "reclaim_bytes_freed": -65632,
+  "reclaim_note": "SQLite keeps the file size on delete (space returns to the freelist, reused by later writes); the reclaim proof is the wait column: every parked row becomes a terminal row and the payload lease columns are NULLed",
+  "reclaim_all_terminal": true,
+  "reclaim_stats_final": {
+    "done": 1000
+  }
+}
