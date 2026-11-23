@@ -104,7 +104,7 @@ Position: use roles as a scheduling tool (spread quota, cross-provider review, c
 
 Two reports cover 27 products from the landscape table the user shared plus Claude Squad, Vibe Kanban and Xum (`docs/research/orchestrators-landscape-a.md`, `docs/research/orchestrators-landscape-b.md`, table image in `docs/research/assets/`). The table's star counts and feature dots are stale or wrong in places (Orca 132.9k, T3 Code 71.4k; Supacode is FSL-1.1; Traycer's host is closed; OpenHands orchestration moved to `software-agent-sdk`).
 None passes our gates as a whole orchestrator: Multica, Paperclip, QM and Paradev's cloud need Postgres or Redis; OpenClaw, Paseo, OpenChamber and Paperclip have open unbounded-memory bugs; Orca, bb, Nimbalyst and Traycer have open orphaned-process bugs; no desktop tool resumes every session after reboot by default.
-Nobody parks agents when a cap is hit (only after idle time), throttles launches by provider quota, adapts limits to user presence, or publishes density benchmarks. Those remain our differentiators.
+No agent orchestrator parks agents when a cap is hit (only after idle time; outside agents, Hatchet evicts durable tasks by capacity, see `docs/research/observability.md`), throttles launches by provider quota, adapts limits to user presence, or publishes density benchmarks. Those remain our differentiators.
 Patterns to copy:
 - Park and wake: Cloudroom stops an agent after 30 minutes idle and resumes the same conversation on the next message, restarts only sessions with queued or recent work after reboot, and marks mid-turn work at crash time as unknown instead of resending it. T3 Code also stops idle sessions after 30 minutes and records decisions with pending side effects in one SQLite transaction.
 - Session survival: Orchestrator.inc runs a detached ACP host per session so the agent outlives orchestrator restarts.
@@ -168,6 +168,10 @@ T3 already creates and binds worktrees per thread (`workspaceStrategy`), and Orc
 No cell stays n/a. Each one is either measured or recorded as "not expressible" with the reason. Density runs go 1,000 first and 10,000 only when 1,000 extrapolates inside the budget (Rivet: 1,489MB at 10,000 parked, which is the number to beat; in progress: spk-park for SQLite and Restate, spk-rivetfill for Rivet's queue cells).
 
 The bench measures trade-offs, not only megabytes: state lost on kill -9 (jobs lost, jobs run twice, duplicate turns, leases leaked, fields that differ before and after), wake latency, timeout precision, and the noise floor that decides what counts as a change. `bench/compare.py` turns a results file into a pass or fail against a committed Linux baseline, and a GitHub Actions workflow runs the quick set on every PR (in progress: spk-ci). The workflow is written but nothing is pushed: fleet has no remote yet, and creating one is the user's call.
+
+## Assessment 13: observability (2026-11-22)
+
+Full report: `docs/research/observability.md`. Fleet needs no observability service. An `events` table in the existing `queue.db`, written in the same transaction as each state change, with per-level TTL plus a row cap and batched deletes, replaces `spawn_audit` and costs 278 bytes and 35µs per event (M, laptop under load). Always-on alternatives do not fit the memory budget (Temporal dev 147MB, Phoenix 614MB, Langfuse recommends 16GiB); viewers such as Datasette start on demand. On top of the table: alert rules evaluated in the daemon tick (dead jobs, crash loops, cap pressure, oldest queued, stale awaits, orphan leases, rate limits, hung agents, pending permission prompts, timeouts, low memory or disk), `fleet events`, `fleet tail -f`, `fleet why <id>`, `fleet health` and `fleet alerts` as JSONL, ntfy notifications keyed per alert with a dead man's switch, and an OTel export that is off by default. Rate limits and permission prompts park a job instead of burning an attempt. Prompt text is never recorded.
 
 ## Modules
 
