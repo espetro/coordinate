@@ -101,7 +101,7 @@ Alternatives measured on the same host: Restate 532MB idle, Rivet 128MB idle and
 ## Prototype plan
 
 - P1, runnable and installable: rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, `~/.coordinate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install` (launchd, systemd user unit), release workflow that attaches a wheel to a GitHub Release, install with `uv tool install`.
-- P2, visibility: events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
+- P2, visibility and wakeups: a `mailbox(job_id, kind, payload, dedupe_key, deliver_at)` table borrowed from the actor model (`research/actor-model.md`): signals sent before a job parks are kept instead of lost (today `release()` only updates rows already waiting), wakes carry data, waits get a timeout and any-of, and alarms are messages with a future `deliver_at`. Then the events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
 - P3, re-adoption: detached ACP host, single-instance daemon lock, safe kills by pidfd and start time, `orchestrator-kill` with 0 duplicate turns.
 - P4, multi-device: hub allowances, presence levels, Workspace interface over T3.
 
