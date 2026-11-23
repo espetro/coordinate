@@ -766,11 +766,57 @@ def scenario_state_loss(tree, backend, tmp, live=2, parked=2, turn_ms=20000, lea
             "stateloss_host": _host_state()}
 
 
+def scenario_park_density(tree, backend, tmp, steps=(1000, 10000)):
+    """Open many parked sessions and measure the orchestrator's cost per parked session.
+
+    A parked session holds no process, so the cost is the durable row plus the orchestrator's
+    own memory. The steps are cumulative: 1,000 parked sessions first, then 10,000 more.
+    """
+    f = Fleet(tree, backend, tmp, cap=2, lease=120)
+    db = Path(f.env["FLEET_DB"])
+    f.start()
+    time.sleep(4)
+    baseline_rss = f.rss_mb()
+    out = {"parkdensity_steps": [], "parkdensity_baseline_rss_mb": round(baseline_rss, 1),
+           "parkdensity_host": _host_state()}
+    total = 0
+    for n in steps:
+        t0 = time.time()
+        r = subprocess.run([str(tree / ".venv" / "bin" / "python"),
+                            str(Path(__file__).parent / "park_filler.py"),
+                            "--db", str(db), "--count", str(n), "--event", "park-evt"],
+                           capture_output=True, text=True, cwd=str(tmp))
+        if r.returncode:
+            raise RuntimeError(f"park_filler failed: {r.stderr[-400:]}")
+        elapsed = time.time() - t0
+        time.sleep(1.5)  # let the daemon notice the new rows
+        rss = f.rss_mb()
+        total += n
+        db_bytes = db.stat().st_size if db.exists() else 0
+        rows = _job_rows(db)
+        parked = sum(1 for r2 in rows.values() if r2["status"] == "waiting")
+        out["parkdensity_steps"].append({
+            "step_parked_sessions": n,
+            "total_parked_sessions": parked,
+            "enqueue_s": round(elapsed, 2),
+            "enqueue_per_session_ms": round(elapsed / n * 1000, 3),
+            "orchestrator_rss_mb": round(rss, 1),
+            "orchestrator_rss_delta_mb": round(rss - baseline_rss, 2),
+            "db_bytes": db_bytes,
+            "db_bytes_per_parked_session": round(db_bytes / parked, 1) if parked else None,
+            "rss_kb_per_parked_session": round((rss - baseline_rss) * 1024 / parked, 3) if parked else None,
+            "host": _host_state(),
+        })
+    f.stop()
+    return out
+
+
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
              "cap": scenario_cap, "repo": scenario_repo_contention, "priority": scenario_priority,
              "chaos": scenario_chaos, "toolpark": scenario_tool_park,
              "orchestrator-kill": scenario_orchestrator_kill, "live-density": scenario_live_density,
-             "noise-floor": scenario_noise_floor, "state-loss": scenario_state_loss}
+             "noise-floor": scenario_noise_floor, "state-loss": scenario_state_loss,
+             "park-density": scenario_park_density}
 
 
 def _host_state() -> dict:
@@ -798,6 +844,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--repeats", type=int, default=10, help="noise-floor: repeats per scenario")
     ap.add_argument("--noise-scenarios", default=None, help="noise-floor: comma separated subset of scenarios")
+    ap.add_argument("--park-density-steps", default=None,
+                    help="park-density: comma separated step sizes (default 1000,10000)")
     a = ap.parse_args()
     global CLI_OVERRIDE
     CLI_OVERRIDE = a.cli
@@ -812,6 +860,9 @@ def main():
                 if name == "noise-floor":
                     res.update(SCENARIOS[name](tree, a.backend, Path(t), repeats=a.repeats,
                                              subset=a.noise_scenarios))
+                elif name == "park-density":
+                    steps = tuple(int(x) for x in (a.park_density_steps or "1000,10000").split(",") if x.strip())
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), steps=steps))
                 else:
                     res.update(SCENARIOS[name](tree, a.backend, Path(t)))
             except Exception as e:  # keep going, record the failure
