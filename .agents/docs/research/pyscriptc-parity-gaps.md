@@ -30,20 +30,22 @@ The probe is a floor; `daemon.py` needs more than it checks:
 
 ## Tracking state, per gap
 
+Update 2026-11-23: the five untracked gaps were filed and prioritized into v0.11.0, and #1226 was pulled forward. All six are on the board (project 6) with Horizon=Current, Track=V2 compiler, Status=Todo, Release class=minor.
+
 | Gap | Issue | State |
 |---|---|---|
-| sqlite3 params, typed rows, `rowcount`, `lastrowid`, `description`, NULL as `None`, `executemany`, `isolation_level=None`, `PRAGMA` | none. Only other-DB adapters are planned: #90 ONNX, #91 DuckDB, #1209 Arrow (all Future). The pilot #66/#221 closed at 5 functions. | untracked |
-| non-blocking spawn with `env=`, `cwd=`, `start_new_session`, `stdin=PIPE` | none. #503 and #877 asked for basic `Popen` and closed without the surface landing; #1224 and #1266 delivered the asyncio exec+pipes subset. | untracked |
-| `.pid`, `kill`/`terminate`/`send_signal`, `poll()` on the child | none | untracked |
-| incremental pipe I/O (iterate stdout, write stdin) | none | untracked |
-| `argparse.add_subparsers` | none. #510 closed with `type=`/`default=`/`store_true` only. | untracked |
-| `signal.signal` handler | none. #1244 closed at constants + `os.kill`. | untracked, and not needed by coordinate |
+| sqlite3 params, typed rows, `rowcount`, `lastrowid`, `description`, NULL as `None`, `executemany`, `isolation_level=None`, `PRAGMA` | #1343 (filed, v0.11.0, Effort L). Only other-DB adapters were planned before: #90 ONNX, #91 DuckDB, #1209 Arrow (all Future). The pilot #66/#221 closed at 5 functions. | tracked |
+| non-blocking spawn with `env=`, `cwd=`, `start_new_session`, `stdin=PIPE` | #1344 (filed, v0.11.0, Effort M). #503 and #877 asked for basic `Popen` and closed without the surface landing; #1224 and #1266 delivered the asyncio exec+pipes subset. | tracked |
+| `.pid`, `kill`/`terminate`/`send_signal`, `poll()`, `wait(timeout=)` | #1345 (filed, v0.11.0, Effort M) | tracked |
+| incremental pipe I/O (iterate stdout, write stdin) | #1345, same issue | tracked |
+| `argparse.add_subparsers` | #1346 (filed, v0.11.0, Effort M). #510 closed with `type=`/`default=`/`store_true` only. | tracked |
+| `signal.signal` handler | #1347 (filed, v0.11.0, Effort M). #1244 closed at constants + `os.kill`. Not needed by coordinate; probe parity only. | tracked |
 | `json.loads` non-ASCII, `json.dumps` escaping parity | #477 (S5, v0.11.0) | tracked, open |
 | UTF-8 stdin/stdout/files/argv/env | #478 (S6, v0.11.0) | tracked, open |
-| heterogeneous JSON `dict[str, object]` (arbitrary ACP payloads) | #1226 (no milestone) | tracked, open |
+| heterogeneous JSON `dict[str, object]` (arbitrary ACP payloads) | #1226 (moved to v0.11.0, Effort L) | tracked, open |
 | HTTP client | #219 (Future) | tracked, open |
 
-Six gaps are untracked, of which five are real requirements for us (all but `signal.signal`). Three are tracked, all open; #477/#478 sit in v0.11.0 (52 open issues) and #1226 has no milestone.
+Every gap is now tracked, eight of them inside v0.11.0 (which holds 57 open issues after these additions).
 
 ## What changed on master since the earlier assessment
 
@@ -52,14 +54,14 @@ Six gaps are untracked, of which five are real requirements for us (all but `sig
 - `subprocess.run(timeout=)` landed (#1223) with `TimeoutExpired`.
 - Recent commits otherwise went to the inference engine, island routing and `asyncio.start_server`, not to these gaps.
 
-## Draft issues for the untracked gaps (not filed; filing needs the author's approval)
+## Issues filed 2026-11-23
 
-1. `stdlib: sqlite3 surface for a job queue` or `pack: extend pyscriptc-sqlite with parameter binding and typed values`. Needs: `execute(sql, params)` with `?` binding, `executemany`, fetch returning typed `int`/`float`/`None`/`str`, `rowcount`, `lastrowid`, `description`, `isolation_level=None`, `PRAGMA` statements. Repro: `queue.py` binds params in ~40 statements; `cli.py:137` reads `cur.description`.
-2. `subprocess: non-blocking spawn environment (Popen or asyncio exec with env=, cwd=, stdin=PIPE, start_new_session)`. Repro: a daemon that spawns agents in their own session with a job env block and pipes both ways.
-3. `subprocess: child handle surface (pid, poll, wait(timeout=), kill/terminate/send_signal, incremental stdout iteration and stdin writes)`. Repro: reap a timed-out agent, SIGTERM then SIGKILL its process group, stream ACP lines.
-4. `argparse: add_subparsers(dest=, required=) with per-subcommand add_argument`. Repro: `cli.py` has 7 subcommands (enqueue/status/wait-on/release/cancel/stats/daemon).
-5. `signal: install a process-level SIGTERM/SIGINT handler that calls a compiled function` (optional for us; the probe checks it and a native binary can do it in C even without a Python handler table).
+1. #1343 `stdlib: sqlite3 surface for a job queue (params, typed rows, rowcount, lastrowid)` (compat-gap)
+2. #1344 `subprocess: non-blocking spawn environment (env=, cwd=, stdin=PIPE, start_new_session)` (compat-gap)
+3. #1345 `subprocess: child-handle surface (pid, poll, wait(timeout=), kill/terminate, incremental pipe I/O)` (compat-gap)
+4. #1346 `argparse: add_subparsers(dest=, required=) with per-subcommand add_argument` (enhancement)
+5. #1347 `signal: install a SIGTERM/SIGINT handler that calls a compiled function` (compat-gap)
 
 ## Bottom line
 
-For pyscriptc to match scriptc's score it needs five untracked features (sqlite params/typing, spawn env/session/stdin, the child-handle surface, subparsers, signal handlers) plus two tracked epics that are already open (#477, #478) and one unmilestoned issue worth pulling forward (#1226). scriptc needs none of this work; its only open question is `@cutils/sqlite` on macOS. The pyscriptc ask is roughly the size of one milestone; filing the five issues makes it visible, not scheduled.
+For pyscriptc to match scriptc's score it needs the five filed issues plus the three already tracked (#477, #478, #1226); all now sit in v0.11.0. scriptc needs none of this work; its only open question is `@cutils/sqlite` on macOS. Scheduling does not follow from filing: the maintainer owns the milestone, and v0.11.0 already carried 52 open issues before these six.
