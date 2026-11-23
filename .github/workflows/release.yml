@@ -29,6 +29,10 @@ jobs:
           node-version: 24
 
       - uses: mlugg/setup-zig@v2
+        with:
+          # scriptc invokes `zig cc` for cross-target links; zig >= 0.15
+          # dropped that driver (see .agents/docs/windows-spike.md)
+          version: 0.14.1
 
       - name: Install pnpm
         run: corepack enable && corepack prepare pnpm@12.16.1 --activate
@@ -94,9 +98,36 @@ jobs:
           file "coordinate-${VERSION}-darwin-arm64" | grep -q "Mach-O.*arm64"
           file "coordinate-${VERSION}-darwin-x64" | grep -q "Mach-O.*x86-64"
 
-      - name: Checksums
+      - name: Build windows-x64 (cross-compiled, smoked on windows-latest below)
+        working-directory: ts
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          pnpm add -D @scriptc/runtime-win32-x64-msvc@${{ env.SCRIPTC_VERSION }}
+          ./build-win-shim.sh
+          OUT="../coordinate-${VERSION}-windows-x64.exe" ./build-win.sh
+
+      - name: Tarballs and checksums
+        run: |
+          set -euo pipefail
+          # tar.gz variants with a bare `coordinate` inside, for mise/ubi-style
+          # installers that prefer archives over raw executables
+          for f in ./coordinate-*; do
+            base="$(basename "$f")"
+            if [ "${base%.exe}" = "$base" ]; then
+              cp "$f" coordinate
+              tar -czf "${f}.tar.gz" coordinate
+              rm coordinate
+            else
+              cp "$f" coordinate.exe
+              tar -czf "${f}.tar.gz" coordinate.exe
+              rm coordinate.exe
+            fi
+          done
           sha256sum -- ./coordinate-* > SHA256SUMS-binaries
+          # per-asset .sha256 files so install.sh can verify one download
+          for f in ./coordinate-*; do
+            sha256sum "$f" > "$f.sha256"
+          done
           cat SHA256SUMS-binaries
           mkdir -p dist
           mv ./coordinate-* dist/
@@ -109,45 +140,51 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # DISABLED: Windows binaries wait on the scriptc windows spike. The
-  # compiler ships a win32-x64-msvc cli package (0.4.16) and the docs say
-  # x86_64-windows-gnu cross-compiles with zig from Linux, but
-  # @cutils/sqlite is untested there and there is no spike report yet.
-  # When spike/windows-spike reports go:
-  #   1. uncomment this job, 2. add a build-darwin-sqlite.sh-style zig
-  # build of libsqlite3-shim.a for the windows target (or verify
-  # @cutils/sqlite ships one), 3. name the artifact
-  # coordinate-<ver>-windows-x64.exe, 4. write install.ps1 (see
-  # .agents/docs/v0.1.0-release.md for the spec).
-  # windows:
-  #   name: scriptc binaries (windows-x64)
-  #   runs-on: ubuntu-24.04
-  #   timeout-minutes: 30
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 24
-  #     - uses: mlugg/setup-zig@v2
-  #     - run: corepack enable && corepack prepare pnpm@12.16.1 --activate
-  #     - run: npm install -g scriptc@${{ env.SCRIPTC_VERSION }}
-  #     - working-directory: ts
-  #       run: pnpm add -D @scriptc/runtime-windows-x64@${{ env.SCRIPTC_VERSION }} && pnpm install
-  #     - working-directory: ts
-  #       run: |
-  #         VERSION="${GITHUB_REF_NAME#v}"
-  #         SCRIPTC_TARGET=x86_64-windows-gnu \
-  #           scriptc build main-elf.ts \
-  #           --npm-static @cutils/sqlite,@cutils/cli \
-  #           --ffi node_modules/@cutils/sqlite/ffi.json \
-  #           -o "../coordinate-${VERSION}-windows-x64.exe"
-  #     - run: |
-  #         VERSION="${GITHUB_REF_NAME#v}"
-  #         sha256sum "coordinate-${VERSION}-windows-x64.exe" > "coordinate-${VERSION}-windows-x64.exe.sha256"
+  # The windows spike verdict is conditional go: the exe builds via zig on
+  # Linux but nothing ran it. This job is the go-condition smoke pass:
+  # enqueue, status and a daemon claim loop on a real Windows runner. The
+  # release job needs it, so a broken Windows port blocks the release.
+  windows-smoke:
+    name: windows-x64 smoke (go-condition)
+    needs: binaries
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: coordinate-binaries-${{ github.ref_name }}
+          path: dist
+
+      - name: "Smoke: help, enqueue, daemon claim, events"
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXE="dist/coordinate-${VERSION}-windows-x64.exe"
+          export COORDINATE_DB="$RUNNER_TEMP/coord-smoke.db"
+          "$EXE" --help | grep -q enqueue
+
+          JID=$("$EXE" enqueue --shell -- 'echo hello-from-windows')
+          echo "enqueued job $JID"
+
+          # daemon claims and runs cmd jobs; give it a bounded window
+          "$EXE" daemon &
+          DAEMON_PID=$!
+          for i in $(seq 1 30); do
+            STATE=$("$EXE" status "$JID" | awk '{print $2}') && [ "$STATE" = done ] && break
+            sleep 2
+          done
+          kill "$DAEMON_PID" 2>/dev/null || true
+
+          STATE=$("$EXE" status "$JID" | awk '{print $2}')
+          echo "final state: $STATE"
+          "$EXE" events | grep -q '"done"'
+          [ "$STATE" = done ]
 
   release:
     name: attach to the GitHub Release
-    needs: binaries
+    needs: [binaries, windows-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

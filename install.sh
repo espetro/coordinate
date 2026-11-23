@@ -33,9 +33,24 @@ case "$OS-$ARCH" in
   *) echo "install.sh: unsupported platform: $OS $ARCH" >&2; exit 1 ;;
 esac
 
+fetch_stdout() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$1"
+  else
+    echo "install.sh: need curl or wget" >&2; exit 1
+  fi
+}
+
 if [ -z "$VERSION" ]; then
-  echo "install.sh: --version vX.Y.Z is required (no latest-release discovery without gh)"
-  exit 2
+  # resolve the latest release tag through the GitHub API; no gh needed
+  LATEST="$(fetch_stdout "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [ -z "$LATEST" ]; then
+    echo "install.sh: could not resolve latest release; pass --version vX.Y.Z" >&2
+    exit 2
+  fi
+  VERSION="$LATEST"
 fi
 
 NAME="coordinate-${VERSION}-${TARGET}"
