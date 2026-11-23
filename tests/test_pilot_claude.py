@@ -2,8 +2,8 @@
 
 Real Claude via fleet-acp's registry (isolated CLAUDE_CONFIG_DIR, bypassPermissions), throwaway git repo
 with a local branch, nothing pushed. Skips without Claude credentials (env token, macOS Keychain entry, or ~/.claude/.credentials.json on Linux).
-The isolated config dir lives under tmp (FLEET_ACP_HOME) and is deleted afterwards. Model defaults to haiku
-to keep the cost down; override with FLEET_PILOT_CLAUDE_MODEL. The model is set through a registry copy
+The isolated config dir lives under tmp (FLEET_ACP_HOME, read by the external fleet-acp tool) and is deleted afterwards. Model defaults to haiku
+to keep the cost down; override with COORDINATE_PILOT_CLAUDE_MODEL. The model is set through a registry copy
 (`model` field, applied by fleet-acp via session/set_model; ANTHROPIC_MODEL is ignored by the adapter) and
 asserted from the session transcript.
 """
@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from fleet import cli
+from coordinate import cli
 from pilot_helpers import Sampler, git, row, wait_for
 
-FLEET_ACP = Path(os.environ.get("FLEET_ACP_DIR", Path(__file__).resolve().parents[2] / "fleet-acp"))
-BIN = FLEET_ACP / "bin" / "fleet-acp.js"
+COORDINATE_ACP = Path(os.environ.get("COORDINATE_ACP_DIR", Path(__file__).resolve().parents[2] / "fleet-acp"))
+BIN = COORDINATE_ACP / "bin" / "fleet-acp.js"
 
 
 def have_credentials():
@@ -38,7 +38,7 @@ def have_credentials():
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None or not BIN.exists()
-    or not (FLEET_ACP / "node_modules" / "@zed-industries").exists() or not have_credentials(),
+    or not (COORDINATE_ACP / "node_modules" / "@zed-industries").exists() or not have_credentials(),
     reason="needs node, a fleet-acp checkout with deps and Claude credentials")
 
 
@@ -56,17 +56,17 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
 
     acp_home = tmp_path / "fleet-acp-home"
     monkeypatch.setenv("FLEET_ACP_HOME", str(acp_home))
-    model = os.environ.get("FLEET_PILOT_CLAUDE_MODEL", "haiku")
-    registry = json.loads((FLEET_ACP / "agents.json").read_text())
+    model = os.environ.get("COORDINATE_PILOT_CLAUDE_MODEL", "haiku")
+    registry = json.loads((COORDINATE_ACP / "agents.json").read_text())
     registry["claude"]["model"] = model
-    registry["claude"]["args"] = [a.replace("${root}", str(FLEET_ACP)) for a in registry["claude"]["args"]]
-    registry["claude"]["command"] = registry["claude"]["command"].replace("${root}", str(FLEET_ACP))
+    registry["claude"]["args"] = [a.replace("${root}", str(COORDINATE_ACP)) for a in registry["claude"]["args"]]
+    registry["claude"]["command"] = registry["claude"]["command"].replace("${root}", str(COORDINATE_ACP))
     reg_file = tmp_path / "agents.json"
     reg_file.write_text(json.dumps(registry))
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.setenv("FLEET_CAP", "3")
-    monkeypatch.setenv("FLEET_ACP_CMD", f"node {BIN}")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.setenv("COORDINATE_CAP", "3")
+    monkeypatch.setenv("COORDINATE_ACP_CMD", f"node {BIN}")
     prompt = (
         "Do these steps in order, each as its own separate foreground Bash command, never in the background. "
         + " ".join(f"Step {n}: run \"echo {n} > file{n}.txt; sleep 8\"." for n in range(1, 5))
@@ -77,7 +77,7 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
         assert cli.main(["enqueue", "--acp", "claude", "--cwd", str(repo), "--prompt", prompt,
                          "--registry", str(reg_file)]) == 0
         env = os.environ.copy()
-        d1 = subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=env,
+        d1 = subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         sampler.start()
 
@@ -95,7 +95,7 @@ def test_claude_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
         os.killpg(agent_pid, signal.SIGKILL)
         assert row(1)[0] == "running", "lease is orphaned, nobody finished the job"
 
-        d2 = subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=env,
+        d2 = subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         assert wait_for(lambda: row(1)[0] in ("done", "failed", "dead"), 400, 1), "job should reach a terminal state"
         status, attempts, payload = row(1)

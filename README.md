@@ -4,25 +4,34 @@ Local-first orchestration for AI coding-agent sessions: a per-device daemon (`co
 
 **Telemetry:** installing and running coordinate sends pseudonymous usage data (daily counts and rare lifecycle and error events, never prompts, paths, repo names, hostnames or command text) to PostHog in the EU, so the author can see what to fix and build next. Turn it off with `coordinate telemetry off` or `DO_NOT_TRACK=1`. Details: [ARCHITECTURE.md](ARCHITECTURE.md#telemetry).
 
-Pre-release. The code is still the `fleet` package and CLI until prototype slice P1 renames it; the usage below reflects the current names.
+Pre-release prototype. Pure stdlib Python, one SQLite file.
 
-Per-machine durable job queue with lease-based concurrency caps. Pure stdlib Python, one SQLite file.
+## Install
 
-State lives in `~/.fleet/queue.db` (override with `FLEET_DB`), WAL mode, `busy_timeout=5s`. Never share the file across machines.
+```sh
+uv tool install coordinate            # from a git URL: uv tool install git+https://github.com/<org>/coordinate
+coordinate service install            # systemd user unit on Linux, launchd agent on macOS; prints the file it wrote
+```
+
+`uv build` produces `dist/coordinate-*.whl` and the sdist; `uv tool install --from dist/coordinate-*.whl coordinate` installs from a local wheel. Releases attach both to a GitHub Release on `v*` tags.
+
+## Paths and migration
+
+State lives in the XDG locations on Linux and macOS alike: config in `$XDG_CONFIG_HOME/coordinate/config.toml` (default `~/.config`), the queue and logs in `$XDG_STATE_HOME/coordinate/` (default `~/.local/state`), runtime files in `$XDG_RUNTIME_DIR/coordinate/` with fallback `$XDG_STATE_HOME/coordinate/run/`. `COORDINATE_DB` and `COORDINATE_CONFIG` override; every `COORDINATE_*` env var falls back to its old `FLEET_*` spelling. If legacy `~/.fleet/queue.db` or `~/.fleet/config.toml` exists and the new files do not, they are used with a one-line notice; `coordinate migrate` copies (never moves or deletes) them into the XDG locations.
 
 ## Usage
 
 ```sh
-uv run fleet enqueue --cwd ~/code/repo -- make test   # job runs payload.cmd in payload.cwd, exit 0 = done
-uv run fleet enqueue --shell -- 'sh -c "echo a  b" | wc -c'   # ONE string, stored and run verbatim via sh -c
-uv run fleet enqueue --acp opencode --cwd ~/code/repo --prompt "fix the bug"   # kind acp, see below
-uv run fleet daemon                                    # dispatcher: claim loop, heartbeat, reaper
-uv run fleet status [id]
-uv run fleet wait-on <id> <event>                      # park a job, frees its slot
-uv run fleet release <event>                           # requeue jobs parked on the event
-uv run fleet cancel <id>                               # recorded as failed; a running job is killed at next heartbeat
-uv run fleet stats
-uv run fleet dead retry [id]                           # requeue dead and failed jobs, attempts reset
+uv run coordinate enqueue --cwd ~/code/repo -- make test   # job runs payload.cmd in payload.cwd, exit 0 = done
+uv run coordinate enqueue --shell -- 'sh -c "echo a  b" | wc -c'   # ONE string, stored and run verbatim via sh -c
+uv run coordinate enqueue --acp opencode --cwd ~/code/repo --prompt "fix the bug"   # kind acp, see below
+uv run coordinated                                      # dispatcher (same as `coordinate daemon`): claim loop, heartbeat, reaper
+uv run coordinate status [id]
+uv run coordinate wait-on <id> <event>                      # park a job, frees its slot
+uv run coordinate release <event>                           # requeue jobs parked on the event
+uv run coordinate cancel <id>                               # recorded as failed; a running job is killed at next heartbeat
+uv run coordinate stats
+uv run coordinate dead retry [id]                           # requeue dead and failed jobs, attempts reset
 ```
 
 ## Semantics
@@ -31,12 +40,12 @@ uv run fleet dead retry [id]                           # requeue dead and failed
 - Claim is one `BEGIN IMMEDIATE` transaction: machine cap plus per-repo cap (repo = `payload.repo` or `payload.cwd`), FIFO by priority desc, run_at, id. A blocked job stays `queued`.
 - Lease 30s, heartbeat every lease/3. The reaper requeues expired leases if `attempts < max_attempts`, else `dead`.
 - Nonzero exit is `failed` (terminal, no retry). Only lost leases consume retry attempts.
-- Config env: `FLEET_MACHINE` (laptop:3, vps:6 default caps), `FLEET_CAP`, `FLEET_REPO_CAP` (default 1), `FLEET_LEASE_S`.
+- Config env: `COORDINATE_MACHINE` (laptop:3, vps:6 default caps), `COORDINATE_CAP`, `COORDINATE_REPO_CAP` (default 1), `COORDINATE_LEASE_S` (each with the old `FLEET_*` spelling as fallback).
 - Idle polling backs off from 50ms to 2s and resets on activity.
 
 ## ACP jobs
 
-`enqueue --acp <agent> --cwd <dir> --prompt <text>` creates a job of kind `acp` (payload `agent`, `cwd`, `prompt`, optional `registry`). The daemon runs `fleet-acp run <agent> --cwd --prompt --pid-file ...`; the command is `fleet-acp` or whatever `FLEET_ACP_CMD` says (for example `node /path/to/fleet-acp/bin/fleet-acp.js`).
+`enqueue --acp <agent> --cwd <dir> --prompt <text>` creates a job of kind `acp` (payload `agent`, `cwd`, `prompt`, optional `registry`). The daemon runs `fleet-acp run <agent> --cwd --prompt --pid-file ...`; the command is `fleet-acp` or whatever `COORDINATE_ACP_CMD` says (`FLEET_ACP_CMD` still works). The `fleet-acp` executable name is unchanged; it is a separate project. (for example `node /path/to/fleet-acp/bin/fleet-acp.js`).
 
 - The sessionId on stdout line 1 is written to `payload.session` as soon as it appears. A retry after a lost lease runs with `--session <id>` automatically, and must use the same `cwd`.
 - Exit 0 is `done`, nonzero is `failed` (terminal), same as `cmd` jobs.
@@ -53,8 +62,8 @@ Limits: a crash between claim and the pgid write leaves that one child untracked
 flock /tmp/tsc.lock uv run --with pytest pytest -v
 ```
 
-`tests/test_pilot_acp.py` is the end-to-end pilot (real opencode and a sibling `fleet-acp` checkout, about a minute, skipped when missing; override the checkout with `FLEET_ACP_DIR`).
+`tests/test_pilot_acp.py` is the end-to-end pilot (real opencode and a sibling `fleet-acp` checkout, about a minute, skipped when missing; override the checkout with `COORDINATE_ACP_DIR` (`FLEET_ACP_DIR` still works)).
 
-`tests/test_pilot_claude.py` repeats the pilot on the `claude` agent (isolated config dir under tmp, haiku by default via `FLEET_PILOT_CLAUDE_MODEL`, skipped without Claude credentials). `tests/test_caps.py` checks the vps cap of 6 with 14 jobs and the per-repo cap of 1.
+`tests/test_pilot_claude.py` repeats the pilot on the `claude` agent (isolated config dir under tmp, haiku by default via `COORDINATE_PILOT_CLAUDE_MODEL` (`FLEET_PILOT_CLAUDE_MODEL` still works), skipped without Claude credentials). `tests/test_caps.py` checks the vps cap of 6 with 14 jobs and the per-repo cap of 1.
 
 `.agents/docs/spike-ref/` holds the validated Spike B shim and its findings, kept as reference.

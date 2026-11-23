@@ -12,7 +12,7 @@ def git(cwd, *args):
 
 
 def row(jid):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     r = c.execute("SELECT status, attempts, payload FROM jobs WHERE id=?", (jid,)).fetchone()
     c.close()
     return r[0], r[1], json.loads(r[2])

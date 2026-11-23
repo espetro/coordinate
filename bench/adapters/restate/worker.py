@@ -34,7 +34,7 @@ def tool_key(cmd: str) -> tuple[str, int] | None:
 
 
 def slots_config() -> dict[str, int]:
-    path = os.environ.get("FLEET_CONFIG")
+    path = os.environ.get("COORDINATE_CONFIG")
     if not path or not os.path.exists(path):
         return {}
     with open(path, "rb") as f:
@@ -48,7 +48,7 @@ lease = VirtualObject("ToolLease", inactivity_timeout=timedelta(hours=2))
 
 async def exec_job(ctx: Context, job: dict) -> None:
     """Spawn the shell command as its own process group + session, wait, fail on nonzero."""
-    data_dir = os.path.dirname(os.environ.get("FLEET_DB", "/tmp/fleet.db"))
+    data_dir = os.path.dirname(os.environ.get("COORDINATE_DB", "/tmp/fleet.db"))
 
     def spawn_and_wait() -> int:
         os.makedirs(data_dir, exist_ok=True)

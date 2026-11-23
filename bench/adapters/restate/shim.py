@@ -1,12 +1,12 @@
 """fleet shim over Restate 1.8: daemon, enqueue, stats.
 
-FLEET_DB, FLEET_CAP, FLEET_REPO_CAP, FLEET_LEASE_S, FLEET_MACHINE, FLEET_CONFIG per the adapter
+COORDINATE_DB, COORDINATE_CAP, COORDINATE_REPO_CAP, COORDINATE_LEASE_S, COORDINATE_MACHINE, COORDINATE_CONFIG per the adapter
 contract in .agents/docs/tool-search-rubric.md section 3.
 
 Mapping:
-- machine cap FLEET_CAP -> concurrency limit of the `*` flow-control rule; enqueue sends through
+- machine cap COORDINATE_CAP -> concurrency limit of the `*` flow-control rule; enqueue sends through
   the scoped ingress endpoint /restate/scope/machine/send/JobRunner/run with limit-key=<repo key>,
-  and a per-scope rule caps the machine, a scope/<key> rule caps the repo at FLEET_REPO_CAP.
+  and a per-scope rule caps the machine, a scope/<key> rule caps the repo at COORDINATE_REPO_CAP.
 - weighted tool leases -> ToolLease VirtualObject + awakeables, one object instance per
   (tool class, project). A parked job is suspended by the server (SDK awaits the awakeable) and
   does not occupy a machine slot: flow-control counts invocations that are running, and a
@@ -70,10 +70,10 @@ def send_job(job: dict, repo: str, cap: int, repo_cap: int) -> str:
 
 
 def cmd_daemon(a) -> None:
-    data_dir = os.path.dirname(os.environ.get("FLEET_DB", "/tmp/fleet.db"))
+    data_dir = os.path.dirname(os.environ.get("COORDINATE_DB", "/tmp/fleet.db"))
     os.makedirs(data_dir, exist_ok=True)
-    cap = int(os.environ.get("FLEET_CAP", "4"))
-    repo_cap = int(os.environ.get("FLEET_REPO_CAP", "1"))
+    cap = int(os.environ.get("COORDINATE_CAP", "4"))
+    repo_cap = int(os.environ.get("COORDINATE_REPO_CAP", "1"))
     cfg = f"""base-dir = "{data_dir}/restate"
 disable-prometheus = true
 log-disable-ansi-codes = true
@@ -130,9 +130,9 @@ def cmd_enqueue(a) -> None:
     rkey = "r" + hashlib.sha1(repo.encode()).hexdigest()[:16]
     job = {"id": f"job-{int(time.time() * 1000):x}-{os.getpid():x}",
            "cmd": a.cmd, "cwd": repo, "priority": a.priority,
-           "env": {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "FLEET_LEASE_S")}}
-    inv = send_job(job, rkey, int(os.environ.get("FLEET_CAP", "4")),
-                   int(os.environ.get("FLEET_REPO_CAP", "1")))
+           "env": {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "COORDINATE_LEASE_S")}}
+    inv = send_job(job, rkey, int(os.environ.get("COORDINATE_CAP", "4")),
+                   int(os.environ.get("COORDINATE_REPO_CAP", "1")))
     print(inv)
 
 

@@ -9,25 +9,25 @@ import time
 
 import pytest
 
-from fleet import cli, queue as q
+from coordinate import cli, queue as q
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.setenv("FLEET_CAP", "3")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.setenv("COORDINATE_CAP", "3")
     monkeypatch.setattr(q, "LEASE_S", 3.0)
     return tmp_path
 
 
 def daemon():
-    return subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=os.environ.copy(),
+    return subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=os.environ.copy(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def job_row(jid):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     row = c.execute("SELECT status, attempts FROM jobs WHERE id=?", (jid,)).fetchone()
     c.close()
     return row
@@ -70,7 +70,7 @@ def test_cap_never_exceeded(env):
         cli.main(["enqueue", "--cwd", str(d), "--shell", "--", cmd])
     dm = daemon()
     peak = 0
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     try:
         end = time.time() + 60
         done = 0

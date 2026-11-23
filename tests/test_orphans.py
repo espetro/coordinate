@@ -7,12 +7,12 @@ import time
 
 import pytest
 
-from fleet import queue as q
+from coordinate import queue as q
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
     monkeypatch.setattr(q, "LEASE_S", 3.0)
     return tmp_path
 

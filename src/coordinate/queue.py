@@ -6,33 +6,33 @@ import json
 import os
 import signal
 import sqlite3
+import subprocess
 import time
+
+from . import paths
 
 try:  # tomllib is stdlib from 3.11
     import tomllib
 except ImportError:  # pragma: no cover
     tomllib = None
 
-LEASE_S = float(os.environ.get("FLEET_LEASE_S", "30"))
-TIMECAP_GRACE_S = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
+LEASE_S = float(paths.env("LEASE_S", "30"))
+TIMECAP_GRACE_S = float(paths.env("TIMECAP_GRACE_S", "30"))
 TIMECAP_TERM_S = 10.0  # SIGTERM to SIGKILL gap
-MACHINE = os.environ.get("FLEET_MACHINE", "laptop")
+MACHINE = paths.env("MACHINE", "laptop")
 MACHINE_CAPS = {"laptop": 3, "vps": 6}
 
 
 def machine_cap() -> int:
-    return int(os.environ.get("FLEET_CAP", MACHINE_CAPS.get(MACHINE, 3)))
+    return int(paths.env("CAP", MACHINE_CAPS.get(MACHINE, 3)))
 
 
 def repo_cap() -> int:
-    return int(os.environ.get("FLEET_REPO_CAP", 1))
-
-
-CONFIG_PATH = os.environ.get("FLEET_CONFIG") or os.path.expanduser("~/.fleet/config.toml")
+    return int(paths.env("REPO_CAP", 1))
 
 
 def _config() -> dict:
-    path = os.environ.get("FLEET_CONFIG") or CONFIG_PATH
+    path = paths.config_path()
     try:
         with open(path, "rb") as f:
             return tomllib.load(f) if tomllib else {}
@@ -41,7 +41,7 @@ def _config() -> dict:
 
 
 def _slots_config() -> dict[str, int]:
-    """Per-key tool-level slot limits from [slots] in ~/.fleet/config.toml (default 1 each)."""
+    """Per-key tool-level slot limits from [slots] in config.toml (default 1 each)."""
     return {str(k): int(v) for k, v in (_config().get("slots") or {}).items()}
 
 
@@ -98,15 +98,60 @@ def match_tool_class(argv0: str) -> tuple[str, int] | None:
 
 
 def project_key(cwd: str | None) -> str:
-    """Nearest git root above cwd (D2); falls back to cwd itself."""
-    d = os.path.abspath(cwd or os.getcwd())
+    """Main repository root above cwd; falls back to cwd itself.
+
+    A git worktree has a `.git` *file* pointing at its gitdir; the main repo is found by
+    reading the `gitdir:` line and the gitdir's `commondir` (both relative to their own
+    directory). `git rev-parse --git-common-dir` is the fallback. This way worktrees of one
+    repo share the repo key and different repos do not."""
+    start = os.path.abspath(cwd or os.getcwd())
+    d = start
     while True:
-        if os.path.isdir(os.path.join(d, ".git")):
+        dot = os.path.join(d, ".git")
+        if os.path.isdir(dot):
             return d
+        if os.path.isfile(dot):
+            main = _worktree_main_repo(d, dot)
+            if main:
+                return main
         parent = os.path.dirname(d)
         if parent == d:
-            return d
+            return start  # not inside any repo: the cwd itself is the key
         d = parent
+
+
+def _worktree_main_repo(workdir: str, dot: str, _probe=None) -> str | None:
+    """Main repo of the worktree described by `.git` file `dot`, or None.
+
+    `_probe` lets tests inject a fake `git` (must accept ["rev-parse", "--git-common-dir"]
+    and return the path on stdout); production uses git with a 2s timeout."""
+    try:
+        with open(dot) as f:
+            for line in f:
+                if line.startswith("gitdir:"):
+                    gitdir = os.path.normpath(os.path.join(
+                        workdir, line.split(":", 1)[1].strip()))
+                    break
+            else:
+                return None
+        with open(os.path.join(gitdir, "commondir")) as f:
+            commondir = os.path.normpath(os.path.join(gitdir, f.read().strip()))
+        return os.path.dirname(commondir)
+    except OSError:
+        pass
+    probe = _probe or subprocess.run
+    try:
+        r = probe(["git", "-C", workdir, "rev-parse", "--git-common-dir"],
+                  capture_output=True, text=True, timeout=2)
+        if r is not None and r.returncode == 0 and r.stdout.strip():
+            p = os.path.normpath(os.path.join(workdir, r.stdout.strip()))
+            # a bare common dir has no worktree parent; use its parent (the repo dir)
+            if os.path.basename(p) == ".git":
+                return os.path.dirname(p)
+            return p if os.path.isdir(os.path.join(p, ".git")) else os.path.dirname(p)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
 
 
 def audit_spawn(c, jid: int | None, argv0: str, cls: str, proj: str) -> None:
@@ -116,7 +161,7 @@ def audit_spawn(c, jid: int | None, argv0: str, cls: str, proj: str) -> None:
 
 
 def db_path() -> str:
-    return os.environ.get("FLEET_DB") or os.path.expanduser("~/.fleet/queue.db")
+    return paths.db_path()
 
 
 def parse_duration(text: str) -> float:
@@ -129,7 +174,7 @@ def parse_duration(text: str) -> float:
 
 
 def default_max_runtime() -> float:
-    """[defaults] max_runtime from ~/.fleet/config.toml, so no job is unbounded unless capped at 0."""
+    """[defaults] max_runtime from config.toml, so no job is unbounded unless capped at 0."""
     raw = (_config().get("defaults") or {}).get("max_runtime")
     return parse_duration(raw) if raw is not None else 0.0
 

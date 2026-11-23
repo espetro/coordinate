@@ -21,7 +21,7 @@ def main(argv=None) -> int:
     ap.add_argument("--cwd", default=None)
     a = ap.parse_args(argv)
 
-    os.environ["FLEET_DB"] = a.db
+    os.environ["COORDINATE_DB"] = a.db
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
     from fleet import queue as q
 

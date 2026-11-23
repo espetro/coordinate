@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 
-from fleet import queue as q
+from . import queue as q
 
 BACKOFF_MAX = 2.0
 BACKOFF_MIN = 0.05
@@ -105,16 +105,18 @@ def _spawn_raw(c, jid: int, owner: str, kind: str, payload: dict) -> subprocess.
 
 
 def _job_env(c, jid: int) -> dict:
-    """Env contract for the child: FLEET_JOB_ID, FLEET_DEADLINE_AT, FLEET_MACHINE, FLEET_DB.
+    """Env contract for the child: COORDINATE_JOB_ID, COORDINATE_DEADLINE_AT, COORDINATE_MACHINE,
+    COORDINATE_DB (the FLEET_* spellings are kept for existing agents until P2).
 
-    FLEET_DEADLINE_AT is the absolute epoch-second deadline of this attempt (empty when the
-    job carries no cap), so the agent can read its own identity and budget."""
+    COORDINATE_DEADLINE_AT is the absolute epoch-second deadline of this attempt (empty when
+    the job carries no cap), so the agent can read its own identity and budget."""
     env = os.environ.copy()
-    env["FLEET_JOB_ID"] = str(jid)
+    env["COORDINATE_JOB_ID"] = env["FLEET_JOB_ID"] = str(jid)
     row = c.execute("SELECT deadline_at FROM jobs WHERE id=?", (jid,)).fetchone()
-    env["FLEET_DEADLINE_AT"] = str(int(row[0])) if row and row[0] else ""
-    env["FLEET_MACHINE"] = q.MACHINE
-    env["FLEET_DB"] = q.db_path()
+    deadline = str(int(row[0])) if row and row[0] else ""
+    env["COORDINATE_DEADLINE_AT"] = env["FLEET_DEADLINE_AT"] = deadline
+    env["COORDINATE_MACHINE"] = env["FLEET_MACHINE"] = q.MACHINE
+    env["COORDINATE_DB"] = env["FLEET_DB"] = q.db_path()
     return env
 
 
@@ -140,7 +142,7 @@ def spawn_acp(c, jid: int, owner: str, payload: dict) -> tuple[subprocess.Popen,
     os.makedirs(os.path.dirname(pidfile), exist_ok=True)
     if os.path.exists(pidfile):
         os.unlink(pidfile)
-    cmd = shlex.split(os.environ.get("FLEET_ACP_CMD", "fleet-acp")) + [
+    cmd = shlex.split(q.paths.env("ACP_CMD", "fleet-acp")) + [
         "run", payload["agent"], "--cwd", payload["cwd"], "--prompt", payload["prompt"], "--pid-file", pidfile]
     if payload.get("registry"):
         cmd += ["--registry", payload["registry"]]
@@ -184,7 +186,7 @@ def _terminate_tree(pgid: int | None, pidfile: str | None, proc: subprocess.Pope
                     grace_s: float = 0.0) -> None:
     """SIGTERM the process group, then SIGKILL after 10s. The grace period (before the TERM)
     belongs to the ACP cancel step, so a cmd job is terminated without waiting."""
-    term_wait = float(os.environ.get("FLEET_TIMECAP_TERM_S", "10"))
+    term_wait = float(q.paths.env("TIMECAP_TERM_S", "10"))
     pids = [pgid]
     if pidfile:
         try:
@@ -227,7 +229,7 @@ def _expire(c, jid: int, kind: str, payload: dict, pgid: int | None, pidfile: st
 
     ACP jobs get the grace period (FLEET_TIMECAP_GRACE_S) to stop the turn on their own;
     cmd jobs skip the cancel step and are terminated immediately."""
-    grace = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
+    grace = float(q.paths.env("TIMECAP_GRACE_S", "30"))
     if kind == "acp" and proc is not None:
         _acp_cancel(proc, payload)
     else:

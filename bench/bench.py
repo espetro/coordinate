@@ -1,9 +1,9 @@
-"""Backend-agnostic before/after benchmark for fleet. Stdlib only.
+"""Backend-agnostic before/after benchmark for coordinate. Stdlib only.
 
-Drives only the public surface (`python -m fleet enqueue|stats|daemon`) and measures from timestamps the jobs
-write themselves, so the same script runs against the SQLite backend and FLEET_BACKEND=dbos.
+Drives only the public surface (`python -m coordinate enqueue|stats|daemon`) and measures from timestamps the jobs
+write themselves, 
 
-  python bench/bench.py --tree PATH_TO_CHECKOUT [--backend sqlite|dbos] --out results.json
+  python bench/bench.py --tree PATH_TO_CHECKOUT [--backend sqlite|custom] --out results.json
 """
 import argparse
 import atexit
@@ -31,12 +31,10 @@ class Fleet:
     def __init__(self, tree: Path, backend: str, workdir: Path, cap: int, lease: float = 5):
         self.tree, self.dir = tree, workdir
         self.py = str(tree / ".venv" / "bin" / "python")
-        self.cmd = shlex.split(CLI_OVERRIDE) if CLI_OVERRIDE else [self.py, "-m", "fleet"]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("FLEET_")}
-        env.update(FLEET_DB=str(workdir / "queue.db"), FLEET_CAP=str(cap), FLEET_REPO_CAP="1",
-                   FLEET_MACHINE="bench", FLEET_LEASE_S=str(lease), FLEET_CONFIG=str(workdir / "none.toml"))
-        if backend == "dbos":
-            env["FLEET_BACKEND"] = "dbos"
+        self.cmd = shlex.split(CLI_OVERRIDE) if CLI_OVERRIDE else [self.py, "-m", "coordinate"]
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("COORDINATE_", "COORDINATE_"))}
+        env.update(COORDINATE_DB=str(workdir / "queue.db"), COORDINATE_CAP=str(cap), COORDINATE_REPO_CAP="1",
+                   COORDINATE_MACHINE="bench", COORDINATE_LEASE_S=str(lease), COORDINATE_CONFIG=str(workdir / "none.toml"))
         self.env, self.daemon = env, None
 
     def cli(self, *args) -> str:
@@ -331,7 +329,7 @@ def scenario_noise_floor(tree, backend, tmp, repeats=10, subset=None):
     for name in names:
         runs = []
         for i in range(repeats):
-            with tempfile.TemporaryDirectory(prefix=f"fleetnoise-{name}-") as t:
+            with tempfile.TemporaryDirectory(prefix=f"coordinatenoise-{name}-") as t:
                 try:
                     runs.append(SCENARIOS[name](tree, backend, Path(t)))
                 except Exception as e:  # a failed repeat still counts as a sample
@@ -347,7 +345,7 @@ def scenario_noise_floor(tree, backend, tmp, repeats=10, subset=None):
 
 
 def _acp_registry(tree: Path, tmp: Path) -> str:
-    """Registry file for the stub ACP agent, used by fleet's ACP job path."""
+    """Registry file for the stub ACP agent, used by coordinate's ACP job path."""
     reg = tmp / "agents.stub.json"
     reg.write_text(json.dumps({"stub": {"command": str(tree / ".venv" / "bin" / "python"),
                                          "args": [str(Path(__file__).parent / "stub_acp_agent.py")]}}))
@@ -355,18 +353,18 @@ def _acp_registry(tree: Path, tmp: Path) -> str:
 
 
 def _acp_fleet(tree: Path, backend: str, tmp: Path, cap: int, lease: float = 5) -> Fleet:
-    """A fleet instance whose ACP lane runs the bench's stub agent through bench/acp_client.py.
+    """A coordinate instance whose ACP lane runs the bench's stub agent through bench/acp_client.py.
 
-    No change to fleet's adapter contract is needed: FLEET_ACP_CMD already selects the ACP
+    No change to coordinate's adapter contract is needed: COORDINATE_ACP_CMD already selects the ACP
     command, so the bench points it at the stdlib client instead of fleet-acp.
     """
     f = Fleet(tree, backend, tmp, cap=cap, lease=lease)
-    f.env["FLEET_ACP_CMD"] = f"{tree / '.venv' / 'bin' / 'python'} {Path(__file__).parent / 'acp_client.py'}"
+    f.env["COORDINATE_ACP_CMD"] = f"{tree / '.venv' / 'bin' / 'python'} {Path(__file__).parent / 'acp_client.py'}"
     return f
 
 
 def _agent_pids(db: Path) -> dict[int, int]:
-    """job id -> agent pid, from the pid files fleet's daemon writes next to the store."""
+    """job id -> agent pid, from the pid files coordinate's daemon writes next to the store."""
     pids = {}
     pdir = db.parent / "pids"
     if pdir.is_dir():
@@ -434,7 +432,7 @@ def scenario_orchestrator_kill(tree, backend, tmp, k=3, turn_ms=20000, lease=4):
             if payload.get("session"):
                 sessions[jid] = payload["session"]
         time.sleep(0.2)
-    pids = _agent_pids(Path(f.env["FLEET_DB"]))
+    pids = _agent_pids(Path(f.env["COORDINATE_DB"]))
     alive_before = sum(1 for p in pids.values() if _alive(p))
     t_kill = time.time()
     f.kill9()
@@ -465,7 +463,7 @@ def scenario_orchestrator_kill(tree, backend, tmp, k=3, turn_ms=20000, lease=4):
             except (ProcessLookupError, PermissionError):
                 pass
     # the retried attempts' own agents, whose pid files the daemon overwrote
-    for p in _agent_pids(Path(f.env["FLEET_DB"])).values():
+    for p in _agent_pids(Path(f.env["COORDINATE_DB"])).values():
         if p not in survivors and _alive(p):
             _kill_group(p)
             if _alive(p):
@@ -535,7 +533,7 @@ def scenario_live_density(tree, backend, tmp, steps=(1, 2, 4), ballast_mb=60, tu
         deadline = time.time() + 120
         pids = []
         while time.time() < deadline:
-            pids = [p for p in _agent_pids(Path(f.env["FLEET_DB"])).values() if _alive(p)]
+            pids = [p for p in _agent_pids(Path(f.env["COORDINATE_DB"])).values() if _alive(p)]
             if len(pids) >= n:
                 break
             time.sleep(0.3)
@@ -571,7 +569,7 @@ def scenario_timecap(tree, backend, tmp):
     Part 3 (kill -9): the daemon is SIGKILLed while the forever-agent runs; the restarted
     daemon still enforces the deadline recorded in SQLite.
 
-    FLEET_TIMECAP_GRACE_S is set to 2s so the whole scenario stays under cap + grace.
+    COORDINATE_TIMECAP_GRACE_S is set to 2s so the whole scenario stays under cap + grace.
     """
     reg = _acp_registry(tree, tmp)
     grace_s = 2.0
@@ -581,7 +579,7 @@ def scenario_timecap(tree, backend, tmp):
 
     def fleet(cap=2):
         f = _acp_fleet(tree, backend, tmp, cap=cap, lease=30)
-        f.env["FLEET_TIMECAP_GRACE_S"] = str(grace_s)
+        f.env["COORDINATE_TIMECAP_GRACE_S"] = str(grace_s)
         f.env["STUB_FOREVER"] = "1"
         return f
 
@@ -612,7 +610,7 @@ def scenario_timecap(tree, backend, tmp):
                 st = json.loads(f.cli("status", str(jid)))
                 if st.get("pgid"):
                     pids.append(st["pgid"])
-            pids += [p for j, p in _agent_pids(Path(f.env["FLEET_DB"])).items() if j in jids]
+            pids += [p for j, p in _agent_pids(Path(f.env["COORDINATE_DB"])).items() if j in jids]
             if not any(_alive(p) for p in pids):
                 return True, time.time() - t0
             time.sleep(0.2)
@@ -769,7 +767,7 @@ def scenario_state_loss(tree, backend, tmp, live=2, parked=2, turn_ms=20000, lea
     f = _acp_fleet(tree, backend, tmp, cap=live + 2, lease=lease)
     f.env["STUB_TURN_MS"] = str(turn_ms)
     f.env["STUB_CHUNKS"] = "40"
-    db = Path(f.env["FLEET_DB"])
+    db = Path(f.env["COORDINATE_DB"])
     log = tmp / "spans"
 
     # a heavy-class binary so the daemon takes a weighted tool lease for it
@@ -779,7 +777,7 @@ def scenario_state_loss(tree, backend, tmp, live=2, parked=2, turn_ms=20000, lea
         f"#!/bin/sh\necho s tool $({STAMP}) >> {log}\nsleep {lease * 2}\necho e tool $({STAMP}) >> {log}\n")
     (bindir / "vitest").chmod(0o755)
     f.env["PATH"] = f"{bindir}:{f.env.get('PATH', '')}"
-    cfg = Path(f.env["FLEET_CONFIG"])
+    cfg = Path(f.env["COORDINATE_CONFIG"])
     cfg.write_text("[slots]\n'tool:vitest:*' = 2\n")
 
     f.start()
@@ -832,7 +830,7 @@ def scenario_state_loss(tree, backend, tmp, live=2, parked=2, turn_ms=20000, lea
     daemon_pid = f.daemon.pid
     cmdline = Path(f"/proc/{daemon_pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
     if "daemon" not in cmdline:
-        raise RuntimeError(f"refusing to kill pid {daemon_pid}: cmdline {cmdline} is not the fleet daemon")
+        raise RuntimeError(f"refusing to kill pid {daemon_pid}: cmdline {cmdline} is not the coordinate daemon")
     t_kill = time.time()
     f.kill9()
     time.sleep(0.3)
@@ -948,7 +946,7 @@ def scenario_park_density(tree, backend, tmp, steps=(1000, 10000)):
     own memory. The steps are cumulative: 1,000 parked sessions first, then 10,000 more.
     """
     f = Fleet(tree, backend, tmp, cap=2, lease=120)
-    db = Path(f.env["FLEET_DB"])
+    db = Path(f.env["COORDINATE_DB"])
     out = {"parkdensity_steps": [], "parkdensity_baseline_rss_mb": 0.0,
            "parkdensity_host": _host_state()}
     try:
@@ -1021,8 +1019,8 @@ def _host_state() -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", default=".")
-    ap.add_argument("--cli", default=None, help="adapter command prefix replacing `python -m fleet` (see .agents/docs/tool-search-rubric.md)")
-    ap.add_argument("--backend", default="sqlite", choices=["sqlite", "dbos", "custom"])
+    ap.add_argument("--cli", default=None, help="adapter command prefix replacing `python -m coordinate` (see .agents/docs/tool-search-rubric.md)")
+    ap.add_argument("--backend", default="sqlite", choices=["sqlite", "custom"])
     ap.add_argument("--only", default=",".join(SCENARIOS))
     ap.add_argument("--out", required=True)
     ap.add_argument("--repeats", type=int, default=10, help="noise-floor: repeats per scenario")
@@ -1037,7 +1035,7 @@ def main():
     for name in a.only.split(","):
         if name not in SCENARIOS:
             raise SystemExit(f"unknown scenario {name}; known: {', '.join(SCENARIOS)}")
-        with tempfile.TemporaryDirectory(prefix=f"fleetbench-{name}-") as t:
+        with tempfile.TemporaryDirectory(prefix=f"coordinatebench-{name}-") as t:
             t0 = time.time()
             try:
                 if name == "noise-floor":

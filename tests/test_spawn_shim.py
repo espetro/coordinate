@@ -8,17 +8,17 @@ import time
 
 import pytest
 
-from fleet import cli, queue as q
+from coordinate import cli, queue as q
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.setenv("FLEET_CAP", "4")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.setenv("COORDINATE_CAP", "4")
     monkeypatch.setenv("FAKE_SLEEP", "2")  # heavy jobs run 2s so lease contention is observable
-    monkeypatch.setenv("FLEET_REPO_CAP", "4")  # isolate tool-cap contention from repo serialization
-    monkeypatch.setenv("FLEET_MACHINE", "vps")
+    monkeypatch.setenv("COORDINATE_REPO_CAP", "4")  # isolate tool-cap contention from repo serialization
+    monkeypatch.setenv("COORDINATE_MACHINE", "vps")
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         "[slots]\n"
@@ -30,13 +30,13 @@ def env(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    monkeypatch.setenv("FLEET_CONFIG", str(cfg))
+    monkeypatch.setenv("COORDINATE_CONFIG", str(cfg))
     make_fake_bins(repo)
     return repo
 
 
 def daemon():
-    return subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=os.environ.copy(),
+    return subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=os.environ.copy(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -61,7 +61,7 @@ def enqueue(env, tag, cmd, cwd=None):
 
 
 def drain(total, timeout=90):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     done, end = 0, time.time() + timeout
     while time.time() < end and done < total:
         row = c.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('done','failed')").fetchone()
@@ -72,7 +72,7 @@ def drain(total, timeout=90):
 
 
 def audit(env):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     rows = c.execute("SELECT argv0, tool_class, project, job_id FROM spawn_audit").fetchall()
     c.close()
     return rows
@@ -95,7 +95,7 @@ def peak_overlap(log, tags=None):
 
 
 def wait_parked(jid, timeout=30):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     end = time.time() + timeout
     while time.time() < end:
         row = c.execute("SELECT status, waiting_on FROM jobs WHERE id=?", (jid,)).fetchone()
@@ -108,7 +108,7 @@ def wait_parked(jid, timeout=30):
 
 
 def job_ids():
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     ids = [r[0] for r in c.execute("SELECT id FROM jobs ORDER BY id")]
     c.close()
     return ids

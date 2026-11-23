@@ -1,13 +1,12 @@
-"""fleet CLI: enqueue, status, wait-on, release, cancel, stats, dead retry, daemon."""
+"""coordinate CLI: enqueue, status, wait-on, release, cancel, stats, dead retry, migrate, service, daemon."""
 import argparse
 import json
 import os
 import sys
 import time
 
-from fleet import queue as q
-
-DBOS = os.environ.get("FLEET_BACKEND") == "dbos"
+from . import paths
+from . import queue as q
 
 
 def _max_runtime(spec: str | None) -> float:
@@ -34,16 +33,16 @@ def _job_view(row: dict) -> dict:
 
 
 def build() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="fleet")
+    p = argparse.ArgumentParser(prog="coordinate")
     s = p.add_subparsers(dest="verb", required=True)
-    e = s.add_parser("enqueue", help="enqueue a command: fleet enqueue [opts] -- cmd args...")
+    e = s.add_parser("enqueue", help="enqueue a command: coordinate enqueue [opts] -- cmd args...")
     e.add_argument("--cwd", default=None)
     e.add_argument("--repo", default=None, help="per-repo cap key (default: cwd)")
     e.add_argument("--priority", type=int, default=0)
     e.add_argument("--max-attempts", type=int, default=3)
     e.add_argument("--max-runtime", default=None, metavar="DUR",
                    help="execution-time cap for the job, e.g. 15m, 2h, 90s (0 = unbounded; "
-                        "default comes from [defaults] max_runtime in ~/.fleet/config.toml)")
+                        "default comes from [defaults] max_runtime in config.toml)")
     e.add_argument("--wait-on", default=None, help="park immediately on this event id")
     e.add_argument("--acp", metavar="AGENT", default=None, help="enqueue an acp job for this agent (needs --cwd, --prompt)")
     e.add_argument("--prompt", default=None, help="acp prompt text")
@@ -56,7 +55,7 @@ def build() -> argparse.ArgumentParser:
     st = s.add_parser("status", help="list jobs, or one job as JSON")
     st.add_argument("id", nargs="?")
     st.add_argument("--self", action="store_true",
-                    help="status of the job named by $FLEET_JOB_ID (read-only)")
+                    help="status of the job named by $COORDINATE_JOB_ID (read-only)")
     w = s.add_parser("wait-on", help="park a job on an event id")
     w.add_argument("id", type=int)
     w.add_argument("event")
@@ -68,59 +67,33 @@ def build() -> argparse.ArgumentParser:
     d = s.add_parser("dead", help="dead-letter operations")
     d.add_argument("action", choices=["retry"])
     d.add_argument("id", type=int, nargs="?")
+    s.add_parser("migrate", help="copy legacy ~/.fleet files into the XDG locations")
+    sv = s.add_parser("service", help="install/uninstall/status the per-user daemon service")
+    sv.add_argument("action", choices=["install", "uninstall", "status"])
     s.add_parser("daemon", help="run the dispatcher")
     return p
-
-
-def _main_dbos(a) -> int:
-    from fleet import dbos_backend as b
-    if a.verb == "enqueue":
-        kind = "acp" if a.acp else "cmd"
-        if kind == "acp":
-            payload = {"agent": a.acp, "cwd": os.path.abspath(a.cwd), "prompt": a.prompt}
-            for k in ("registry", "model"):
-                if getattr(a, k):
-                    payload[k] = getattr(a, k)
-        else:
-            cmd = [t for t in a.cmd if t != "--"] if a.cmd[:1] == ["--"] else a.cmd
-            if not cmd:
-                sys.exit("enqueue: no command given")
-            payload = {"cmd": cmd[0] if a.shell else cmd, "cwd": a.cwd}
-        if a.repo:
-            payload["repo"] = a.repo
-        print(b.enqueue(payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts))
-    elif a.verb == "status":
-        for r in b.status(a.id):
-            print(json.dumps(r))
-    elif a.verb == "cancel":
-        b.cancel(a.id)
-    elif a.verb == "stats":
-        print(json.dumps(b.stats()))
-    elif a.verb == "dead":
-        print(*b.retry_dead(a.id))
-    else:
-        sys.exit(f"{a.verb}: not supported on the dbos backend (spike)")
-    return 0
 
 
 def main(argv=None) -> int:
     a = build().parse_args(argv)
     if a.verb == "daemon":
-        if DBOS:
-            from fleet import dbos_backend
-            try:
-                dbos_backend.run()
-            except KeyboardInterrupt:
-                pass
-            return 0
-        from fleet import daemon
+        from . import daemon
         try:
             daemon.run()
         except KeyboardInterrupt:
             pass
         return 0
-    if DBOS:
-        return _main_dbos(a)
+    if a.verb == "migrate":
+        written = paths.migrate()
+        if not written:
+            print("nothing to migrate (no legacy ~/.fleet files found)")
+        for p in written:
+            print(f"copied: {p}")
+        print("note: the originals under ~/.fleet were kept; delete them when confident")
+        return 0
+    if a.verb == "service":
+        from . import service
+        return service.main(a.action)
     c = q.connect()
     if a.verb == "enqueue":
         kind = "acp" if a.acp else "cmd"
@@ -153,9 +126,9 @@ def main(argv=None) -> int:
                 "pgid,payload,max_runtime_s,runtime_used_s,deadline_at,outcome")
         jid = a.id
         if a.self:
-            jid = os.environ.get("FLEET_JOB_ID")
+            jid = paths.env("JOB_ID")
             if not jid:
-                sys.exit("status --self: FLEET_JOB_ID is not set")
+                sys.exit("status --self: COORDINATE_JOB_ID (or FLEET_JOB_ID) is not set")
         if jid is not None:
             cur = c.execute(f"SELECT {cols} FROM jobs WHERE id=?", (jid,))
             row = cur.fetchone()

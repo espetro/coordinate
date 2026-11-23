@@ -4,7 +4,7 @@
 
 coordinate is a tool and orchestration layer, not a runtime framework like Rivet or Temporal: it is biased to agent orchestration, generic and pluggable at its module seams, and may also be offered as a library if that proves useful.
 
-Status as of 2026-11-23. The code is still the `fleet` package (CLI `fleet`, env `FLEET_*`, store `~/.fleet/queue.db`); the rename is prototype slice P1 below. Statements marked (M) are measured, (D) are designed but not built, everything else is built and tested.
+Status as of 2026-11-23. Prototype slice P1 below is done: the package, CLI (`coordinate`, daemon `coordinated`) and env (`COORDINATE_*`, with `FLEET_*` read as a fallback) are renamed and state lives under XDG paths (`coordinate/paths.py`); legacy `~/.fleet` files are used with a notice until `coordinate migrate` copies them. Statements marked (M) are measured, (D) are designed but not built, everything else is built and tested.
 
 Reference material lives in `.agents/docs/`: requirements and assessments in `orchestrator-framing.md`, the scoring rubric in `tool-search-rubric.md`, candidate tools in `candidates-survey.md`, spike reports (`*-spike.md`, `bench-v2.md`, `bench-ci.md`, `timecap.md`), designs (`readoption-design.md`, `toolcaps-design.md`, `fallback-design.md`) and research in `research/`. The previous deployment architecture of `fleet` is kept as `fleet-architecture-2026-11-20.md`.
 
@@ -51,7 +51,7 @@ flowchart TB
 | Improver | Tune config, prompts and plugins against the bench | (D) `research/self-improving-stack.md` | `propose`, `evaluate`, `promote`, `revert` |
 | Control panel | Human view and control | T3 Code, Orca, the CLI | consumes the modules above |
 
-Worktrees are not ours to enforce: T3 and Orca already create them. Repo leases key on the repository, not the worktree path (known bug: `project_key` treats a worktree's `.git` file as "not a repo" and falls back to `/`, which is too strict; fix in P1).
+Worktrees are not ours to enforce: T3 and Orca already create them. Repo leases key on the repository, not the worktree path `project_key` resolves a worktree's `.git` file through its gitdir and commondir (or `git rev-parse --git-common-dir`, 2s timeout), so worktrees of one repo share the repo key.
 
 ## Files on disk
 
@@ -98,7 +98,7 @@ The `jobs` row carries everything needed after a kill -9: `status`, `priority`, 
 
 ## Agent contract
 
-At spawn the daemon injects `FLEET_JOB_ID`, `FLEET_DEADLINE_AT`, `FLEET_MACHINE` and `FLEET_DB` (to become `COORDINATE_*`). An agent can read its own row with `fleet status --self` and the queue with `fleet stats`. These are read-only; (D) the CLI refuses mutating commands when the job id env is set, unless the job has an explicit fan-out allowance.
+At spawn the daemon injects `COORDINATE_JOB_ID`, `COORDINATE_DEADLINE_AT`, `COORDINATE_MACHINE` and `COORDINATE_DB` (the old `FLEET_*` spellings are set too until P2). An agent can read its own row with `coordinate status --self` and the queue with `coordinate stats`. These are read-only; (D) the CLI refuses mutating commands when the job id env is set, unless the job has an explicit fan-out allowance.
 
 ## Measured footprint (VPS, Linux x86_64, 6 cores)
 
@@ -119,7 +119,7 @@ Alternatives measured on the same host: Restate 532MB idle, Rivet 128MB idle and
 
 ## Prototype plan
 
-- P1, runnable and installable: rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, `~/.coordinate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install` (launchd, systemd user unit), release workflow that attaches a wheel to a GitHub Release, install with `uv tool install`.
+- P1, runnable and installable (done): rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, XDG paths with legacy `~/.fleet` notice and `coordinate migrate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install|uninstall|status` (systemd user unit, launchd agent), release workflow attaching the wheel and sdist to a GitHub Release, install with `uv tool install`.
 - P2, visibility and wakeups: a `mailbox(job_id, kind, payload, dedupe_key, deliver_at)` table borrowed from the actor model (`research/actor-model.md`): each job has an addressable mailbox and undeliverable messages and exhausted jobs land in a dead letter mailbox; signals sent before a job parks are kept instead of lost (today `release()` only updates rows already waiting), wakes carry data, waits get a timeout and any-of, and alarms are messages with a future `deliver_at`. Then the events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
 - P3, re-adoption: detached ACP host, single-instance daemon lock, safe kills by pidfd and start time, `orchestrator-kill` with 0 duplicate turns.
 - P4, multi-device: hub allowances, presence levels, Workspace interface over T3.

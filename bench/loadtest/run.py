@@ -5,7 +5,7 @@
     uv run python bench/loadtest/run.py --cap 2 --skip-acp        # cmd-only smoke, no LLM calls
     uv run python bench/loadtest/run.py --cap 2 --fake-acp        # acp scenarios against a zero-token stub
 
-Everything runs in a throwaway temp dir with its own FLEET_DB, FLEET_ACP_HOME, git repos and daemon subprocess.
+Everything runs in a throwaway temp dir with its own COORDINATE_DB, COORDINATE_ACP_HOME, git repos and daemon subprocess.
 The real service, the real queue and ~/Documents are never touched. Stdlib only, macOS and Linux.
 """
 import argparse
@@ -30,7 +30,7 @@ from collections import namedtuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-FLEET_ROOT = HERE.parent.parent
+COORDINATE_ROOT = HERE.parent.parent
 SCENARIOS = ["overload", "contention", "priority", "failure", "cancel", "park", "chaos"]
 ACP_ONLY = {"failure", "cancel", "park"}
 TERMINAL = ("done", "failed", "dead")
@@ -168,11 +168,11 @@ class Ctx:
 
     def _resolve_acp(self):
         a = self.args
-        acp_dir = Path(a.acp_dir or os.environ.get("FLEET_ACP_DIR") or FLEET_ROOT.parent / "fleet-acp")
+        acp_dir = Path(a.acp_dir or os.environ.get("COORDINATE_ACP_DIR") or COORDINATE_ROOT.parent / "fleet-acp")
         if a.fake_acp:
             return f"{shlex.quote(sys.executable)} {shlex.quote(str(HERE / 'fake_acp.py'))}", None
-        if os.environ.get("FLEET_ACP_CMD"):
-            return os.environ["FLEET_ACP_CMD"], acp_dir
+        if os.environ.get("COORDINATE_ACP_CMD"):
+            return os.environ["COORDINATE_ACP_CMD"], acp_dir
         js = acp_dir / "bin" / "fleet-acp.js"
         if js.exists() and shutil.which("node"):
             return f"node {shlex.quote(str(js))}", acp_dir
@@ -205,12 +205,12 @@ class Sandbox:
         self.dir = ctx.root / name
         self.dir.mkdir()
         self.db = self.dir / "queue.db"
-        env = {k: v for k, v in os.environ.items() if not k.startswith("FLEET_")}
-        env.update(FLEET_DB=str(self.db), FLEET_CAP=str(cap), FLEET_LEASE_S=str(lease), FLEET_MACHINE="loadtest",
-                   FLEET_REPO_CAP="1", FLEET_ACP_HOME=str(ctx.acp_home),
-                   PYTHONPATH=os.pathsep.join(filter(None, [str(FLEET_ROOT / "src"), os.environ.get("PYTHONPATH")])))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("COORDINATE_")}
+        env.update(COORDINATE_DB=str(self.db), COORDINATE_CAP=str(cap), COORDINATE_LEASE_S=str(lease), COORDINATE_MACHINE="loadtest",
+                   COORDINATE_REPO_CAP="1", COORDINATE_ACP_HOME=str(ctx.acp_home),
+                   PYTHONPATH=os.pathsep.join(filter(None, [str(COORDINATE_ROOT / "src"), os.environ.get("PYTHONPATH")])))
         if ctx.acp_cmd:
-            env["FLEET_ACP_CMD"] = ctx.acp_cmd
+            env["COORDINATE_ACP_CMD"] = ctx.acp_cmd
         self.env = env
         self.daemon: subprocess.Popen | None = None
         self.known_pgids: set[int] = set()
@@ -889,7 +889,7 @@ def render_md(results: dict) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cap", type=int, default=int(os.environ.get("FLEET_CAP", 2)), help="machine cap under test (FLEET_CAP)")
+    ap.add_argument("--cap", type=int, default=int(os.environ.get("COORDINATE_CAP", 2)), help="machine cap under test (COORDINATE_CAP)")
     ap.add_argument("--mult", type=int, default=3, help="queue mult*cap jobs (max 3 unless --allow-big)")
     ap.add_argument("--agent", default="opencode")
     ap.add_argument("--model", default=None, help="model id written into the registry copy (prefer free or haiku)")
@@ -900,7 +900,7 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=int, default=1800, help="overall safety timeout in seconds")
     ap.add_argument("--job-timeout", type=int, default=240, help="per-wave wait for acp jobs, seconds")
     ap.add_argument("--sleep", type=int, default=10, help="seconds the cmd jobs sleep")
-    ap.add_argument("--acp-dir", default=None, help="fleet-acp checkout (default ../fleet-acp or FLEET_ACP_DIR)")
+    ap.add_argument("--acp-dir", default=None, help="fleet-acp checkout (default ../fleet-acp or COORDINATE_ACP_DIR)")
     ap.add_argument("--allow-big", action="store_true", help="allow mult > 3 (costs real money with acp)")
     a = ap.parse_args(argv)
     if a.cap < 1 or a.mult < 1:
@@ -937,7 +937,7 @@ def main(argv=None) -> int:
             if name in ACP_ONLY and a.skip_acp:
                 r.skipped = "skipped (--skip-acp)"
             elif (name in ACP_ONLY or (name == "overload" and not a.skip_acp)) and not ctx.acp_cmd:
-                r.skipped = "skipped (no fleet-acp found; set --acp-dir, FLEET_ACP_CMD or use --fake-acp)"
+                r.skipped = "skipped (no fleet-acp found; set --acp-dir, COORDINATE_ACP_CMD or use --fake-acp)"
             entry = {}
             try:
                 if not r.skipped:
