@@ -16,7 +16,7 @@ The bench suite runs in GitHub Actions on every pull request and on every push t
 
 The quick scenario set is `cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,state-loss`. It took 3m4s on the VPS (M), so the job fits comfortably in the 10 minute target and inside the 45 minute job timeout.
 
-The `workflow_dispatch` event adds two inputs. `scenario_set` picks `quick` or `long`; `long` adds the `park-density` scenario, which opens 1,000 and then 10,000 more parked sessions and reports the orchestrator RSS and the bytes per parked session. `park_density_steps` overrides the step sizes, comma separated.
+The `workflow_dispatch` event adds two inputs. `scenario_set` picks `quick` or `long`; `long` adds the `park-density` scenario, which opens 1,000 and then 10,000 more parked sessions and reports the orchestrator RSS and the bytes per parked session. `park_density_steps` overrides the step sizes, comma separated. The `park-density` scenario writes its rows in bulk through `bench/park_filler.py`, which calls fleet's own `queue.enqueue` and `queue.wait_on` in one process, because one CLI process per job would take about 16 minutes at the measured 95ms per enqueue (M). Measured (M): 11,000 parked sessions cost the orchestrator 0MB of extra RSS and 303 bytes each in the store.
 
 ## Why the runner needs thresholds, not a fixed number
 
@@ -31,6 +31,8 @@ A metric fails only when it is worse than both bands, so a noisy metric cannot f
 Metrics that describe semantics rather than speed use `direction = "none"`, which means the value must not change at all. `cap_max_concurrency` must stay at 3, `repo_shared_max_concurrency` at 1, `chaos_duplicated_jobs` at 3. The durability counts get the same treatment plus a ceiling: `stateloss_jobs_lost` and `stateloss_leases_leaked` must stay at 0, because losing a job or leaking a lease is a regression no amount of noise excuses.
 
 Boolean gates are a separate class and are checked first. `cap_holds`, `repo_cap_holds`, `chaos_all_done`, `tool_cap_holds`, `priority_ok`, `orchkill_all_done` and the rest must all be true. A gate that flips from true to false fails the job even when every number is inside its band.
+
+A metric that the baseline has and the run does not is a failure, not a pass. If a scenario crashes on the runner, its numbers are absent, and the comparison reports them as `MISSING` with a message that says the scenario failed. The alternative, skipping the missing metric, would let a broken scenario slip through the gate silently, which is the failure mode the gate exists to catch.
 
 ## How to refresh the baseline
 

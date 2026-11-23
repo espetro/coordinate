@@ -68,3 +68,15 @@ One caveat found while running this scenario (M): fleet's daemon does not unwind
 - The stub agent is not a real harness. It streams updates on a timer and allocates ballast, so the numbers describe the orchestrator's cost and the harness footprint model, not the behaviour of Claude Code or Codex.
 - The machine was shared during the run (load average 6.8 at the start), so the absolute latencies are upper bounds and the noise floor should be re-measured on an idle machine before it is used as a regression threshold.
 - The density step-up used 1, 2 and 4 sessions. The linear fit of the orchestrator's per-session cost (about 0.4MB) is measured over that small range only; the park-density scenario is still needed for the thousands-of-parked-sessions figure.
+
+## Bench CI: state loss and the regression gate (M, 2026-11-23)
+
+Branch `feat/bench-ci`. Two new scenarios and a comparison gate, described in `docs/bench-ci.md`.
+
+`state-loss` puts four kinds of in-flight state in the store at once, kills the daemon with `kill -9` and restarts it: 2 live shell jobs, 2 parked jobs waiting on an event, 1 job holding a weighted `tool:vitest` lease, and 1 ACP session mid-turn in the stub agent. The measured outcome on the VPS (load average 1.0 at the start of the run): 0 jobs lost, all 4 in-flight jobs ran twice, 1 duplicate turn, 0 leases leaked, and both parked jobs were still parked with their `waiting_on` intact.
+
+The field diff over the job rows shows exactly which state the crash cost. Only the volatile fields changed: `attempts` went from 1 to 2, `lease_owner` and `pgid` went from a value to null, and `status` went from `running` to `done`. The `payload` did not change at all, which includes the durable ACP session id, so the retry resumed the same session through ACP `session/load` rather than starting a new one. The stub agent's own session state shows the other half: `turns_started` went from 1 to 2 and `loads` appeared, so the session's in-memory fields were lost with the process and the turn was repeated. The price of a `kill -9` is therefore a repeated turn, not a lost job.
+
+`park-density` opens 1,000 and then 10,000 more parked sessions and measures the orchestrator's cost per parked session. 11,000 parked sessions measured (M) cost the orchestrator 0MB of extra RSS (18.4MB before and after) and 303 bytes each in the SQLite store. The bulk path is `bench/park_filler.py`, which calls fleet's own `queue.enqueue` and `queue.wait_on` in one process, because one CLI process per job would have taken about 16 minutes at the measured 95ms per enqueue.
+
+The comparison gate is `bench/compare.py` with `bench/thresholds.toml`. A numeric metric fails only when it is worse than both the noise band (2 x stdev from the idle noise floor in `bench/noise-linux.json`) and the per-metric percent tolerance, and a metric that the run did not produce fails too, so a crashed scenario cannot pass silently. The committed Linux baseline is `bench/baseline-linux.json`, produced from the quick scenario set on this host: the run took 3m4s, enqueue median 93.5ms, idle RSS 18.4MB at 0 percent CPU, 8.72 jobs per second, and every gate held.
