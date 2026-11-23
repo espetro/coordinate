@@ -1,0 +1,2 @@
+#!/bin/sh
+exec bun "/home/own-agents/.worktrees/fleet-spikes/rivetfill/bench/adapters/rivet/src/qclient.ts" "$@"
