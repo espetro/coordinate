@@ -572,8 +572,11 @@ def scenario_timecap(tree, backend, tmp):
         return json.loads(f.cli("status", str(jid)))
 
     def no_orphans(f, jids, timeout=30):
-        """Every recorded pid of these jobs (child group and agent pid file) must be gone."""
-        end = time.time() + timeout
+        """Every recorded pid of these jobs (child group and agent pid file) must be gone.
+
+        Returns (all_gone, seconds_until_gone)."""
+        t0 = time.time()
+        end = t0 + timeout
         while time.time() < end:
             pids = []
             for jid in jids:
@@ -582,9 +585,9 @@ def scenario_timecap(tree, backend, tmp):
                     pids.append(st["pgid"])
             pids += [p for j, p in _agent_pids(Path(f.env["FLEET_DB"])).items() if j in jids]
             if not any(_alive(p) for p in pids):
-                return True
+                return True, time.time() - t0
             time.sleep(0.2)
-        return False
+        return False, time.time() - t0
 
     # ---- part 1: acp forever agent ----------------------------------------
     f = fleet(cap=2)
@@ -598,7 +601,7 @@ def scenario_timecap(tree, backend, tmp):
     slot_freed = None
     jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
     reuse = wait_status(f, jid2, {"done"}, 30)
-    agents_gone = no_orphans(f, [jid])
+    agents_gone, pids_gone_s = no_orphans(f, [jid])
     f.stop()
     results.append({
         "part": "acp_forever_agent",
@@ -610,7 +613,7 @@ def scenario_timecap(tree, backend, tmp):
         "seconds_from_enqueue_to_timed_out": round(t_timed_out, 2),
         "within_cap_plus_grace": t_timed_out <= cap_s + grace_s + 1.0,
         "slot_reused_by_followup_job": reuse["status"] == "done",
-        "agent_pids_gone": agents_gone,
+        "agent_pids_gone": agents_gone, "seconds_until_pids_gone": round(pids_gone_s, 2),
     })
 
     # ---- part 2: cmd sleep-forever -----------------------------------------
@@ -623,7 +626,7 @@ def scenario_timecap(tree, backend, tmp):
     t_timed_out = time.time() - t0
     jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
     reuse = wait_status(f, jid2, {"done"}, 30)
-    gone = no_orphans(f, [jid])
+    gone, pids_gone_s = no_orphans(f, [jid])
     f.stop()
     results.append({
         "part": "cmd_sleep_forever",
@@ -635,7 +638,7 @@ def scenario_timecap(tree, backend, tmp):
         "seconds_from_enqueue_to_timed_out": round(t_timed_out, 2),
         "within_cap_plus_grace": t_timed_out <= cap_s + 5.0,
         "slot_reused_by_followup_job": reuse["status"] == "done",
-        "child_pids_gone": gone,
+        "child_pids_gone": gone, "seconds_until_pids_gone": round(pids_gone_s, 2),
     })
 
     # ---- part 3: kill -9 the daemon mid-turn --------------------------------
@@ -652,7 +655,7 @@ def scenario_timecap(tree, backend, tmp):
     t_timed_out = time.time() - t0
     jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
     reuse = wait_status(f, jid2, {"done"}, 30)
-    gone = no_orphans(f, [jid])
+    gone, pids_gone_s = no_orphans(f, [jid])
     f.stop()
     results.append({
         "part": "daemon_kill9_mid_turn",
@@ -665,6 +668,7 @@ def scenario_timecap(tree, backend, tmp):
         "seconds_from_kill_to_timed_out": round(t_timed_out, 2),
         "slot_reused_by_followup_job": reuse["status"] == "done",
         "agent_pids_gone": gone,
+        "seconds_until_pids_gone": round(pids_gone_s, 2),
     })
 
     out["timecap_results"] = results
