@@ -343,7 +343,7 @@ test("X2: a nonexistent cwd fails the job and the daemon stays up", { timeout: D
   }
 });
 
-test("X3: reap kills the surviving process group before the job is requeued (queue.py:386-465)", { todo: "reap() only updates rows; the old attempt keeps running beside the retry", timeout: DAEMON_T }, async () => {
+test("X3: reap kills the surviving process group before the job is requeued (queue.py:386-465)", { timeout: DAEMON_T }, async () => {
   const r = rig({ COORDINATE_LEASE_S: "2" });
   r.extraPgids = [];
   try {

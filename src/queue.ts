@@ -280,12 +280,37 @@ export function finish(db: Database, jid: number, owner: string, status: string,
   return event;
 }
 
+// Port of queue.py kill_orphans: SIGKILL the job's surviving process group before an expired
+// lease is requeued, so a retry never runs beside the old attempt after a daemon crash.
+// Caveat (as in Python's docstring): a recorded pgid can be reused by an unrelated process
+// group after a long outage; the PID-reuse risk is accepted because we only signal groups of
+// jobs whose lease expired in this database. We never signal pid <= 1, and ESRCH (the group is
+// already gone) is ignored.
+function killOrphans(db: Database, pgid: number | null, _pidfile: string | null): void {
+  if (pgid === null || pgid === undefined || pgid <= 1) {
+    return;
+  }
+  try {
+    // signal the group (negative pgid), not the leader pid alone
+    process.kill(-pgid, "SIGKILL");
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw e;
+    }
+  }
+}
+
 export function reap(db: Database): number[] {
   const now = Date.now() / 1000;
   using _tx = db.transaction();
   const expired = db.prepareRaw("SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?").all([now]) as IdRow[];
   for (const row of expired) {
     chargeRuntime(db, row.id);
+  }
+  // Kill survivors before the requeue commits, so a retry never runs beside the old attempt.
+  for (const row of db.prepareRaw("SELECT id, pgid, pidfile FROM jobs WHERE status='running' AND lease_expires_at<?").all([now]) as { id: number; pgid: number | null; pidfile: string | null }[]) {
+    killOrphans(db, row.pgid, row.pidfile);
   }
   for (const row of db
     .prepareRaw(
