@@ -1,0 +1,277 @@
+{
+  "label": "10k bulk cmd",
+  "db": "/tmp/bytes/bulk-cmd.db",
+  "host": {
+    "load_1m": 0.1,
+    "load_5m": 0.38,
+    "load_15m": 0.58,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8270,
+    "timestamp": "2026-11-23T04:44:45+0000"
+  },
+  "rows": 10000,
+  "by_status": {
+    "waiting": 10000
+  },
+  "parked": 10000,
+  "pragmas": {
+    "page_size": 4096,
+    "page_count": 855,
+    "freelist_count": 1,
+    "auto_vacuum": 0,
+    "journal_mode": "wal",
+    "encoding": "UTF-8",
+    "user_version": 0,
+    "application_id": 0,
+    "freelist_bytes": 4096
+  },
+  "dbstat": [
+    {
+      "name": "jobs",
+      "pagetype": "leaf",
+      "pages": 767,
+      "bytes": 3141632,
+      "unused_bytes": 406733,
+      "payload_bytes": 2668890
+    },
+    {
+      "name": "idx_jobs_claim",
+      "pagetype": "leaf",
+      "pages": 78,
+      "bytes": 319488,
+      "unused_bytes": 41274,
+      "payload_bytes": 247821
+    },
+    {
+      "name": "jobs",
+      "pagetype": "internal",
+      "pages": 3,
+      "bytes": 12288,
+      "unused_bytes": 6132,
+      "payload_bytes": 0
+    },
+    {
+      "name": "concurrency_slots",
+      "pagetype": "leaf",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 4088,
+      "payload_bytes": 0
+    },
+    {
+      "name": "idx_jobs_claim",
+      "pagetype": "internal",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 1622,
+      "payload_bytes": 1923
+    },
+    {
+      "name": "idx_slots_job",
+      "pagetype": "leaf",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 4088,
+      "payload_bytes": 0
+    },
+    {
+      "name": "idx_slots_key",
+      "pagetype": "leaf",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 4088,
+      "payload_bytes": 0
+    },
+    {
+      "name": "spawn_audit",
+      "pagetype": "leaf",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 4088,
+      "payload_bytes": 0
+    },
+    {
+      "name": "sqlite_schema",
+      "pagetype": "leaf",
+      "pages": 1,
+      "bytes": 4096,
+      "unused_bytes": 2637,
+      "payload_bytes": 1324
+    }
+  ],
+  "row_shape": {
+    "columns": [
+      "id",
+      "kind",
+      "payload",
+      "status",
+      "priority",
+      "run_at",
+      "lease_owner",
+      "lease_expires_at",
+      "waiting_on",
+      "attempts",
+      "max_attempts",
+      "created_at",
+      "max_runtime_s",
+      "runtime_used_s",
+      "deadline_at",
+      "claim_at",
+      "outcome",
+      "pgid",
+      "pidfile"
+    ],
+    "text_columns": {
+      "kind": 3,
+      "status": 7,
+      "waiting_on": 8
+    },
+    "payload_bytes": 208,
+    "payload_keys": [
+      "cmd",
+      "cwd",
+      "index",
+      "kind",
+      "note"
+    ]
+  },
+  "files": {
+    "db_bytes": 3502080,
+    "wal_bytes": 32768,
+    "sidecar_bytes": 3534848,
+    "sidecars": {
+      "bulk-cmd.db-shm": 32768,
+      "bulk-cmd.db-wal": 0
+    }
+  },
+  "dbstat_total_bytes": 3497984,
+  "bytes_per_parked_session": 349.8,
+  "bytes_per_row": 349.8,
+  "per_object_per_session": {
+    "jobs:leaf": 314.2,
+    "idx_jobs_claim:leaf": 31.9,
+    "jobs:internal": 1.2,
+    "concurrency_slots:leaf": 0.4,
+    "idx_jobs_claim:internal": 0.4,
+    "idx_slots_job:leaf": 0.4,
+    "idx_slots_key:leaf": 0.4,
+    "spawn_audit:leaf": 0.4,
+    "sqlite_schema:leaf": 0.4
+  },
+  "payload_bytes_total": 2108890,
+  "payload_bytes_per_session": 210.9,
+  "reclaim": {
+    "delete": {
+      "before": {
+        "db_bytes": 3502080,
+        "wal_bytes": 0,
+        "sidecar_bytes": 3502080,
+        "sidecars": {}
+      },
+      "after": {
+        "db_bytes": 3502080,
+        "wal_bytes": 32768,
+        "sidecar_bytes": 3534848,
+        "sidecars": {
+          "reclaim-delete.db-shm": 32768,
+          "reclaim-delete.db-wal": 0
+        }
+      },
+      "freelist": 848,
+      "freelist_bytes": 3473408,
+      "note": "the file keeps its size; the freed pages go to the freelist"
+    },
+    "vacuum": {
+      "before": {
+        "db_bytes": 3502080,
+        "wal_bytes": 0,
+        "sidecar_bytes": 3502080,
+        "sidecars": {}
+      },
+      "after": {
+        "db_bytes": 28672,
+        "wal_bytes": 0,
+        "sidecar_bytes": 28672,
+        "sidecars": {}
+      },
+      "note": "VACUUM rewrites the file without the free pages, so the file shrinks"
+    },
+    "incremental": {
+      "before": {
+        "db_bytes": 3227648,
+        "wal_bytes": 0,
+        "sidecar_bytes": 3227648,
+        "sidecars": {}
+      },
+      "after": {
+        "db_bytes": 32768,
+        "wal_bytes": 0,
+        "sidecar_bytes": 32768,
+        "sidecars": {}
+      },
+      "auto_vacuum": 2,
+      "freelist": 0,
+      "freelist_bytes": 0,
+      "incremental_vacuum_rows": 780,
+      "note": "auto_vacuum=INCREMENTAL plus incremental_vacuum returns the freed pages to the filesystem without a full rewrite"
+    },
+    "base": {
+      "db_bytes": 3502080,
+      "wal_bytes": 0,
+      "sidecar_bytes": 3502080,
+      "sidecars": {}
+    }
+  },
+  "wal_experiment": {
+    "1000_open": {
+      "rows": 1000,
+      "fill_s": 0.19,
+      "db_bytes": 331776,
+      "wal_bytes": 4161040,
+      "sidecar_bytes": 4492816,
+      "sidecars": {
+        "queue.db-shm": 32768,
+        "queue.db-wal": 4128272
+      },
+      "bytes_per_session": 4492.8
+    },
+    "1000_closed": {
+      "rows": 1000,
+      "fill_s": 0.19,
+      "db_bytes": 335872,
+      "wal_bytes": 0,
+      "sidecar_bytes": 335872,
+      "sidecars": {},
+      "bytes_per_session": 335.9
+    },
+    "10000_open": {
+      "rows": 10000,
+      "fill_s": 1.05,
+      "db_bytes": 3051520,
+      "wal_bytes": 4161040,
+      "sidecar_bytes": 7212560,
+      "sidecars": {
+        "queue.db-shm": 32768,
+        "queue.db-wal": 4128272
+      },
+      "bytes_per_session": 721.3
+    },
+    "10000_closed": {
+      "rows": 10000,
+      "fill_s": 1.14,
+      "db_bytes": 3088384,
+      "wal_bytes": 0,
+      "sidecar_bytes": 3088384,
+      "sidecars": {},
+      "bytes_per_session": 308.8
+    }
+  },
+  "host_after": {
+    "load_1m": 0.18,
+    "load_5m": 0.39,
+    "load_15m": 0.58,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8240,
+    "timestamp": "2026-11-23T04:44:49+0000"
+  }
+}
