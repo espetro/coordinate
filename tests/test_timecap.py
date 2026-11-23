@@ -9,23 +9,23 @@ import time
 
 import pytest
 
-from fleet import cli
-from fleet import queue as q
+from coordinate import cli
+from coordinate import queue as q
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.setenv("FLEET_MACHINE", "vps")
-    monkeypatch.setenv("FLEET_TIMECAP_GRACE_S", "1")
-    monkeypatch.setenv("FLEET_CONFIG", str(tmp_path / "none.toml"))
-    monkeypatch.delenv("FLEET_CAP", raising=False)
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.setenv("COORDINATE_MACHINE", "vps")
+    monkeypatch.setenv("COORDINATE_TIMECAP_GRACE_S", "1")
+    monkeypatch.setenv("COORDINATE_CONFIG", str(tmp_path / "none.toml"))
+    monkeypatch.delenv("COORDINATE_CAP", raising=False)
     return tmp_path
 
 
 def daemon(env=None):
-    return subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=os.environ.copy(),
+    return subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=os.environ.copy(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -39,7 +39,7 @@ def wait_for(pred, timeout=30):
 
 
 def job_row(env, jid):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     c.row_factory = sqlite3.Row
     row = c.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
     c.close()
@@ -69,7 +69,7 @@ def test_cmd_job_sleeping_forever_is_timed_out(env):
         # the slot is freed: a second job runs normally afterwards
         jid2 = q.enqueue(c, {"cmd": ["true"], "cwd": str(env)})
         assert wait_for(lambda: (job_row(env, jid2) or {}).get("status") == "done", 30)
-        slots = sqlite3.connect(os.environ["FLEET_DB"]).execute(
+        slots = sqlite3.connect(os.environ["COORDINATE_DB"]).execute(
             "SELECT COUNT(*) FROM concurrency_slots WHERE job_id=?", (jid,)).fetchone()[0]
         assert slots == 0
     finally:
@@ -152,16 +152,16 @@ def test_deadline_survives_daemon_restart(env):
 
 
 def test_env_vars_visible_to_the_child(env):
-    """FLEET_JOB_ID, FLEET_DEADLINE_AT, FLEET_MACHINE and FLEET_DB reach the child."""
+    """COORDINATE_JOB_ID, COORDINATE_DEADLINE_AT, COORDINATE_MACHINE and COORDINATE_DB reach the child."""
     out = env / "env.txt"
     enqueue(env, ["sh", "-c", f"env > {out}"])
     dm = daemon()
     try:
         assert wait_for(lambda: out.exists() and out.read_text().strip(), 30)
         envs = dict(ln.split("=", 1) for ln in out.read_text().splitlines() if "=" in ln)
-        assert envs["FLEET_MACHINE"] == "vps"
-        assert envs["FLEET_DB"] == os.environ["FLEET_DB"]
-        assert envs["FLEET_JOB_ID"].isdigit()
+        assert envs["COORDINATE_MACHINE"] == "vps"
+        assert envs["COORDINATE_DB"] == os.environ["COORDINATE_DB"]
+        assert envs["COORDINATE_JOB_ID"].isdigit()
     finally:
         dm.terminate()
         dm.wait(timeout=10)
@@ -176,8 +176,8 @@ def test_deadline_at_env_is_epoch_seconds_of_the_cap(env):
         assert wait_for(lambda: out.exists() and out.read_text().strip(), 30)
         envs = dict(ln.split("=", 1) for ln in out.read_text().splitlines() if "=" in ln)
         row = job_row(env, jid)
-        assert int(envs["FLEET_DEADLINE_AT"]) == int(row["deadline_at"])
-        assert int(envs["FLEET_JOB_ID"]) == jid
+        assert int(envs["COORDINATE_DEADLINE_AT"]) == int(row["deadline_at"])
+        assert int(envs["COORDINATE_JOB_ID"]) == jid
     finally:
         dm.terminate()
         dm.wait(timeout=10)
@@ -190,7 +190,7 @@ def test_no_cap_means_empty_deadline(env):
     try:
         assert wait_for(lambda: out.exists() and out.read_text().strip(), 30)
         envs = dict(ln.split("=", 1) for ln in out.read_text().splitlines() if "=" in ln)
-        assert envs["FLEET_DEADLINE_AT"] == ""
+        assert envs["COORDINATE_DEADLINE_AT"] == ""
     finally:
         dm.terminate()
         dm.wait(timeout=10)
@@ -224,7 +224,7 @@ def test_status_prints_deadline_runtime_and_remaining(env, capsys):
 def test_status_self_uses_fleet_job_id(env, capsys, monkeypatch):
     c = q.connect()
     jid = q.enqueue(c, {"cmd": ["sleep", "300"], "cwd": str(env)}, max_runtime_s=30)
-    monkeypatch.setenv("FLEET_JOB_ID", str(jid))
+    monkeypatch.setenv("COORDINATE_JOB_ID", str(jid))
     assert cli.main(["status", "--self"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["id"] == jid
@@ -233,7 +233,7 @@ def test_status_self_uses_fleet_job_id(env, capsys, monkeypatch):
 def test_config_default_max_runtime(env, monkeypatch):
     cfg = env / "config.toml"
     cfg.write_text("[defaults]\nmax_runtime = \"2h\"\n")
-    monkeypatch.setenv("FLEET_CONFIG", str(cfg))
+    monkeypatch.setenv("COORDINATE_CONFIG", str(cfg))
     enqueue(env, ["true"])
     c = q.connect()
     jid = c.execute("SELECT id FROM jobs ORDER BY id DESC LIMIT 1").fetchone()[0]
@@ -243,7 +243,7 @@ def test_config_default_max_runtime(env, monkeypatch):
 def test_explicit_zero_disables_the_config_default(env, monkeypatch):
     cfg = env / "config.toml"
     cfg.write_text("[defaults]\nmax_runtime = \"2h\"\n")
-    monkeypatch.setenv("FLEET_CONFIG", str(cfg))
+    monkeypatch.setenv("COORDINATE_CONFIG", str(cfg))
     enqueue(env, ["true"], extra=["--max-runtime", "0"])
     c = q.connect()
     jid = c.execute("SELECT id FROM jobs ORDER BY id DESC LIMIT 1").fetchone()[0]
@@ -253,8 +253,8 @@ def test_explicit_zero_disables_the_config_default(env, monkeypatch):
 def test_old_database_is_migrated_and_keeps_rows(tmp_path, monkeypatch):
     """A DB created before the timecap columns and the timed_out CHECK still works."""
     db = tmp_path / "old.db"
-    monkeypatch.setenv("FLEET_DB", str(db))
-    monkeypatch.setenv("FLEET_CONFIG", str(tmp_path / "none.toml"))
+    monkeypatch.setenv("COORDINATE_DB", str(db))
+    monkeypatch.setenv("COORDINATE_CONFIG", str(tmp_path / "none.toml"))
     old = sqlite3.connect(db)
     old.execute("""CREATE TABLE jobs(
       id INTEGER PRIMARY KEY,

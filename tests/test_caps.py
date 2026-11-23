@@ -7,21 +7,21 @@ import time
 
 import pytest
 
-from fleet import cli
+from coordinate import cli
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.delenv("FLEET_CAP", raising=False)
-    monkeypatch.delenv("FLEET_REPO_CAP", raising=False)
-    monkeypatch.setenv("FLEET_MACHINE", "vps")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.delenv("COORDINATE_CAP", raising=False)
+    monkeypatch.delenv("COORDINATE_REPO_CAP", raising=False)
+    monkeypatch.setenv("COORDINATE_MACHINE", "vps")
     return tmp_path
 
 
 def daemon():
-    return subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=os.environ.copy(),
+    return subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=os.environ.copy(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -43,7 +43,7 @@ def peak_overlap(log, tags=None):
 
 def drain(total, timeout=90):
     """Sample live running rows (lease still valid) until `total` jobs are done; return the peak."""
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     peak, done, end = 0, 0, time.time() + timeout
     while time.time() < end and done < total:
         peak = max(peak, c.execute("SELECT COUNT(*) FROM jobs WHERE status='running' AND lease_expires_at>?",
@@ -85,7 +85,7 @@ def test_repo_cap_1_holds_while_other_jobs_run_in_parallel(env):
         d.mkdir()
         assert cli.main(["enqueue", "--cwd", str(d), "--shell", "--", span_cmd(log, f"other{i}")]) == 0
     dm = daemon()
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     peak_shared = peak_total = 0
     try:
         end, done = time.time() + 90, 0

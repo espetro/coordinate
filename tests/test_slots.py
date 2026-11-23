@@ -7,24 +7,24 @@ import time
 
 import pytest
 
-from fleet import cli
+from coordinate import cli
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.delenv("FLEET_CAP", raising=False)
-    monkeypatch.delenv("FLEET_REPO_CAP", raising=False)
-    monkeypatch.setenv("FLEET_MACHINE", "vps")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.delenv("COORDINATE_CAP", raising=False)
+    monkeypatch.delenv("COORDINATE_REPO_CAP", raising=False)
+    monkeypatch.setenv("COORDINATE_MACHINE", "vps")
     cfg = tmp_path / "config.toml"
     cfg.write_text("[slots]\n'tool:vitest' = 1\n'tool:tsc' = 1\n'build:global' = 2\n'tool:other' = 2\n")
-    monkeypatch.setenv("FLEET_CONFIG", str(cfg))
+    monkeypatch.setenv("COORDINATE_CONFIG", str(cfg))
     return tmp_path
 
 
 def daemon():
-    return subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=os.environ.copy(),
+    return subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=os.environ.copy(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -55,7 +55,7 @@ def peak_overlap(log, tags=None):
 
 
 def drain(total, timeout=90):
-    c = sqlite3.connect(os.environ["FLEET_DB"])
+    c = sqlite3.connect(os.environ["COORDINATE_DB"])
     done, end = 0, time.time() + timeout
     while time.time() < end and done < total:
         done = c.execute("SELECT COUNT(*) FROM jobs WHERE status='done'").fetchone()[0]
@@ -109,7 +109,7 @@ def test_unknown_slot_key_defaults_to_1(env, tmp_path, monkeypatch):
 
 
 def test_missing_config_file_still_claims(env):
-    os.environ["FLEET_CONFIG"] = str(env / "nope.toml")
+    os.environ["COORDINATE_CONFIG"] = str(env / "nope.toml")
     try:
         log = env / "spans"
         enqueue(env, log, "a", slots=["tool:vitest"])
@@ -120,4 +120,4 @@ def test_missing_config_file_still_claims(env):
             dm.kill()
             dm.wait()
     finally:
-        os.environ.pop("FLEET_CONFIG", None)
+        os.environ.pop("COORDINATE_CONFIG", None)

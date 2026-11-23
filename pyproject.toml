@@ -1,14 +1,13 @@
 [project]
-name = "fleet"
+name = "coordinate"
 version = "0.1.0"
 description = "Per-machine durable job queue with lease-based concurrency caps"
 requires-python = ">=3.12"
-dependencies = [
-    "dbos>=3.6.0",
-]
+dependencies = []
 
 [project.scripts]
-fleet = "fleet.cli:main"
+coordinate = "coordinate.cli:main"
+coordinated = "coordinate.daemon_cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

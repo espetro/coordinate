@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from fleet import cli
+from coordinate import cli
 from pilot_helpers import Sampler, git, row, wait_for
 
-FLEET_ACP = Path(os.environ.get("FLEET_ACP_DIR", Path(__file__).resolve().parents[2] / "fleet-acp"))
-BIN = FLEET_ACP / "bin" / "fleet-acp.js"
+COORDINATE_ACP = Path(os.environ.get("COORDINATE_ACP_DIR", Path(__file__).resolve().parents[2] / "fleet-acp"))
+BIN = COORDINATE_ACP / "bin" / "fleet-acp.js"
 pytestmark = pytest.mark.skipif(
     shutil.which("opencode") is None or shutil.which("node") is None or not BIN.exists(),
     reason="needs opencode, node and a fleet-acp checkout")
@@ -38,10 +38,10 @@ def test_acp_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
     wt.parent.mkdir(parents=True, exist_ok=True)
     git(repo, "worktree", "add", "-q", "-b", f"pilot/{slug}", str(wt))
 
-    monkeypatch.setenv("FLEET_DB", str(tmp_path / "queue.db"))
-    monkeypatch.setenv("FLEET_LEASE_S", "3")
-    monkeypatch.setenv("FLEET_CAP", "3")
-    monkeypatch.setenv("FLEET_ACP_CMD", f"node {BIN}")
+    monkeypatch.setenv("COORDINATE_DB", str(tmp_path / "queue.db"))
+    monkeypatch.setenv("COORDINATE_LEASE_S", "3")
+    monkeypatch.setenv("COORDINATE_CAP", "3")
+    monkeypatch.setenv("COORDINATE_ACP_CMD", f"node {BIN}")
     prompt = (
         "Do these steps in order, each as its own separate foreground shell command, never in the background. "
         + " ".join(f"Step {n}: run \"echo {n} > file{n}.txt; sleep 8\"." for n in range(1, 5))
@@ -51,7 +51,7 @@ def test_acp_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
     try:
         assert cli.main(["enqueue", "--acp", "opencode", "--cwd", str(wt), "--prompt", prompt]) == 0
         env = os.environ.copy()
-        d1 = subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=env,
+        d1 = subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         sampler.start()
 
@@ -69,7 +69,7 @@ def test_acp_job_survives_daemon_and_agent_kill9(tmp_path, monkeypatch):
         os.killpg(agent_pid, signal.SIGKILL)
         assert row(1)[0] == "running", "lease is orphaned, nobody finished the job"
 
-        d2 = subprocess.Popen([sys.executable, "-m", "fleet", "daemon"], env=env,
+        d2 = subprocess.Popen([sys.executable, "-m", "coordinate", "daemon"], env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         assert wait_for(lambda: row(1)[0] in ("done", "failed", "dead"), 400, 1), "job should reach a terminal state"
         status, attempts, payload = row(1)
