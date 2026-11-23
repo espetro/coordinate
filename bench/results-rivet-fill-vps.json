@@ -1,0 +1,43 @@
+{
+  "backend": "custom",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/rivetfill",
+  "host": {
+    "load_1m": 0.73,
+    "load_5m": 0.8,
+    "load_15m": 0.71,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 7829,
+    "timestamp": "2026-11-23T02:23:39+0000"
+  },
+  "enqueue_cli_median_ms": 215.5,
+  "enqueue_cli_p95_ms": 225.0,
+  "idle_rss_mb": 125.2,
+  "idle_cpu_pct": 0.0,
+  "throughput_jobs": 60,
+  "throughput_all_done": true,
+  "enqueue_total_s": 13.91,
+  "throughput_makespan_s": 14.19,
+  "throughput_jobs_per_s": 4.23,
+  "peak_rss_mb": 129.1,
+  "cap": 3,
+  "cap_jobs": 9,
+  "cap_all_done": true,
+  "cap_max_concurrency": 3,
+  "cap_holds": true,
+  "cap_makespan_s": 3.8,
+  "cap_ideal_s": 3.0,
+  "repo_all_done": true,
+  "repo_shared_max_concurrency": 1,
+  "repo_cap_holds": true,
+  "priority_order": [
+    "p9",
+    "p5",
+    "p1",
+    "p0"
+  ],
+  "priority_ok": true,
+  "tool_all_done": true,
+  "tool_vitest_max_concurrency": 1,
+  "tool_cap_holds": true,
+  "tool_trivial_ran_while_parked": true
+}

@@ -100,9 +100,32 @@ function cmdlineOf(pid: number): string {
 	try { return readProc(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " "); } catch { return ""; }
 }
 
+/** Every live process whose cmdline mentions the marker, so we only ever touch our own run. */
+function processesWithMarker(marker: string): number[] {
+	const out: number[] = [];
+	let pids: string[] = [];
+	try { pids = readdirSync("/proc").filter((p) => /^\d+$/.test(p)); } catch { return out; }
+	for (const p of pids) {
+		const pid = parseInt(p, 10);
+		if (pid === process.pid) continue;
+		if (cmdlineOf(pid).includes(marker)) out.push(pid);
+	}
+	return out;
+}
+
+/** Kill the engine of a previous run of this data dir: it puts itself in its own
+ * session, so it survives a group kill and would hold the old port forever. */
+function killStaleEngines(dir: string): void {
+	for (const pid of processesWithMarker(`${dir}/rivetstore`)) {
+		if (!cmdlineOf(pid).includes("rivet-engine")) continue;
+		try { process.kill(pid, "SIGKILL"); } catch {}
+	}
+}
+
 async function cmdDaemon(): Promise<void> {
 	const dir = dataDir();
 	process.env.RIVET_DATA_DIR = dir;
+	killStaleEngines(dir);
 	const port = await freePort();
 	writeFileSync(PORT_FILE(), String(port));
 	const env: Record<string, string> = {};
@@ -149,8 +172,8 @@ async function cmdDaemon(): Promise<void> {
 		cleanup();
 		process.exit(3);
 	}
-	// replay: every spooled id is submitted; ids are only spooled at enqueue time
-	// and the actor assigns the same nextId sequence, so replay must be idempotent.
+	// replay: the spool only holds jobs the engine never acknowledged, so replay
+	// is exactly the fire-and-forget backlog of an engine-down period
 	if (existsSync(SPOOL())) {
 		const recs: SpoolRec[] = readFileSync(SPOOL(), "utf8").split("\n")
 			.filter((l) => l.trim()).map((l) => JSON.parse(l));
@@ -180,10 +203,14 @@ async function cmdEnqueue(cwd: string, cmd: string, priority: number): Promise<v
 	const repo = cwd; // FLEET_REPO_CAP key is the absolute cwd
 	// spool first: enqueue must be durable even if the engine is down (G4)
 	const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-	appendFileSync(SPOOL(), JSON.stringify({ id, cmd, cwd, repo, priority }) + "\n");
+	const rec: SpoolRec = { id, cmd, cwd, repo, priority };
+	appendFileSync(SPOOL(), JSON.stringify(rec) + "\n");
 	try {
 		const jid = await call(async (c) =>
 			c.coordinator.getOrCreate("main").submit(cmd, cwd, repo, priority));
+		// the engine journalled the action, so the job is durable there now: drop the
+		// spool record, otherwise a daemon restart would submit it a second time
+		dropSpoolRecord(id);
 		console.log(jid);
 	} catch (e) {
 		// engine down or over deadline: job stays in the spool, the next daemon replays it
@@ -191,6 +218,15 @@ async function cmdEnqueue(cwd: string, cmd: string, priority: number): Promise<v
 		console.log(id);
 	}
 	process.exit(0);
+}
+
+/** Remove one acknowledged record from the spool file. */
+function dropSpoolRecord(id: number): void {
+	try {
+		const lines = readFileSync(SPOOL(), "utf8").split("\n").filter((l) => l.trim());
+		const kept = lines.filter((l) => { try { return JSON.parse(l).id !== id; } catch { return true; } });
+		writeFileSync(SPOOL(), kept.length ? kept.join("\n") + "\n" : "");
+	} catch {}
 }
 
 async function cmdStats(): Promise<void> {
