@@ -68,3 +68,18 @@ One caveat found while running this scenario (M): fleet's daemon does not unwind
 - The stub agent is not a real harness. It streams updates on a timer and allocates ballast, so the numbers describe the orchestrator's cost and the harness footprint model, not the behaviour of Claude Code or Codex.
 - The machine was shared during the run (load average 6.8 at the start), so the absolute latencies are upper bounds and the noise floor should be re-measured on an idle machine before it is used as a regression threshold.
 - The density step-up used 1, 2 and 4 sessions. The linear fit of the orchestrator's per-session cost (about 0.4MB) is measured over that small range only; the park-density scenario is still needed for the thousands-of-parked-sessions figure.
+
+## Idle noise floor (M, 2026-11-23 00:33 UTC)
+
+`bench/results-noise-sqlite-vps-idle.json`, 10 repeats of `cli`, `cap`, `chaos` and `throughput` on the SQLite backend, same VPS with no other sessions running (load average 0.00 at the start). This file, not the shared-host run above, is the reference for regression thresholds.
+
+| Metric | Mean | Stdev | cv |
+|---|---|---|---|
+| enqueue_cli_median_ms | 96.7 | 6.4 | 6.6% |
+| enqueue_cli_p95_ms | 111.4 | 9.9 | 8.9% |
+| cap_makespan_s | 6.417 | 0.025 | 0.4% |
+| chaos_recovery_to_all_done_s | 14.459 | 0.003 | 0.02% |
+| throughput_jobs_per_s | 9.70 | 0.51 | 5.3% |
+| throughput peak_rss_mb | 18.97 | 0.05 | 0.25% |
+
+All boolean gates held 10 of 10. Idle, the enqueue median drops from 119ms to 97ms, and its cv stays around 6%, so CLI latency noise comes from Python startup, not from host load. Makespan, recovery and RSS are near deterministic. Thresholds: about 13ms on the enqueue median, 0.05s on cap makespan, 1 jobs/s on throughput. chaos_duplicated_jobs is 3 in every repeat, which is the at-least-once cost the state-loss scenario tracks.

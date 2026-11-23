@@ -1,0 +1,200 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/noise",
+  "host": {
+    "load_1m": 0.0,
+    "load_5m": 0.08,
+    "load_15m": 0.05,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 9225,
+    "timestamp": "2026-11-23T00:33:14+0000"
+  },
+  "noise_repeats": 10,
+  "noise_scenarios": [
+    "cli",
+    "cap",
+    "chaos",
+    "throughput"
+  ],
+  "noise_per_scenario": {
+    "cli": {
+      "metrics": {
+        "enqueue_cli_median_ms": {
+          "mean": 96.74,
+          "stdev": 6.366,
+          "min": 88.8,
+          "max": 111.3,
+          "cv_pct": 6.58,
+          "n": 10
+        },
+        "enqueue_cli_p95_ms": {
+          "mean": 111.43,
+          "stdev": 9.937,
+          "min": 93.9,
+          "max": 124.7,
+          "cv_pct": 8.92,
+          "n": 10
+        }
+      },
+      "bools": {},
+      "errors": 0
+    },
+    "cap": {
+      "metrics": {
+        "cap": {
+          "mean": 3.0,
+          "stdev": 0.0,
+          "min": 3.0,
+          "max": 3.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "cap_ideal_s": {
+          "mean": 3.0,
+          "stdev": 0.0,
+          "min": 3.0,
+          "max": 3.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "cap_jobs": {
+          "mean": 9.0,
+          "stdev": 0.0,
+          "min": 9.0,
+          "max": 9.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "cap_makespan_s": {
+          "mean": 6.417,
+          "stdev": 0.025,
+          "min": 6.38,
+          "max": 6.45,
+          "cv_pct": 0.38,
+          "n": 10
+        },
+        "cap_max_concurrency": {
+          "mean": 3.0,
+          "stdev": 0.0,
+          "min": 3.0,
+          "max": 3.0,
+          "cv_pct": 0.0,
+          "n": 10
+        }
+      },
+      "bools": {
+        "cap_all_done": {
+          "mean": 1.0,
+          "stdev": 0.0,
+          "min": 1.0,
+          "max": 1.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "cap_holds": {
+          "mean": 1.0,
+          "stdev": 0.0,
+          "min": 1.0,
+          "max": 1.0,
+          "cv_pct": 0.0,
+          "n": 10
+        }
+      },
+      "errors": 0
+    },
+    "chaos": {
+      "metrics": {
+        "chaos_duplicated_jobs": {
+          "mean": 3.0,
+          "stdev": 0.0,
+          "min": 3.0,
+          "max": 3.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "chaos_recovery_to_all_done_s": {
+          "mean": 14.459,
+          "stdev": 0.003,
+          "min": 14.45,
+          "max": 14.46,
+          "cv_pct": 0.02,
+          "n": 10
+        },
+        "chaos_total_executions": {
+          "mean": 12.0,
+          "stdev": 0.0,
+          "min": 12.0,
+          "max": 12.0,
+          "cv_pct": 0.0,
+          "n": 10
+        }
+      },
+      "bools": {
+        "chaos_all_done": {
+          "mean": 1.0,
+          "stdev": 0.0,
+          "min": 1.0,
+          "max": 1.0,
+          "cv_pct": 0.0,
+          "n": 10
+        }
+      },
+      "errors": 0
+    },
+    "throughput": {
+      "metrics": {
+        "enqueue_total_s": {
+          "mean": 5.927,
+          "stdev": 0.356,
+          "min": 5.57,
+          "max": 6.85,
+          "cv_pct": 6.01,
+          "n": 10
+        },
+        "peak_rss_mb": {
+          "mean": 18.97,
+          "stdev": 0.048,
+          "min": 18.9,
+          "max": 19.0,
+          "cv_pct": 0.25,
+          "n": 10
+        },
+        "throughput_jobs": {
+          "mean": 60.0,
+          "stdev": 0.0,
+          "min": 60.0,
+          "max": 60.0,
+          "cv_pct": 0.0,
+          "n": 10
+        },
+        "throughput_jobs_per_s": {
+          "mean": 9.7,
+          "stdev": 0.511,
+          "min": 8.41,
+          "max": 10.26,
+          "cv_pct": 5.27,
+          "n": 10
+        },
+        "throughput_makespan_s": {
+          "mean": 6.203,
+          "stdev": 0.357,
+          "min": 5.85,
+          "max": 7.13,
+          "cv_pct": 5.76,
+          "n": 10
+        }
+      },
+      "bools": {
+        "throughput_all_done": {
+          "mean": 1.0,
+          "stdev": 0.0,
+          "min": 1.0,
+          "max": 1.0,
+          "cv_pct": 0.0,
+          "n": 10
+        }
+      },
+      "errors": 0
+    }
+  }
+}
