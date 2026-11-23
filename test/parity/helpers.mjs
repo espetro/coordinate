@@ -150,8 +150,9 @@ export function git(cwd, ...args) {
 }
 
 // The Python suites timestamp job spans with `$(python3 -c 'import time;print(time.time())')`.
-// We use the shell's own epoch seconds instead, the same shape the peak-overlap math expects.
-export const NOW = "$(date +%s.%N)";
+// We use the shell's own clock instead, so no Python is needed on the test host. `tr -cd` keeps
+// the digits on GNU date and drops the literal "N" that BSD date prints for %N.
+export const NOW = "$(date +%s.%N | tr -cd '0-9.')";
 
 // Peak number of simultaneously live spans in a span log, optionally filtered by tag.
 export function peakOverlap(logPath, tags = null) {
