@@ -238,7 +238,7 @@ test("S1: jobs.attempts defaults to 0 like queue.py", async () => {
 
 // ---- CLI -------------------------------------------------------------------------------------
 
-test("X5: a database created before the timecap columns is migrated, not rejected", { todo: "connect() has no _migrate_jobs / ALTER TABLE ADD COLUMN (queue.py:236-268)" }, async () => {
+test("X5: a database created before the timecap columns is migrated, not rejected", async () => {
   const r = rig();
   try {
     const old = Database.open(r.db);
@@ -251,6 +251,25 @@ test("X5: a database created before the timecap columns is migrated, not rejecte
     const out = cli(r, "enqueue", "--max-runtime", "60s", "--", "true");
     assert.equal(out.status, 0, out.stderr.split("\n").find((l) => /SqliteError:|Error:/.test(l)) || out.stderr);
     assert.equal(rows(r, "SELECT COUNT(*) AS n FROM jobs")[0].n, 2, "the old row must survive");
+    assert.equal(rows(r, "SELECT max_runtime_s AS m FROM jobs WHERE id=2")[0].m, 60);
+    const backups = fs.readdirSync(path.dirname(r.db)).filter((f) => f.startsWith("queue.db.backup-"));
+    assert.equal(backups.length, 1, `expected one backup file, got ${backups}`);
+  } finally {
+    await cleanup(r);
+  }
+});
+
+test("X5: migration is idempotent and a fresh database gets no backup", async () => {
+  const r = rig();
+  try {
+    const { connect } = await import(path.join(ROOT, "src", "queue.ts"));
+    process.env.COORDINATE_DB = r.env.COORDINATE_DB;
+    connect();
+    connect();
+    const n = rows(r, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='jobs_new'")[0].n;
+    assert.equal(n, 0, "no jobs_new table may be left behind");
+    const backups = fs.readdirSync(path.dirname(r.db)).filter((f) => f.startsWith("queue.db.backup-"));
+    assert.equal(backups.length, 0, "a fresh database must not be backed up");
   } finally {
     await cleanup(r);
   }
