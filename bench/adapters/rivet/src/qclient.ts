@@ -21,6 +21,9 @@ import { createServer } from "node:net";
 
 const DEADLINE_MS = parseInt(process.env.RIVET_FILL_DEADLINE_MS ?? "5000", 10);
 const READY_TIMEOUT_S = parseInt(process.env.RIVET_FILL_READY_TIMEOUT_S ?? "120", 10);
+// the client call is raced against DEADLINE_MS, but the process must also be gone
+// by then even if the websocket teardown hangs
+const HARD_EXIT_MS = DEADLINE_MS + 1500;
 
 const SPOOL = (): string => `${dataDir()}/enqueue-spool.jsonl`;
 const PORT_FILE = (): string => `${dataDir()}/rivet-fill-port`;
@@ -64,6 +67,10 @@ async function call<T>(fn: (c: any) => Promise<T>, deadlineMs = DEADLINE_MS): Pr
 	const ep = endpoint();
 	const client = createClient<typeof registry>({ endpoint: ep });
 	let timer: any;
+	const hard = setTimeout(() => {
+		console.error(`rivet-fill: hard deadline of ${HARD_EXIT_MS}ms exceeded (endpoint ${ep}); exiting`);
+		process.exit(5);
+	}, Math.max(HARD_EXIT_MS, deadlineMs + 1000));
 	try {
 		return await Promise.race([
 			fn(client),
@@ -76,6 +83,7 @@ async function call<T>(fn: (c: any) => Promise<T>, deadlineMs = DEADLINE_MS): Pr
 		]);
 	} finally {
 		clearTimeout(timer);
+		clearTimeout(hard);
 		// dispose may wait on a dead websocket, so it never gets to block the exit
 		try { Promise.race([client.dispose(), new Promise((r) => setTimeout(r, 500))]).catch(() => {}); } catch {}
 	}
