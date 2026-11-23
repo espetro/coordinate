@@ -3,3 +3,6 @@ node_modules/
 __pycache__/
 bench/results/
 *.pyc
+
+# scriptc build outputs (distributed as release assets, not source)
+ts/bin/coordinate-*
