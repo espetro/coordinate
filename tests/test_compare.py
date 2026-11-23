@@ -43,6 +43,18 @@ def test_boolean_gate_missing_fails():
     assert not res["ok"]
 
 
+def test_missing_numeric_metric_fails():
+    # the scenario crashed, so its metric is absent: that must not pass silently
+    res = compare.compare({"m": 10.0}, {}, thresholds(), None)
+    assert not res["ok"]
+    assert any("missing" in f for f in res["failures"])
+
+
+def test_metric_missing_from_the_baseline_is_not_compared():
+    res = compare.compare({}, {"m": 10.0}, thresholds(), None)
+    assert res["ok"]
+
+
 def test_metric_inside_the_noise_band_passes():
     # baseline 100, stdev 10 in the noise file, so the band is 2 x 10 = 20;
     # a drift of 15 is inside the noise even though it is 15 percent

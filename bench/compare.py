@@ -90,24 +90,31 @@ def compare(baseline: dict, current: dict, thresholds: dict, noise: dict | None)
             want = bool(gates[name])
             if c is None:
                 verdict, ok = "MISSING", False
+                reason = "the benchmark did not produce this metric (the scenario failed?)"
             elif bool(c) == want:
                 verdict, ok = "PASS", True
+                reason = ""
             else:
                 verdict, ok = "FAIL", False
+                reason = f"must be {want}"
         else:
             # a boolean the thresholds file does not list: it must not flip from true to false
+            reason = ""
             if b is True and c is not True:
                 verdict, ok = "FAIL", False
+                reason = "flipped from true to false"
             elif b is True and c is True:
                 verdict, ok = "PASS", True
             elif c is None:
                 verdict, ok = "MISSING", False
+                reason = "the benchmark did not produce this metric (the scenario failed?)"
             else:
                 verdict, ok = "PASS", True
         rows.append({"kind": "gate", "metric": name, "baseline": b, "current": c,
-                     "delta": None, "tolerance": None, "verdict": verdict, "ok": ok})
+                     "delta": None, "tolerance": None, "verdict": verdict, "ok": ok, "reason": reason})
         if not ok:
-            failures.append(f"gate {name}: baseline={b} current={c}")
+            failures.append(f"gate {name}: baseline={b} current={c}"
+                            + (f" ({reason})" if reason else ""))
 
     # ---- numeric metrics ----
     skip = {"host", "tree", "backend", "noise_per_scenario", "noise_repeats", "noise_scenarios"}
@@ -115,7 +122,16 @@ def compare(baseline: dict, current: dict, thresholds: dict, noise: dict | None)
         if name in skip:
             continue
         b, c = baseline.get(name), current.get(name)
-        if not (_is_number(b) and _is_number(c)):
+        if not _is_number(b):
+            continue  # the baseline does not have a number for this key, nothing to compare
+        if not _is_number(c):
+            # the metric is in the baseline but the run did not produce it: the scenario
+            # crashed or was skipped. That is a failure, not a pass.
+            rows.append({"kind": "metric", "metric": name, "baseline": b, "current": c,
+                         "delta": None, "tolerance": None, "verdict": "MISSING", "ok": False,
+                         "reason": "the benchmark did not produce this metric (the scenario failed?)"})
+            failures.append(f"metric {name}: baseline={b} current=missing "
+                            "(the benchmark did not produce this metric)")
             continue
         rule = _metric_rule(thresholds, name)
         direction = rule.get("direction", HIGHER_IS_WORSE)

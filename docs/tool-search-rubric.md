@@ -118,6 +118,7 @@ Implemented in `bench/bench.py` (M4 scheduler, with shell jobs standing in for a
 | `live-density` | step up concurrent stub ACP sessions at a given `STUB_BALLAST_MB` (60 codex/maki-like, 240 claude-like): orchestrator RSS separate from agent RSS, `density_fixed_overhead_mb`, `agent_rss_per_session_mb`, `live_sessions_per_gib_agents` | G2, S12 |
 | `noise-floor` | repeat a chosen subset of scenarios N times (`--repeats`, default 10; `--noise-scenarios`, default cli,cap,chaos): mean, stdev, min, max and cv_pct per metric, so tuning ignores changes inside the noise | improver prerequisite |
 | `state-loss` | live jobs, parked jobs, a tool lease and an ACP session mid-turn all at once; kill -9 the daemon, restart: counts `stateloss_jobs_lost`, `stateloss_jobs_run_twice`, `stateloss_duplicate_turns`, `stateloss_leases_leaked`, and diffs the job rows and the stub agent's session state before versus after | G3, G4, S3 |
+| `park-density` | open 1,000 then 10,000 more parked sessions (`--park-density-steps`): orchestrator RSS apart from the fixed overhead, and the bytes each parked session costs in the store | G2, G3, S12 |
 
 A scheduler passes when `cap_holds`, `repo_cap_holds`, `chaos_all_done` and `tool_cap_holds` are true and `enqueue_cli_median_ms` is 300 or less. `priority_ok` and `tool_trivial_ran_while_parked` decide S9 and S1. For the ACP scenarios the pass criteria are `orchkill_all_done` true, `orchkill_restarted` less than the number of killed jobs (resumption through `session/load` must be the normal path), and for `live-density` an orchestrator RSS within the G2 budget and an `agent_rss_per_session_mb` within 20% of the harness's known footprint. Method and measured numbers: `docs/bench-v2.md`.
 
@@ -125,7 +126,6 @@ Planned, needed for the concurrency-first and multi-device requirements (not imp
 
 | Scenario | Checks | Gate or score |
 |---|---|---|
-| `park-density` | open 1,000 then 10,000 parked sessions, orchestrator RSS and bytes per session, then TTL expiry reclaims storage | G2, G3, S12 |
 | `wake-latency` | event to first agent output for a parked ACP session, p50 and p99, per harness | S1, S12 |
 | `harness-swap` | resume a parked session on a different harness from its exported context | S3, S4 |
 | `partition` | cut the hub link: spokes keep running and queueing, global overshoot stays within the sum of allowances, nothing is dropped, state converges after reconnect | G4, S5 |

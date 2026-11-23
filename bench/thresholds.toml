@@ -153,6 +153,19 @@ direction = "none"
 direction = "none"
 max = 0
 
+# park-density: the long set only, gated once a baseline with these numbers exists
+[metrics.parkdensity_total_parked]
+direction = "none"
+
+[metrics.parkdensity_rss_delta_mb]
+percent_tolerance = 50.0
+
+[metrics.parkdensity_db_bytes_per_session]
+percent_tolerance = 20.0
+
+[metrics.parkdensity_enqueue_per_session_ms]
+percent_tolerance = 50.0
+
 # --- boolean gates: all of these must hold --------------------------------------
 
 [gates]

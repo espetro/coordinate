@@ -808,6 +808,12 @@ def scenario_park_density(tree, backend, tmp, steps=(1000, 10000)):
             "host": _host_state(),
         })
     f.stop()
+    # top level summaries, so the comparison can gate on them (the steps stay as detail)
+    last = out["parkdensity_steps"][-1]
+    out["parkdensity_total_parked"] = last["total_parked_sessions"]
+    out["parkdensity_rss_delta_mb"] = last["orchestrator_rss_delta_mb"]
+    out["parkdensity_db_bytes_per_session"] = last["db_bytes_per_parked_session"]
+    out["parkdensity_enqueue_per_session_ms"] = last["enqueue_per_session_ms"]
     return out
 
 
