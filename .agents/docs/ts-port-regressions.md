@@ -13,19 +13,19 @@ Date: 2026-11-23. Branch `audit/ts-port-regressions`, cut from local `main` (184
 
 | ID | Verdict | Class | One line |
 |---|---|---|---|
-| A1 | CONFIRMED | REGRESSION | `--slot` keys get lease rows but `claim()` never checks their limit |
+| A1 | FIXED (cdea415) | REGRESSION | `--slot` keys get lease rows but `claim()` never checks their limit |
 | A2 | PARTIAL | DRIFT | The `--cwd` fallback is Python behavior and was documented there; the empty `--repo` handling is new |
 | A3 | PARTIAL | REGRESSION (string form), not a regression (`cmd /c`, quoting) | `sh -c 'vitest run'` as a string is missed in TS and matched in Python; `cmd /c` was never in Python |
 | A4 | PARTIAL | not a regression | Behavior is identical (matched spawns only); the over-claiming comments are in the Python code, TS has none |
 | B5 | CONFIRMED | INTENTIONAL | `--acp` is not ported; documented in `python-retirement.md` and `ARCHITECTURE.md` |
 | B6 | REFUTED | INTENTIONAL | The events bridge was merged and the forwarder was ported (`src/forwarder.ts`, `coordinate forward --exec`) |
 | B7 | CONFIRMED | INTENTIONAL | `coordinate plugins` is not ported; documented |
-| B8 | CONFIRMED | REGRESSION (silent failure mode), parser limits INTENTIONAL | Hand-rolled TOML handles 4 of the 10 spellings tried (single-quoted keys only); a miss turns heavy jobs into `failed` |
+| B8 | FIXED (3a60c42) | REGRESSION (silent failure mode), parser limits INTENTIONAL | Hand-rolled TOML handles 4 of the 10 spellings tried (single-quoted keys only); a miss turns heavy jobs into `failed` |
 | C9 | CONFIRMED | doc bug in both | Only lease expiry retries; exit != 0 goes straight to `failed` |
 | C10 | CONFIRMED | doc bug in both | Only `tool:` slot keys are released by a finishing job |
 | C11 | CONFIRMED | feature gap in both | `run_at` has no CLI flag in either implementation |
 | C12 | CONFIRMED | latent bug in both | `attempts` counts claims, so park and release cycles burn the retry budget |
-| S1 | CONFIRMED (latent) | DRIFT | Schema default `attempts DEFAULT 3` vs Python `DEFAULT 0`; the schema test compares names only |
+| S1 | FIXED (4aee3c8) | DRIFT | Schema default `attempts DEFAULT 3` vs Python `DEFAULT 0`; the schema test compares names only |
 | S2 | CONFIRMED | doc bug in both | `SKILL.md` says lower priority first; both implementations claim `priority DESC` (higher first) |
 
 Disagreements with the reviewer are collected in the last section of this file.
@@ -155,7 +155,7 @@ Classes: REGRESSION (worse than Python, not chosen), DRIFT (different but neutra
 | 5 | A1 | queue | `--slot` limits are not enforced | Advertised tool-level serialization does nothing |
 | 6 | B8 | daemon | `[slots]` hand parser, `[tools]` overlay dropped | Standard TOML silently fails heavy jobs |
 | 7 | X5 | queue | No schema migration for databases created before the timecap columns | A pre-existing `queue.db` makes every verb throw |
-| 8 | X6 | cli | `[defaults] max_runtime` dropped; bad durations accepted | Jobs are unbounded by default; `--max-runtime xs` stores NULL |
+| 8 | X6 | FIXED (4aee3c8) | cli | `[defaults] max_runtime` dropped; bad durations accepted | Jobs are unbounded by default; `--max-runtime xs` stores NULL |
 | 9 | A3 | daemon | `sh -c '<cmd>'` string form not matched | Heavy tools escape throttling |
 | 10 | X7 | daemon | Child stdout and stderr go to `/dev/null` | Job output vanishes (Python inherited the daemon's streams) |
 | 11 | X8 | cli | `status` lost `runtime_remaining_s` and `deadline_in_s` | The agent contract's self-inspection is poorer |

@@ -132,13 +132,39 @@ test("status --self reads COORDINATE_JOB_ID", async () => {
 test("schema matches the Python queue.py tables", async () => {
   const q = await freshDb();
   const db = q.connect();
-  const cols = db.prepareRaw("SELECT name FROM pragma_table_info('jobs')").all([]);
-  const names = cols.map((c) => c.name).sort();
-  assert.deepEqual(names, [
-    "attempts", "claim_at", "created_at", "deadline_at", "id", "kind", "lease_expires_at",
-    "lease_owner", "max_attempts", "max_runtime_s", "outcome", "payload", "pgid", "pidfile",
-    "priority", "run_at", "runtime_used_s", "status", "waiting_on",
-  ]);
+  // name -> [type, notnull, dflt_value], verbatim from queue.py SCHEMA (4e371ef)
+  const expect = {
+    id: ["INTEGER", 0, null],
+    kind: ["TEXT", 1, "'cmd'"],
+    payload: ["TEXT", 1, null],
+    status: ["TEXT", 1, "'queued'"],
+    priority: ["INTEGER", 1, "0"],
+    run_at: ["REAL", 1, null],
+    lease_owner: ["TEXT", 0, null],
+    lease_expires_at: ["REAL", 0, null],
+    waiting_on: ["TEXT", 0, null],
+    attempts: ["INTEGER", 1, "0"],
+    max_attempts: ["INTEGER", 1, "3"],
+    created_at: ["REAL", 1, null],
+    max_runtime_s: ["REAL", 0, null],
+    runtime_used_s: ["REAL", 1, "0"],
+    deadline_at: ["REAL", 0, null],
+    claim_at: ["REAL", 0, null],
+    outcome: ["TEXT", 0, null],
+    pgid: ["INTEGER", 0, null],
+    pidfile: ["TEXT", 0, null],
+  };
+  const cols = db.prepareRaw('SELECT name, type, "notnull" AS nn, dflt_value AS d FROM pragma_table_info(\'jobs\')').all([]);
+  const got = {};
+  for (const c of cols) {
+    got[c.name] = [c.type, c.nn, c.d];
+  }
+  assert.deepEqual(Object.keys(got).sort(), Object.keys(expect).sort());
+  for (const name of Object.keys(expect)) {
+    assert.deepEqual(got[name], expect[name], `column ${name}: got ${JSON.stringify(got[name])}, want ${JSON.stringify(expect[name])}`);
+  }
+  const ddl = db.prepareRaw("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'").get([]).sql;
+  assert.match(ddl, /CHECK\(status IN \('queued','running','waiting','done','failed','dead','timed_out'\)\)/);
 });
 
 test("events: enqueue/claim/finish emit transitions", async () => {
