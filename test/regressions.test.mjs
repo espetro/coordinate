@@ -279,7 +279,7 @@ test("X9: enqueue accepts the command without a -- separator (argparse REMAINDER
 
 // ---- daemon ----------------------------------------------------------------------------------
 
-test("X1: worktrees of one repo share the project key (queue.py:124-155)", { todo: "projectKey joins an absolute gitdir with path.join, giving <wt>/<abs path>", timeout: DAEMON_T }, async () => {
+test("X1: worktrees of one repo share the project key (queue.py:124-155)", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     const git = (cwd, ...a) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });

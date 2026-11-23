@@ -143,13 +143,13 @@ function projectKey(cwd: string | null): string {
         let gitdir: string | null = null;
         for (const line of text.split("\n")) {
           if (line.startsWith("gitdir:")) {
-            gitdir = path.normalize(path.join(d, line.slice(7).trim()));
+            gitdir = path.resolve(d, line.slice(7).trim());
             break;
           }
         }
         if (gitdir !== null) {
           const common = fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
-          return path.dirname(path.normalize(path.join(gitdir, common)));
+          return path.dirname(path.resolve(gitdir, common));
         }
       } catch {
         // fall through to git probe
@@ -157,7 +157,7 @@ function projectKey(cwd: string | null): string {
       try {
         const out = cp.execFileSync("git", ["-C", d, "rev-parse", "--git-common-dir"], { timeout: 2000, encoding: "utf8" }).trim();
         if (out !== "") {
-          const p = path.normalize(path.join(d, out));
+          const p = path.resolve(d, out);
           if (path.basename(p) === ".git") {
             return path.dirname(p);
           }
