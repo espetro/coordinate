@@ -1,7 +1,7 @@
 """fleet shim over Restate 1.8: daemon, enqueue, stats.
 
 FLEET_DB, FLEET_CAP, FLEET_REPO_CAP, FLEET_LEASE_S, FLEET_MACHINE, FLEET_CONFIG per the adapter
-contract in docs/tool-search-rubric.md section 3.
+contract in .agents/docs/tool-search-rubric.md section 3.
 
 Mapping:
 - machine cap FLEET_CAP -> concurrency limit of the `*` flow-control rule; enqueue sends through

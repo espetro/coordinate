@@ -1,6 +1,6 @@
 # Self-improving orchestration stack: state of the art and a safe loop for us
 
-Date: 2026-11-22 (`date`: Sun Nov 22 12:51:39 PST 2026). Research only, nothing implemented. Context: `docs/orchestrator-framing.md` (modules and interfaces) and `docs/tool-search-rubric.md` (bench scenarios in sections 3 and 4 are our metrics).
+Date: 2026-11-22 (`date`: Sun Nov 22 12:51:39 PST 2026). Research only, nothing implemented. Context: `.agents/docs/orchestrator-framing.md` (modules and interfaces) and `.agents/docs/tool-search-rubric.md` (bench scenarios in sections 3 and 4 are our metrics).
 
 Evidence tags: M = measured by us, R = read in the project's own paper, docs or source, B = blog, issue, marketing or third-party write-up, K = from memory, unverified. Papers were read through the arXiv API abstract and, where noted, the arXiv HTML or PDF full text. Repos were read through `gh api` and shallow clones in `/tmp/sis-clones` (`karpathy/autoresearch`, `deepseek-ai/deepseek-harness@4b399c39`).
 
@@ -81,9 +81,9 @@ Where it applies: (a) in the proposer of our improvement loop, aggregate several
 
 Repo: https://github.com/deepseek-ai/deepseek-harness, MIT, TypeScript, created 2026-08-13, latest release `dsh-v0.2.3-alpha.2` on 2026-11-22, 285,514 stars per `gh search repos` (R). Developer preview with "compatibility-breaking changes" and a safety notice that it "has not undergone a security audit" (R, README, SAFETY.md).
 
-"Everything is a plugin" (R, `docs/architecture.md`): built on Cordis, where "plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so each is replaceable from configuration. There is no privileged core to patch". Composition is layered: profile, ordered bundles, `cordis.patch.yml`, home patch, `--patch` overlays, each patch replacing a config row by id. The theory is in "A Programming Paradigm for Spatiotemporal Composability", which names "self-evolving agent harnesses" as a motivation and formalizes revertible effects (every context change carries an inverse held by the runtime, so unloading a component reverts its side effects) and reactive coeffects (dependencies drive activation and deactivation) (R, https://arxiv.org/abs/2608.25512).
+"Everything is a plugin" (R, `.agents/docs/architecture.md`): built on Cordis, where "plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so each is replaceable from configuration. There is no privileged core to patch". Composition is layered: profile, ordered bundles, `cordis.patch.yml`, home patch, `--patch` overlays, each patch replacing a config row by id. The theory is in "A Programming Paradigm for Spatiotemporal Composability", which names "self-evolving agent harnesses" as a motivation and formalizes revertible effects (every context change carries an inverse held by the runtime, so unloading a component reverts its side effects) and reactive coeffects (dependencies drive activation and deactivation) (R, https://arxiv.org/abs/2608.25512).
 
-Seams (R, `docs/glossary.md`, `docs/capability-seams.md`): a seam is a swappable capability with a Service Definition (abstract class owning `ctx.<key>`), one or more Service Providers, and Consumers. "Extension plugins depend on Service Definitions, never concrete providers" (R, `packages/README.md`). This is the same split we want: interface from the framing doc, many implementations, selection by config.
+Seams (R, `.agents/docs/glossary.md`, `.agents/docs/capability-seams.md`): a seam is a swappable capability with a Service Definition (abstract class owning `ctx.<key>`), one or more Service Providers, and Consumers. "Extension plugins depend on Service Definitions, never concrete providers" (R, `packages/README.md`). This is the same split we want: interface from the framing doc, many implementations, selection by config.
 
 How plugins enable self-modification (R, `packages/boot/plugin-manager/README.md`):
 - A `plugin_manager` tool lets the agent itself enable or disable plugin rows and install, update or remove bundles. It is on in the Standard, PTC and Creator presets.
@@ -117,7 +117,7 @@ Adversarial: GEPA is one of the four methods in the "Beneath the Surface" audit 
 - Bilevel autoresearch: an outer loop improves the inner loop's search mechanism using the same LLM (R, https://arxiv.org/abs/2603.23420). We should not do this early: the meta-loop is the hardest part to evaluate.
 - Agent-written plugins in practice: the dsh plugin hub claims 11,000+ plugins (B, https://github.com/imsai-sh/awesome-deepseek-harness-plugins, repo description); one curated list has a "Loops (auto-research)" category (B, https://github.com/Dominic789654/awesome-deepseek-harness). No measured evidence found on the quality or safety of agent-written plugins. Unknown.
 
-Not found: any open-source agent orchestrator that tunes its own scheduler parameters (caps, presence levels, placement weights) from telemetry. This matches `docs/research/presence-aware-concurrency.md`: nobody even ties caps to presence. Unknown whether closed tools (Conductor, Devin) do it internally.
+Not found: any open-source agent orchestrator that tunes its own scheduler parameters (caps, presence levels, placement weights) from telemetry. This matches `.agents/docs/research/presence-aware-concurrency.md`: nobody even ties caps to presence. Unknown whether closed tools (Conductor, Devin) do it internally.
 
 ## 2. What transfers, scored against our situation
 
@@ -197,7 +197,7 @@ Anti-forgetting: keep a frozen regression pool of every scenario and replay trac
 ### 3.5 Plugin architecture behind the framing-doc interfaces
 
 Model it on dsh seams, with process isolation:
-- Each module in `docs/orchestrator-framing.md` (Connector, Dispatcher, Session store, Scheduler, Coordination, Context) is a Service Definition: the interface listed in the Modules table (`enqueue`, `admit`, `park`, `wake`, `stats` and so on), versioned.
+- Each module in `.agents/docs/orchestrator-framing.md` (Connector, Dispatcher, Session store, Scheduler, Coordination, Context) is a Service Definition: the interface listed in the Modules table (`enqueue`, `admit`, `park`, `wake`, `stats` and so on), versioned.
 - Providers are implementations: today's SQLite scheduler, ACP dispatcher, tmux fallback, T3 connector. Each provider ships a manifest (interface version, capabilities, resource budget, required permissions) and a conformance suite, which for M4 is the existing adapter contract in rubric section 3.
 - A config row selects the provider per module per device, like a dsh `cordis.patch.yml` row. Swapping a provider is a config change, so the improvement loop swaps implementations through Tier 1 or 3 commits without code changes in the core.
 - Revertible effects: a provider registers its timers, leases and subscriptions through the host, which can undo them on unload (the Cordis idea, R, arXiv 2608.25512). In practice for us: a provider is a separate process, so unloading is killing its process group and the host releases its leases.

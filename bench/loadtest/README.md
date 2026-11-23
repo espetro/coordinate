@@ -17,13 +17,13 @@ The acp scenarios (`overload` acp mix, `failure`, `cancel`, `park`) call a real 
 
 ```sh
 # cmd-only smoke, no LLM calls
-flock /tmp/tsc.lock uv run python loadtest/run.py --cap 2 --mult 3 --skip-acp --out /tmp/lt
+flock /tmp/tsc.lock uv run python bench/loadtest/run.py --cap 2 --mult 3 --skip-acp --out /tmp/lt
 
 # everything, real agent
-flock /tmp/tsc.lock uv run python loadtest/run.py --cap 2 --mult 3 --agent opencode --model <cheap-model> --out /tmp/lt
+flock /tmp/tsc.lock uv run python bench/loadtest/run.py --cap 2 --mult 3 --agent opencode --model <cheap-model> --out /tmp/lt
 
 # one scenario
-uv run python loadtest/run.py --cap 3 --only cancel --agent opencode --out /tmp/lt
+uv run python bench/loadtest/run.py --cap 3 --only cancel --agent opencode --out /tmp/lt
 ```
 
 Use the machine's real cap: 2 on the MacBook, 3 on the laptop, 6 on the VPS. `--cap` sets `FLEET_CAP` for the private daemon only.
@@ -79,4 +79,4 @@ Orphan cleanup: processes found alive after `cancel` and `park` are reported, th
 
 ## Self-test without tokens
 
-`--fake-acp` swaps `fleet-acp` for `loadtest/fake_acp.py`. It prints a session id, starts a detached `sleep` as the "agent", writes the pid file, does the file task and commits. It exits 1 for the broken-binary and bad-model registries. It is killed with SIGKILL on cancel like the real wrapper, so it leaves the detached agent behind. That makes `cancel` and `park` report an orphan, which is how the harness proves it can detect one. Do not read the fake numbers (RSS, latency of acp jobs) as real.
+`--fake-acp` swaps `fleet-acp` for `bench/loadtest/fake_acp.py`. It prints a session id, starts a detached `sleep` as the "agent", writes the pid file, does the file task and commits. It exits 1 for the broken-binary and bad-model registries. It is killed with SIGKILL on cancel like the real wrapper, so it leaves the detached agent behind. That makes `cancel` and `park` report an orphan, which is how the harness proves it can detect one. Do not read the fake numbers (RSS, latency of acp jobs) as real.

@@ -12,7 +12,7 @@ Date: 2026-11-22. Branch `spike/bench-v2` in `~/.worktrees/fleet-spikes/bench2`.
 | `orchestrator-kill` scenario | `bench/bench.py` | K stub ACP sessions through fleet, `kill -9` the daemon group mid-turn, restart, every session must complete; counts duplicate turns and resumed-via-`session/load` versus restarted |
 | `live-density` scenario | `bench/bench.py` | steps up concurrent stub sessions at a given ballast, reports orchestrator RSS separately from agent RSS, plus the fixed overhead |
 
-Existing scenarios are unchanged in semantics. The adapter contract (section 3 of `docs/tool-search-rubric.md`) is unchanged: the bench selects the ACP command through the existing `FLEET_ACP_CMD` environment variable, so no hook was added to fleet itself.
+Existing scenarios are unchanged in semantics. The adapter contract (section 3 of `.agents/docs/tool-search-rubric.md`) is unchanged: the bench selects the ACP command through the existing `FLEET_ACP_CMD` environment variable, so no hook was added to fleet itself.
 
 ## How to run
 
@@ -86,7 +86,7 @@ All boolean gates held 10 of 10. Idle, the enqueue median drops from 119ms to 97
 
 ## Bench CI: state loss and the regression gate (M, 2026-11-23)
 
-Branch `feat/bench-ci`. Two new scenarios and a comparison gate, described in `docs/bench-ci.md`.
+Branch `feat/bench-ci`. Two new scenarios and a comparison gate, described in `.agents/docs/bench-ci.md`.
 
 `state-loss` puts four kinds of in-flight state in the store at once, kills the daemon with `kill -9` and restarts it: 2 live shell jobs, 2 parked jobs waiting on an event, 1 job holding a weighted `tool:vitest` lease, and 1 ACP session mid-turn in the stub agent. The measured outcome on the VPS (load average 1.0 at the start of the run): 0 jobs lost, all 4 in-flight jobs ran twice, 1 duplicate turn, 0 leases leaked, and both parked jobs were still parked with their `waiting_on` intact.
 

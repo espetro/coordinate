@@ -1021,7 +1021,7 @@ def _host_state() -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", default=".")
-    ap.add_argument("--cli", default=None, help="adapter command prefix replacing `python -m fleet` (see docs/tool-search-rubric.md)")
+    ap.add_argument("--cli", default=None, help="adapter command prefix replacing `python -m fleet` (see .agents/docs/tool-search-rubric.md)")
     ap.add_argument("--backend", default="sqlite", choices=["sqlite", "dbos", "custom"])
     ap.add_argument("--only", default=",".join(SCENARIOS))
     ap.add_argument("--out", required=True)

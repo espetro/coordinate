@@ -5,21 +5,21 @@ Unknown stays unknown. Nothing below was run except DBOS.
 
 ## Re-framed view by module (2026-11-22)
 
-The requirements changed from "replace fleet's per-machine job queue" to an orchestration layer for agent sessions, split into modules M1 to M6 (`docs/orchestrator-framing.md`, rubric in `docs/tool-search-rubric.md`).
+The requirements changed from "replace fleet's per-machine job queue" to an orchestration layer for agent sessions, split into modules M1 to M6 (`.agents/docs/orchestrator-framing.md`, rubric in `.agents/docs/tool-search-rubric.md`).
 Under that framing, the question per candidate is which module it could own, not whether it replaces fleet.
 
 | Candidate | License | Modules it could own | Main blocker | Fit |
 |---|---|---|---|---|
-| Restate | BSL-1.1 with an Additional Use Grant for internal use (R, LICENSE read in spike) | M4 scheduler (keyed limits per scope and limit key), M5 awaits (awakeables, durable promises), M3 (Virtual Object state per session key) (R) | Handlers run as an HTTP service, push model; idle RSS, parking semantics and license unverified | Spiked: rejected for M4 and M5 (532MB idle, no global priority), watch list (`docs/restate-spike.md`) |
-| Rivet Actors (`rivet-dev/rivet`, 7k stars) | Apache-2.0 (R) | M3 and M4 in spirit: one hibernating Actor per session, 72KB per Actor, wake on demand, SQLite per Actor, scheduling (R) | Needs its Rust control plane plus object storage; a local filesystem backend exists "for trying Rivet on one machine" (R). Actors run agent loops in-process, our agents are external CLIs | Spiked: borrow the design only (128MB idle, 1.5GB at 10k parked actors, 3.1% idle CPU) (`docs/rivet-spike.md`) |
+| Restate | BSL-1.1 with an Additional Use Grant for internal use (R, LICENSE read in spike) | M4 scheduler (keyed limits per scope and limit key), M5 awaits (awakeables, durable promises), M3 (Virtual Object state per session key) (R) | Handlers run as an HTTP service, push model; idle RSS, parking semantics and license unverified | Spiked: rejected for M4 and M5 (532MB idle, no global priority), watch list (`.agents/docs/restate-spike.md`) |
+| Rivet Actors (`rivet-dev/rivet`, 7k stars) | Apache-2.0 (R) | M3 and M4 in spirit: one hibernating Actor per session, 72KB per Actor, wake on demand, SQLite per Actor, scheduling (R) | Needs its Rust control plane plus object storage; a local filesystem backend exists "for trying Rivet on one machine" (R). Actors run agent loops in-process, our agents are external CLIs | Spiked: borrow the design only (128MB idle, 1.5GB at 10k parked actors, 3.1% idle CPU) (`.agents/docs/rivet-spike.md`) |
 | Sandbox Agent (`rivet-dev/agents`, 1.7k stars for the repo) | Apache-2.0 (R) | M2 dispatcher: one HTTP API over Claude Code, Codex, OpenCode, Amp and Pi with unified events and sessions (B, landing page) | Overlaps ACP; runs as a server per sandbox | Compare against ACP as the M2 interface |
 | Orca (`stablyai/orca`) | MIT (R) | Control panel, plus M4 and M5 patterns: Run inbox, Tasks, Dispatches, heartbeats, `worker_done` with dispatch ids, `ask`, decision gates, federated workers on other hosts, nested worker depth 4 (R) | A desktop app that owns its state, not a library; no concurrency caps found in the orchestration docs | Second control panel and the best reference for await tracking; check its CLI as an M1 or M4 driver |
 | T3 Code | MIT (K) | Control panel, M1 connector (links, `delegate_task`, read-only remote threads), placement hint (auto balance by CPU and memory at thread creation) (R) | Links are one way and do not chain, threads are not replicated, no global caps (R) | Keep as M1 and the panel |
 | MCP Agent Mail (Dicklesworthstone, Python and Rust versions) | unknown | M5 locks (advisory file leases with TTL, exclusive or shared, pre-commit guard), M6 messages (identities, inboxes, threads, Git plus SQLite) (R, repo descriptions) | Advisory only; star count and maintenance not checked | Candidate for M5 locks and M6 |
-| beads (`gastownhall/beads`), Gas Town, Gas City | unknown | M6 context and M5 claims: hash ids, dependency graph, `supersedes`, claims (R) | Now Dolt-backed; open issues on stuck merges, dropped comments, unbounded Dolt memory, agent mode not engaging (R) | Copy the data model, not the implementation (`docs/research/shared-context-crdt.md`) |
-| Herdr (52.3k stars) | unknown, check | M2 tmux fallback: single Rust binary owning terminals, one server per machine over SSH, 22MB idle (M) | No queue, no locks | Spiked: stay on tmux (46MB idle vs 4.8MB) (`docs/term-fallback-spike.md`) |
+| beads (`gastownhall/beads`), Gas Town, Gas City | unknown | M6 context and M5 claims: hash ids, dependency graph, `supersedes`, claims (R) | Now Dolt-backed; open issues on stuck merges, dropped comments, unbounded Dolt memory, agent mode not engaging (R) | Copy the data model, not the implementation (`.agents/docs/research/shared-context-crdt.md`) |
+| Herdr (52.3k stars) | unknown, check | M2 tmux fallback: single Rust binary owning terminals, one server per machine over SSH, 22MB idle (M) | No queue, no locks | Spiked: stay on tmux (46MB idle vs 4.8MB) (`.agents/docs/term-fallback-spike.md`) |
 | zmx (2.3k stars) | MIT (R) | M2 tmux fallback | Not measured | Compare with Herdr |
-| Cloudroom, Podium, Paperclip, Orchestrator.inc | various | Patterns only: park after idle and resume, single-writer device stores, work as rows, detached ACP host (R) | Postgres, closed parts or scope | Copy patterns (`docs/research/orchestrators-landscape-*.md`) |
+| Cloudroom, Podium, Paperclip, Orchestrator.inc | various | Patterns only: park after idle and resume, single-writer device stores, work as rows, detached ACP host (R) | Postgres, closed parts or scope | Copy patterns (`.agents/docs/research/orchestrators-landscape-*.md`) |
 | River OSS | OSS core, Pro paid (R) | M4 per device | Go rewrite, SQLite experimental, keyed limits are Pro | Weaker now: no park and wake, no awaits |
 | OpenWorkflow | unknown | M4 later | No concurrency controls yet (R) | Watch |
 | Absurd | Apache-2.0 (R) | M5 design ideas (first-emit-wins events, lease claims) | Postgres (R) | Reference only |
@@ -33,10 +33,10 @@ Proposed stack to test, per module:
 - M3 and M4: our SQLite scheduler, extended with parked sessions (Restate and Rivet spiked and rejected, see framing Assessment 9).
 - M5: our own await records (Restate rejected), MCP Agent Mail style leases for files, our toolcaps for tools.
 - M6: append-only, single-writer files per device synced through a bare git repo on kinosmac, with a beads-style data model; Automerge or Loro only for shared notes if concurrent edits prove real.
-- Harness choice: priority, roles and learned footprint per harness (`docs/research/harness-footprint-and-roles.md`).
+- Harness choice: priority, roles and learned footprint per harness (`.agents/docs/research/harness-footprint-and-roles.md`).
 - Tmux fallback: stay on tmux.
-- Improver: tiered self-improvement loop (`docs/research/self-improving-stack.md`).
-- Caps: three presence levels per device (`docs/research/presence-aware-concurrency.md`).
+- Improver: tiered self-improvement loop (`.agents/docs/research/self-improving-stack.md`).
+- Caps: three presence levels per device (`.agents/docs/research/presence-aware-concurrency.md`).
 - Panel: T3 Code, with Orca as a second client.
 
 ## Scheduler-only view (2026-11-21)
@@ -78,7 +78,7 @@ So the question for each candidate is "how much of the queue and caps layer does
 
 #### DBOS (measured)
 
-See `docs/dbos-spike.md`. Wins crash recovery (2.7s vs 16.7s). Loses CLI latency (import 1.8s), memory, global priority, and parking holds a slot unless the paid Enterprise suspend mode is used.
+See `.agents/docs/dbos-spike.md`. Wins crash recovery (2.7s vs 16.7s). Loses CLI latency (import 1.8s), memory, global priority, and parking holds a slot unless the paid Enterprise suspend mode is used.
 
 #### Absurd (Earendil, Armin Ronacher)
 

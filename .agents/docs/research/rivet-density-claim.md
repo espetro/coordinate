@@ -1,6 +1,6 @@
 # Rivet "7,242× more agents per server": provenance, reconstruction, transfer
 
-Research date: 2026-11-22. Scope: where the claim lives, how it is computed, whether it transfers to an orchestrator of external CLI harnesses, and what we could publish instead. Context: `docs/orchestrator-framing.md`, Assessment 1.
+Research date: 2026-11-22. Scope: where the claim lives, how it is computed, whether it transfers to an orchestrator of external CLI harnesses, and what we could publish instead. Context: `.agents/docs/orchestrator-framing.md`, Assessment 1.
 
 Tags: M measured by us on this machine, R read in project docs or source, B blog or marketing copy, K memory, unverified.
 
@@ -8,7 +8,7 @@ Tags: M measured by us on this machine, R read in project docs or source, B blog
 
 - Landing page, section headline: "Run 7,242× more agents per server. An Actor runs inside your Node.js or Bun backend, not in its own container or VM. A server that held hundreds of sandboxes holds hundreds of thousands of Actors. 72.4 KB per running Actor. RSS increase per running Actor. Measured with the Rust rivetkit SDK. The sandbox figure is a provider's documented default allocation as of November 4, 2026, not measured memory use." Hero also says "72 KB per Actor". (B, https://rivet.dev/, fetched 2026-11-22)
 - Docs page, "Comparison baseline" table: "Memory: 72.4 KB per running Rivet Actor | 512 MiB per sandbox | About 7,242×". Last updated November 20, 2026. (R, https://rivet.dev/docs/benchmarking)
-- Source of that page: `docs/general/content/benchmarking.mdx`, row added in commit `0e94cc69` on 2026-11-05. (R, https://github.com/rivet-dev/rivet/commit/0e94cc69)
+- Source of that page: `.agents/docs/general/content/benchmarking.mdx`, row added in commit `0e94cc69` on 2026-11-05. (R, https://github.com/rivet-dev/rivet/commit/0e94cc69)
 - Repo README, "How Actors compare to sandboxes": "Memory per instance | 72.4 KB | 512 MiB", and states "Rivet numbers come from the published Rivet Actors vs Cloudflare Durable Objects benchmark". (R, https://github.com/rivet-dev/rivet/blob/main/README.md)
 - Benchmark repo: has no 72.4 KB figure and no sandbox comparison. It is Rivet vs Cloudflare Durable Objects. (R, https://github.com/rivet-dev/bench-rivet-actors-vs-durable-objects, `gh search code --owner rivet-dev "72.4"` returns only the README and the mdx)
 - X posts and blog posts: not found. A web search for `"7,242" rivet agents per server` returned only the landing page. Unknown whether it was posted on X.

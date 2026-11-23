@@ -56,7 +56,7 @@ Notes: parked here means the actor called `c.sleep()` after `park`, i.e. a hiber
 |---|---|---|
 | S1 park and wake | 3 | `c.sleep()` parks with no process and no slot; any action call wakes it; p50 5-6 ms (M) |
 | S3 resume after orchestrator dies | 1 | identity survives, but session fields in vars are wiped on restart; durable resume needs the actor SQLite path plus our own schema, i.e. real glue on our side (M) |
-| S12 published density benchmark | 2 | Rivet publishes a method-reproducible actor-vs-DO benchmark, but its headline 72.4 KB/actor is a Rust-SDK number whose raw samples are not published, and our measured marginal cost here was 18-24 KB disk plus ~100-130 KB engine RSS per parked actor, worse than the 314.6 KiB their own reproducible run reports (M; see `docs/research/rivet-density-claim.md`) |
+| S12 published density benchmark | 2 | Rivet publishes a method-reproducible actor-vs-DO benchmark, but its headline 72.4 KB/actor is a Rust-SDK number whose raw samples are not published, and our measured marginal cost here was 18-24 KB disk plus ~100-130 KB engine RSS per parked actor, worse than the 314.6 KiB their own reproducible run reports (M; see `.agents/docs/research/rivet-density-claim.md`) |
 
 ## External agent processes in its model
 
@@ -64,7 +64,7 @@ Spawning and tracking OS processes works mechanically: an action can `spawn(...,
 
 ## Verdict
 
-M3 session store: borrow the design only. The hibernate/wake primitive is excellent (single-digit-ms wake, no process while parked), but 24 KB disk and ~120 KB resident per parked session against a 1.2 GB engine at 10k sessions fails G2 by 5x, and durable session fields need our own SQLite schema anyway, at which point a plain row store gives the same thing for 25 MB total (the SQLite baseline in `docs/dbos-spike.md`).
+M3 session store: borrow the design only. The hibernate/wake primitive is excellent (single-digit-ms wake, no process while parked), but 24 KB disk and ~120 KB resident per parked session against a 1.2 GB engine at 10k sessions fails G2 by 5x, and durable session fields need our own SQLite schema anyway, at which point a plain row store gives the same thing for 25 MB total (the SQLite baseline in `.agents/docs/dbos-spike.md`).
 
 M4 park/wake layer: reject as the standalone layer, adopt the pattern. If we ever need thousands of event-addressable parked sessions with sub-10 ms wake and cross-device placement, revisit with the Postgres or FoundationDB backend and a budget re-measure; on the local filesystem backend the engine's memory does not scale to our target.
 

@@ -1,7 +1,7 @@
 # Tool search rubric for the agent orchestration layer
 
 Purpose: a reference spec and acceptance test. Hand section 1 to a web search agent so it looks for tools or stacks that satisfy it (the reverse prompt), then run sections 3 and 4 on the shortlist.
-The requirements and the reasoning behind them are in `docs/orchestrator-framing.md`. The scheduler gates come from measured failures in the DBOS spike (`docs/dbos-spike.md`).
+The requirements and the reasoning behind them are in `.agents/docs/orchestrator-framing.md`. The scheduler gates come from measured failures in the DBOS spike (`.agents/docs/dbos-spike.md`).
 
 ## 1. Prompt for the search agent
 
@@ -48,7 +48,7 @@ Scored criteria (0 absent, 1 workaround of 150 lines or more, 2 workaround under
 
 Anti-goals. Do not reward: deterministic step replay of code inside the worker (our agents resume from transcripts), workflow versioning, serverless or HTTP push to hosted functions, HA clusters, multi-tenant billing, hosted-only clouds, dashboards.
 
-Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail, beads and Gas Town or Gas City, and every product in `docs/research/orchestrators-landscape-a.md` and `-b.md` (Conductor alternatives such as Multica, OpenHands, Paperclip, OpenClaw, Herdr, Paseo, Cloudroom, Podium, bb, zmx).
+Already evaluated, do not re-report except to correct a fact: DBOS Transact (rejected on measurements), Inngest, litequeue, gpahal/durable-execution, Absurd, OpenWorkflow, Restate, River, Rivet Actors and Sandbox Agent, Orca, T3 Code, MCP Agent Mail, beads and Gas Town or Gas City, and every product in `.agents/docs/research/orchestrators-landscape-a.md` and `-b.md` (Conductor alternatives such as Multica, OpenHands, Paperclip, OpenClaw, Herdr, Paseo, Cloudroom, Podium, bb, zmx).
 
 Where to look. Agent orchestrators and agent IDEs with a CLI, universal coding-agent APIs, ACP clients and proxies, local-first sync engines, embedded job queues with keyed concurrency, actor runtimes with hibernation, durable promise libraries, multi-agent coordination servers (inboxes, file leases), rate limiters for LLM quotas, presence or load aware schedulers (BOINC style "in use" profiles), harness routers that assign roles to models, metric-driven config tuners and plugin hosts that support safe self-improvement loops. Vocabulary: "park", "hibernate", "durable promise", "awakeable", "concurrency key", "lease", "visibility timeout", "heartbeat", "work stealing", "local-first", "single binary", "ACP", "session/load". Do not limit yourself to things called workflow engines.
 
@@ -120,7 +120,7 @@ Implemented in `bench/bench.py` (M4 scheduler, with shell jobs standing in for a
 | `state-loss` | live jobs, parked jobs, a tool lease and an ACP session mid-turn all at once; kill -9 the daemon, restart: counts `stateloss_jobs_lost`, `stateloss_jobs_run_twice`, `stateloss_duplicate_turns`, `stateloss_leases_leaked`, and diffs the job rows and the stub agent's session state before versus after | G3, G4, S3 |
 | `park-density` | open 1,000 then 10,000 more parked sessions (`--park-density-steps`): orchestrator RSS apart from the fixed overhead, and the bytes each parked session costs in the store | G2, G3, S12 |
 
-A scheduler passes when `cap_holds`, `repo_cap_holds`, `chaos_all_done` and `tool_cap_holds` are true and `enqueue_cli_median_ms` is 300 or less. `priority_ok` and `tool_trivial_ran_while_parked` decide S9 and S1. For the ACP scenarios the pass criteria are `orchkill_all_done` true, `orchkill_restarted` less than the number of killed jobs (resumption through `session/load` must be the normal path), and for `live-density` an orchestrator RSS within the G2 budget and an `agent_rss_per_session_mb` within 20% of the harness's known footprint. Method and measured numbers: `docs/bench-v2.md`.
+A scheduler passes when `cap_holds`, `repo_cap_holds`, `chaos_all_done` and `tool_cap_holds` are true and `enqueue_cli_median_ms` is 300 or less. `priority_ok` and `tool_trivial_ran_while_parked` decide S9 and S1. For the ACP scenarios the pass criteria are `orchkill_all_done` true, `orchkill_restarted` less than the number of killed jobs (resumption through `session/load` must be the normal path), and for `live-density` an orchestrator RSS within the G2 budget and an `agent_rss_per_session_mb` within 20% of the harness's known footprint. Method and measured numbers: `.agents/docs/bench-v2.md`.
 
 Planned, needed for the concurrency-first and multi-device requirements (not implemented yet):
 

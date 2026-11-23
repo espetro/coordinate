@@ -1,6 +1,6 @@
 # Shared context across harnesses and devices: is a CRDT worth it? (M6)
 
-Date: 2026-11-22. Research only, nothing implemented. Context: `docs/orchestrator-framing.md`, Assessments 2 and 3.
+Date: 2026-11-22. Research only, nothing implemented. Context: `.agents/docs/orchestrator-framing.md`, Assessments 2 and 3.
 
 Evidence tags: M = measured by us, R = read in the project's own docs, source, issues or release metadata, B = blog, independent write-up or marketing claim, K = from memory, unverified. Star counts and last-push dates come from the GitHub API on 2026-11-22 (R). Binary sizes are compressed release assets for darwin arm64 from the latest GitHub release (R), not installed size and not RSS. Nothing here was run locally, so there are no M tags.
 

@@ -51,4 +51,4 @@ flock /tmp/tsc.lock uv run --with pytest pytest -v
 
 `tests/test_pilot_claude.py` repeats the pilot on the `claude` agent (isolated config dir under tmp, haiku by default via `FLEET_PILOT_CLAUDE_MODEL`, skipped without Claude credentials). `tests/test_caps.py` checks the vps cap of 6 with 14 jobs and the per-repo cap of 1.
 
-`spike-ref/` holds the validated Spike B shim and its findings, kept as reference.
+`.agents/docs/spike-ref/` holds the validated Spike B shim and its findings, kept as reference.

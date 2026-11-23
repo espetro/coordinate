@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fleet load test harness: how many sessions does a machine handle, and does the queue manage overload.
 
-    uv run python loadtest/run.py --cap 2 --mult 3 --agent opencode --out /tmp/lt-out
-    uv run python loadtest/run.py --cap 2 --skip-acp        # cmd-only smoke, no LLM calls
-    uv run python loadtest/run.py --cap 2 --fake-acp        # acp scenarios against a zero-token stub
+    uv run python bench/loadtest/run.py --cap 2 --mult 3 --agent opencode --out /tmp/lt-out
+    uv run python bench/loadtest/run.py --cap 2 --skip-acp        # cmd-only smoke, no LLM calls
+    uv run python bench/loadtest/run.py --cap 2 --fake-acp        # acp scenarios against a zero-token stub
 
 Everything runs in a throwaway temp dir with its own FLEET_DB, FLEET_ACP_HOME, git repos and daemon subprocess.
 The real service, the real queue and ~/Documents are never touched. Stdlib only, macOS and Linux.
@@ -30,7 +30,7 @@ from collections import namedtuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-FLEET_ROOT = HERE.parent
+FLEET_ROOT = HERE.parent.parent
 SCENARIOS = ["overload", "contention", "priority", "failure", "cancel", "park", "chaos"]
 ACP_ONLY = {"failure", "cancel", "park"}
 TERMINAL = ("done", "failed", "dead")

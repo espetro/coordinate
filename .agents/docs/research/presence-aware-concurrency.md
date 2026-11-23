@@ -1,6 +1,6 @@
 # Presence-aware concurrency: prior art and policy options
 
-Date: 2026-11-22 (`date` run at session start). Research only, nothing implemented. Context: `docs/orchestrator-framing.md` (soft caps 3+5+5, live vs parked sessions, one orchestrator per device).
+Date: 2026-11-22 (`date` run at session start). Research only, nothing implemented. Context: `.agents/docs/orchestrator-framing.md` (soft caps 3+5+5, live vs parked sessions, one orchestrator per device).
 
 Evidence tags: M = measured by us on kinosmac (command given), R = read in the project's own docs or source (URL or path at a commit), B = blog or marketing claim, K = from memory, unverified.
 
@@ -18,7 +18,7 @@ Source clones used for R claims (shallow, read-only, in `/tmp/pac-clones`): `pin
 
 | Tool | Presence or load signal | What it controls | Policy shape | Evidence |
 |---|---|---|---|---|
-| T3 Code, load balancing | Per-host CPU utilization and available memory, samples older than 15 s ignored | Which machine gets a new thread, at creation only | Score = `weight * cpuCount * (1 - cpuUtil) * memAvailFrac`; host skipped if CPU >= 95% or free memory <= 5%; weights Prefer 100, Normal 50, Less often 25, Manual only 0 | R, `packages/client-runtime/src/load-balancing.ts`, `apps/web/src/components/settings/LoadBalancingSettings.tsx`, `docs/user/remote-access.md` "Balance new threads across machines" |
+| T3 Code, load balancing | Per-host CPU utilization and available memory, samples older than 15 s ignored | Which machine gets a new thread, at creation only | Score = `weight * cpuCount * (1 - cpuUtil) * memAvailFrac`; host skipped if CPU >= 95% or free memory <= 5%; weights Prefer 100, Normal 50, Less often 25, Manual only 0 | R, `packages/client-runtime/src/load-balancing.ts`, `apps/web/src/components/settings/LoadBalancingSettings.tsx`, `.agents/docs/user/remote-access.md` "Balance new threads across machines" |
 | T3 Code, background policy | Host power snapshot: idle, idleSeconds, locked, suspended, onBattery, lowPowerMode, thermalState (nominal/fair/serious/critical), plus client activity leases (visible, focused, recentlyInteracted, TTL 45 s default, 120 s max) | Opportunistic background work (provider status, VCS status, PR polling, port scanning), not agent turns | `shouldRunOpportunisticWork` = some foreground client lease AND host not constrained. Constrained = suspended, or locked (if `pauseWhenHostLocked`), or thermal serious/critical, or low power / battery if enabled. Profiles `balanced`, `performance`, `battery-saver` | R, `packages/contracts/src/background.ts`, `apps/server/src/background/BackgroundPolicy.ts`, `packages/contracts/src/settings.ts` lines ~1106-1131 |
 | T3 Code desktop | Electron `powerMonitor`: `getSystemIdleTime`, `getSystemIdleState`, lock-screen, unlock-screen, on-ac, on-battery, suspend, resume, thermal-state-change, speed-limit-change | Feeds the host power snapshot | Event driven | R, `apps/desktop/src/electron/ElectronPowerMonitor.ts` |
 | Orca | `powerMonitor` lock-screen, unlock-screen, on-battery, suspend, resume, shutdown, user-did-become-active | Keeping the computer awake while agents run; resume broadcast | Mode `on`, `off`, `auto` (`keepComputerAwakeWhileAgentsRun`) | R, `src/main/power/agent-awake-service.ts`, `src/shared/app-lifecycle/computer-awake-mode.ts` |
