@@ -10,7 +10,7 @@ import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as c
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n" +
+    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
     "  --repo KEY          per-repo cap key (default: cwd; an empty value skips the key)\n" +
@@ -305,6 +305,9 @@ async function main(): Promise<void> {
     }
     if (!o.exec) fail("forward: --exec is required");
     await forward(o);
+  } else if (verb === "doctor") {
+    const { run } = await import("./doctor.ts");
+    run();
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
   } else if (verb === "dead") {
