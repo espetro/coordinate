@@ -1,0 +1,55 @@
+{
+  "backend": "restate",
+  "host": {
+    "load_1m": 2.51,
+    "load_5m": 1.46,
+    "load_15m": 1.07,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8294,
+    "timestamp": "2026-11-23T05:35:59+0000"
+  },
+  "parked_target": 1000,
+  "pids": {
+    "server": 972236,
+    "worker": 972299,
+    "daemon": 972233
+  },
+  "rss_idle_mb": 367.9,
+  "lease_holder_invocation": "inv_1kOEu4bAWgiu6rJGZ5r2w3t0YbcTPAtX4c",
+  "counts_after_holder": {
+    "running": 1
+  },
+  "park_enqueue_s": 202.05,
+  "park_enqueue_per_invocation_ms": 202.0,
+  "counts_parked": {
+    "completed": 72,
+    "running": 929
+  },
+  "parked_suspended": 0,
+  "parked_polling": 929,
+  "park_wall_s": 383.28,
+  "rss_parked_mb": 851.2,
+  "rss_delta_mb": 483.3,
+  "rss_kb_per_parked": 494.9,
+  "data_dir_bytes": 92056410,
+  "data_dir_bytes_per_parked": 92056.4,
+  "data_dir_bytes_idle": 658689,
+  "data_dir_growth_bytes": 91397721,
+  "data_dir_growth_bytes_per_parked": 91397.7,
+  "log_store_bytes": 63992010,
+  "lease_release_detected_s": 383.44,
+  "wake_ms": 158.8,
+  "wake_def": "lease release (the holder invocation completing, seen as the first completion) -> the first parked invocation completing its job (the second completion); the parked invocation polls the lease every 200ms (the worker's sleep loop), so this is the polling granularity plus the lease acquisition plus the job itself",
+  "counts_after_wake": {
+    "running": 929,
+    "completed": 72
+  },
+  "host_after": {
+    "load_1m": 4.76,
+    "load_5m": 3.88,
+    "load_15m": 2.34,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 7861,
+    "timestamp": "2026-11-23T05:42:29+0000"
+  }
+}
