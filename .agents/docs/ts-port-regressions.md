@@ -259,6 +259,33 @@ py: daemon gone, sleep 313 alive (documented "agents survive" behavior)
 - Python's `test_unmatched_tool_audited_never_blocked` asserts an empty audit for an unmatched tool while its docstring says unmatched tools are audited.
 - Python daemon `finally` kills children on `KeyboardInterrupt` only; SIGTERM leaves them (this is the "agents survive" behavior the docs describe).
 
+## Reproducer results
+
+`test/regressions.test.mjs` has 16 tests, all marked `{ todo: ... }`, so they run but do not fail CI. Result of `flock /tmp/tsc.lock pnpm test` (M): `tests 31, pass 15, fail 0, todo 16`, exit 0. All 16 todo tests fail today for the reason in their message (TAP shows `not ok N - ... # TODO`).
+
+| Test | Finding | Fails today because |
+|---|---|---|
+| A1 | A1 | second `--slot` job on a limit-1 key is claimed |
+| B8 | B8 | 5 of 5 other TOML spellings give limit 1 |
+| S1 | S1 | `attempts` default is `3`, expected `0` |
+| X5 | X5 | `SqliteError: table jobs has no column named max_runtime_s` |
+| X6 default | X6 | `max_runtime_s` is NULL, expected 900 |
+| X6 malformed | X6 | `--max-runtime xs` exits 0 |
+| X8 | X8 | `runtime_remaining_s` missing |
+| X9 `--opt=value` | X9 | `unknown option --cwd=...` |
+| X9 no `--` | X9 | `unknown option echo` |
+| X1 | X1 | two project keys, the worktree one is `<wt>/<abs main path>` |
+| A3 | A3 | second `sh -c 'vitest run'` job runs instead of parking |
+| X2 missing binary | X2 | daemon exits on `spawn ... ENOENT` |
+| X2 bad cwd | X2 | daemon exits |
+| X3 | X3 | old process group still alive after the retry claimed |
+| X4 | X4 | daemon alive 6s after SIGTERM |
+| X7 | X7 | daemon log has no job output |
+
+The assertions were checked against the oracle: `REGRESS_PYTHON_SRC=<legacy>/src node --test test/regressions.test.mjs` runs the CLI and daemon tests against `python3 -m coordinate` instead of the TypeScript CLI. 13 of 13 CLI and daemon tests pass there (M), so each assertion describes behavior Python really had. The three in-process tests (A1, B8, S1) import TypeScript modules and only make sense for TypeScript; their Python behavior is shown in the A1, B8 and S1 sections above.
+
+Not covered by a reproducer, on purpose: C9, C10, C11, C12, S2 and A4 (bugs or gaps in both implementations, not regressions; they need a decision, then a fix and a test), D3 (documented as unported), X14 (present in both). Daemon tests take about 18s in total because they wait on real leases (`COORDINATE_LEASE_S=2` or `3`).
+
 ## Ranked fix list
 
 Sizes are rough (lines changed including tests; risk is the chance of breaking existing behavior). Order assumes one person, safest and most damaging first.
