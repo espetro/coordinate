@@ -22,14 +22,14 @@ The Restate experiment uses `bench/adapters/restate/park_wake.py`. Restate has n
 
 | | SQLite (ours) | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
 |---|---|---|---|
-| 1,000 parked sessions, RSS of the whole stack | 18.5MB idle, 18.7MB parked (M, `bench/results-park-sqlite-vps.json`) | 393MB idle, 410MB parked (M, `bench/results-park-restate-vps.json`) | not measured at 1,000 |
+| 1,000 parked sessions, RSS of the whole stack | 18.5MB idle, 18.7MB parked (M, `bench/results-park-sqlite-vps.json`) | 367.9MB idle, 851.2MB parked (M, `bench/results-park-restate-vps.json`) | not measured at 1,000 |
 | 10,000 parked sessions, RSS of the whole stack | 18.5MB idle, 19.1MB parked (M, `bench/results-park-sqlite-10k-vps.json`) | not measured (M: the 1,000 run already passes the memory budget) | 1,489MB (M, Rivet spike) |
-| Bytes per parked session on disk | 326 bytes (M, dbstat, 10,000 sessions, no WAL) | 30,787 bytes of data directory growth per parked invocation (M) | 24KB (M, Rivet spike) |
-| Wake latency, p50 | 112ms at 1,000 parked, 115ms at 10,000 parked (M) | 52ms (M, the lease release to the first parked job completing) | 5 to 6ms (M, Rivet spike) |
+| Bytes per parked session on disk | 326 bytes (M, dbstat, 10,000 sessions, no WAL) | 91,398 bytes of data directory growth per parked invocation (M, `bench/results-park-restate-vps.json`) | 24KB (M, Rivet spike) |
+| Wake latency, p50 | 112ms at 1,000 parked, 115ms at 10,000 parked (M) | 158.8ms (M, the lease release to the first parked job completing) | 5 to 6ms (M, Rivet spike) |
 | Wake latency, p99 | 173ms at 1,000 parked, 167ms at 10,000 parked (M) | not measured (single sample) | 10.6ms at 10k, but 2,034ms at 1k (M, bimodal: 3 of 40 samples were 1.3 to 2.0s) |
-| Enqueue of one parked session | 98ms through the CLI (M, Python startup), 0.1ms in the bulk filler | 217ms through the shim CLI (M) | 270ms (M) |
+| Enqueue of one parked session | 98ms through the CLI (M, Python startup), 0.1ms in the bulk filler | 202ms through the shim CLI (M, `park_enqueue_per_invocation_ms`) | 270ms (M) |
 
-The wake numbers are not comparable across the three rows without reading what each one measures. Rivet's 5 to 6ms is the actor-only wake: a hibernated actor with no resident instance is woken by an action call, and nothing is spawned, no ACP session is initialized and no harness process exists. The SQLite 112ms is the full path: an agent process is spawned, the ACP protocol is initialized and the session is loaded, so the harness is running when the wake completes. Restate's 52ms is in between because the job that wakes is a shell command over the lease, not an ACP agent.
+The wake numbers are not comparable across the three rows without reading what each one measures. Rivet's 5 to 6ms is the actor-only wake: a hibernated actor with no resident instance is woken by an action call, and nothing is spawned, no ACP session is initialized and no harness process exists. The SQLite 112ms is the full path: an agent process is spawned, the ACP protocol is initialized and the session is loaded, so the harness is running when the wake completes. Restate's 158.8ms is in between because the job that wakes is a shell command over the lease, not an ACP agent.
 
 ## Where the bytes go
 
@@ -108,7 +108,7 @@ The parked-session bytes (326 per shell job, 249 per ACP session) are dominated 
 
 The WAL overhead (4,161,040 bytes fixed) goes away by checkpointing: `PRAGMA wal_checkpoint(TRUNCATE)` on a timer, or by not holding a second connection open during the bulk fill. With a periodic checkpoint the store of 10,000 parked sessions is 3.1MB, and the reclaim becomes visible with `incremental_vacuum`.
 
-Restate's numbers (393MB idle, 30,787 bytes of data directory growth per parked invocation) are the ones that decide it. The 393MB idle is the server's RocksDB memtable, and the per-parked cost is 50 times ours. Even if the parking is elegant, the footprint fails the memory budget on every device we run, which is why the earlier verdict stands: keep the SQLite scheduler, copy the design (a parked job frees its slot) rather than adopt the runtime.
+Restate's numbers (367.9MB idle, 851.2MB parked, 91,398 bytes of data directory growth per parked invocation) are the ones that decide it. The 367.9MB idle is the server's RocksDB (an earlier draft of this section carried 393MB idle, 410MB parked and 30,787 bytes per parked; those figures match no result file or commit in this repo and were superseded, so they are struck here: the JSON in `bench/results-park-restate-vps.json` is authoritative). The per-parked cost is about 280 times ours, not 50. The same draft also carried a 52ms Restate wake and a 217ms enqueue; the JSON records wake_ms 158.8 and park_enqueue_per_invocation_ms 202.0, which are used here. Root cause: the salvage commit of this write-up (891aaa9) is the only source of those numbers; no results file at any commit or in the on-disk data dir supports them, so they are treated as transcribed from a run whose results were not saved. Even if the parking is elegant, the footprint fails the memory budget on every device we run, which is why the earlier verdict stands: keep the SQLite scheduler, copy the design (a parked job frees its slot) rather than adopt the runtime.
 
 ## Open questions
 
