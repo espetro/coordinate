@@ -62,7 +62,24 @@ export const SCHEMA = [
   tool_class TEXT NOT NULL,
   project TEXT NOT NULL
 )`,
+  `CREATE TABLE IF NOT EXISTS events(
+  id INTEGER PRIMARY KEY,
+  ts REAL NOT NULL,
+  job_id INTEGER,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}'
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_events_job ON events(job_id)`,
 ];
+
+export function emit(db: Database, jid: number | null, kind: string, data: Record<string, unknown> = {}): void {
+  db.prepareRaw("INSERT INTO events(ts,job_id,kind,data) VALUES(?,?,?,?)").run([
+    Date.now() / 1000,
+    jid,
+    kind,
+    JSON.stringify(data),
+  ]);
+};
 
 export interface Job {
   id: number;
@@ -145,7 +162,9 @@ export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempt
   );
   const r = ins.run(["cmd", JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS]);
   ins.finalize();
-  return r.lastInsertRowid;
+  const jid = r.lastInsertRowid;
+  emit(db, jid, "enqueued", { kind: "cmd" });
+  return jid;
 }
 
 function usedByKey(db: Database): Record<string, number> {
@@ -201,6 +220,7 @@ export function claim(db: Database, owner: string): Parsed | null {
         db.exec(
           "UPDATE jobs SET status='timed_out', outcome='budget exhausted before claim', lease_owner=NULL, lease_expires_at=NULL WHERE id=" + jid,
         );
+        emit(db, jid, "timed_out", { outcome: "budget exhausted before claim" });
         continue;
       }
       deadlineAt = now + remaining;
@@ -218,6 +238,7 @@ export function claim(db: Database, owner: string): Parsed | null {
       insSlot.run([k, exp, jid]);
     }
     insSlot.finalize();
+    emit(db, jid, "claimed", { owner });
     return { jid, kind: row.kind, payload };
   }
   return null;
@@ -254,6 +275,7 @@ export function finish(db: Database, jid: number, owner: string, status: string)
     }
   }
   db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')").run([jid, jid]);
+  emit(db, jid, status === "done" ? "done" : status, { status });
   return event;
 }
 
@@ -264,14 +286,22 @@ export function reap(db: Database): number[] {
   for (const row of expired) {
     chargeRuntime(db, row.id);
   }
-  db.prepareRaw(
-    "UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=?",
-  ).run([now, now]);
+  for (const row of db
+    .prepareRaw(
+      "UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=? RETURNING id",
+    )
+    .all([now, now]) as IdRow[]) {
+    emit(db, row.id, "timed_out", { outcome: "lease expired after deadline" });
+  }
   const rows = db
     .prepareRaw(
       "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL WHERE status='running' AND lease_expires_at<? RETURNING id",
     )
     .all([now]) as IdRow[];
+  for (const r of rows) {
+    const st = (db.prepareRaw("SELECT status FROM jobs WHERE id=?").getOrNull([r.id]) as { status: string } | null)?.status;
+    emit(db, r.id, st === "queued" ? "requeued" : "dead", { reason: "lease expired" });
+  }
   db.exec("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')");
   const out: number[] = [];
   for (const r of rows) {
@@ -287,6 +317,9 @@ export function waitOn(db: Database, jid: number, event: string): boolean {
     .prepareRaw("UPDATE jobs SET status='waiting', waiting_on=?, lease_owner=NULL, lease_expires_at=NULL, claim_at=NULL, deadline_at=NULL WHERE id=? AND status IN ('queued','running')")
     .run([event, jid]);
   db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=?").run([jid]);
+  if (cur.changes > 0) {
+    emit(db, jid, "parked", { waiting_on: event });
+  }
   return cur.changes > 0;
 }
 
@@ -297,6 +330,7 @@ export function release(db: Database, event: string): number[] {
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
+    emit(db, r.id, "released", { event });
   }
   return out;
 }
@@ -308,6 +342,9 @@ export function cancel(db: Database, jid: number): boolean {
     .prepareRaw("UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL, claim_at=NULL WHERE id=? AND status IN ('queued','running','waiting')")
     .run([jid]);
   db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND cost>0").run([jid]);
+  if (cur.changes > 0) {
+    emit(db, jid, "cancelled", { recorded_as: "failed" });
+  }
   return cur.changes > 0;
 }
 
@@ -321,6 +358,7 @@ export function retryDead(db: Database, jid: number | null): number[] {
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
+    emit(db, r.id, "requeued", { reason: "dead retry" });
   }
   return out;
 }
@@ -357,6 +395,9 @@ export function finalizeTimedOut(db: Database, jid: number, outcome: string): bo
     .prepareRaw("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL WHERE id=? AND status='running'")
     .run([outcome, jid]);
   db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')").run([jid, jid]);
+  if (cur.changes > 0) {
+    emit(db, jid, "timed_out", { outcome });
+  }
   return cur.changes > 0;
 }
 

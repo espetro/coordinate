@@ -64,6 +64,9 @@ def build() -> argparse.ArgumentParser:
     x = s.add_parser("cancel")
     x.add_argument("id")
     s.add_parser("stats")
+    ev = s.add_parser("events", help="list job events as JSONL")
+    ev.add_argument("--follow", action="store_true", help="keep tailing new events")
+    ev.add_argument("--since", type=int, default=0, metavar="ID", help="start after this event id")
     d = s.add_parser("dead", help="dead-letter operations")
     d.add_argument("action", choices=["retry"])
     d.add_argument("id", type=int, nargs="?")
@@ -146,6 +149,21 @@ def main(argv=None) -> int:
         sys.exit(0 if q.cancel(c, a.id) else f"job {a.id} not cancellable")
     elif a.verb == "stats":
         print(json.dumps(q.stats(c)))
+    elif a.verb == "events":
+        from .events import follow, row_event
+        last = a.since
+        for row in follow(c, last):
+            last = row[0]
+            print(json.dumps(row_event(row)))
+        if a.follow:
+            try:
+                while True:
+                    for row in follow(c, last):
+                        last = row[0]
+                        print(json.dumps(row_event(row)), flush=True)
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                pass
     elif a.verb == "dead":
         print(*q.retry_dead(c, a.id))
     return 0
