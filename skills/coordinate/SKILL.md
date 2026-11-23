@@ -12,7 +12,7 @@ Durable local job queue: a job is one SQLite row plus a process the daemon spawn
 - Batch or overflow work beyond a session's parallelism: enqueue everything, let caps drain it.
 - Jobs that must survive a reboot or an agent crash: queue state is SQLite (WAL), leases are reaped, attempts retry.
 - Concurrency caps: `--slot` names a scarce resource (machine, repo, tool class); the daemon claims at most the configured count per slot.
-- Ordering/dependencies: `--wait-on <event>` parks a job until `release <event>` frees it.
+- Ordering: `--wait-on <event>` parks a job until `release <event>` frees it. Finishing a job releases only its `tool:` slot waiters, so a `--wait-on` job always needs an explicit `release`; it is never woken because another job finished.
 - Visibility without babysitting: `coordinate events --follow` streams transitions; `coordinate forward --exec '<cmd>'` pipes them into any external tool.
 
 ## Install
@@ -41,9 +41,9 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 ```
 
 - `enqueue --shell` takes ONE quoted string run through the platform shell (`/bin/sh`, `cmd.exe` on Windows); without it args are exec'd directly.
-- Lower `--priority` claims first. `--repo` serializes jobs touching the same repo.
+- Higher `--priority` claims first. `--repo` serializes jobs touching the same repo; an empty `--repo ""` skips the repo key, and the default key is the working directory.
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
-- Daemon claims `cmd` jobs, heartbeats leases, reaps dead owners, retries to `--max-attempts`, then `dead`.
+- Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.
 
 ## ACP agent sessions
 

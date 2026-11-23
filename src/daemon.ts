@@ -171,6 +171,78 @@ function jobEnv(jid: number): Record<string, string> {
   return e;
 }
 
+// A shlex.split-style splitter for the scriptc subset: POSIX-style single and double quotes,
+// backslash escapes outside single quotes. Like shlex.split, an unterminated quote returns
+// null (Python raises ValueError); the caller then treats the string as unmatched.
+function shlexSplit(s: string): string[] | null {
+  const toks: string[] = [];
+  let cur = "";
+  let started = false;
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      if (started) {
+        toks.push(cur);
+        cur = "";
+        started = false;
+      }
+      i = i + 1;
+      continue;
+    }
+    if (ch === "'") {
+      started = true;
+      i = i + 1;
+      while (i < s.length && s[i] !== "'") {
+        cur = cur + s[i];
+        i = i + 1;
+      }
+      if (i >= s.length) {
+        return null;
+      }
+      i = i + 1;
+      continue;
+    }
+    if (ch === '"') {
+      started = true;
+      i = i + 1;
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\" && i + 1 < s.length) {
+          const n = s[i + 1];
+          if (n === '"' || n === "\\" || n === "$" || n === "`") {
+            cur = cur + n;
+            i = i + 2;
+            continue;
+          }
+        }
+        cur = cur + s[i];
+        i = i + 1;
+      }
+      if (i >= s.length) {
+        return null;
+      }
+      i = i + 1;
+      continue;
+    }
+    if (ch === "\\") {
+      if (i + 1 >= s.length) {
+        return null;
+      }
+      cur = cur + s[i + 1];
+      started = true;
+      i = i + 2;
+      continue;
+    }
+    cur = cur + ch;
+    started = true;
+    i = i + 1;
+  }
+  if (started) {
+    toks.push(cur);
+  }
+  return toks;
+}
+
 function argv0Of(kind: string, payload: q.Payload): string | null {
   if (kind !== "cmd") {
     return null;
@@ -178,7 +250,7 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
   const cmd = payload.cmd;
   let toks: string[] | null = null;
   if (typeof cmd === "string") {
-    toks = cmd.split(" ").filter((t) => t !== "");
+    toks = shlexSplit(cmd);
   } else if (Array.isArray(cmd)) {
     toks = cmd;
   }
@@ -188,8 +260,11 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
   if (toks[0] === "sh" || toks[0] === "bash" || toks[0] === "zsh") {
     for (let i = 0; i < toks.length; i++) {
       if (toks[i] === "-c" && i + 1 < toks.length) {
-        const inner = toks[i + 1].split(" ").filter((t) => t !== "");
-        return inner.length > 0 ? inner[0] : null;
+        const inner = shlexSplit(toks[i + 1]);
+        if (inner === null || inner.length === 0) {
+          return null;
+        }
+        return inner[0];
       }
     }
     return null;
@@ -224,7 +299,8 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
-  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio: "ignore" as const };
+  const stdio: ("ignore" | "inherit")[] = ["ignore", "inherit", "inherit"];
+  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio };
   const win = process.platform === "win32";
   const proc =
     typeof cmd === "string"

@@ -238,7 +238,7 @@ test("S1: jobs.attempts defaults to 0 like queue.py", async () => {
 
 // ---- CLI -------------------------------------------------------------------------------------
 
-test("X5: a database created before the timecap columns is migrated, not rejected", { todo: "connect() has no _migrate_jobs / ALTER TABLE ADD COLUMN (queue.py:236-268)" }, async () => {
+test("X5: a database created before the timecap columns is migrated, not rejected", async () => {
   const r = rig();
   try {
     const old = Database.open(r.db);
@@ -251,6 +251,25 @@ test("X5: a database created before the timecap columns is migrated, not rejecte
     const out = cli(r, "enqueue", "--max-runtime", "60s", "--", "true");
     assert.equal(out.status, 0, out.stderr.split("\n").find((l) => /SqliteError:|Error:/.test(l)) || out.stderr);
     assert.equal(rows(r, "SELECT COUNT(*) AS n FROM jobs")[0].n, 2, "the old row must survive");
+    assert.equal(rows(r, "SELECT max_runtime_s AS m FROM jobs WHERE id=2")[0].m, 60);
+    const backups = fs.readdirSync(path.dirname(r.db)).filter((f) => f.startsWith("queue.db.backup-"));
+    assert.equal(backups.length, 1, `expected one backup file, got ${backups}`);
+  } finally {
+    await cleanup(r);
+  }
+});
+
+test("X5: migration is idempotent and a fresh database gets no backup", async () => {
+  const r = rig();
+  try {
+    const { connect } = await import(path.join(ROOT, "src", "queue.ts"));
+    process.env.COORDINATE_DB = r.env.COORDINATE_DB;
+    connect();
+    connect();
+    const n = rows(r, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='jobs_new'")[0].n;
+    assert.equal(n, 0, "no jobs_new table may be left behind");
+    const backups = fs.readdirSync(path.dirname(r.db)).filter((f) => f.startsWith("queue.db.backup-"));
+    assert.equal(backups.length, 0, "a fresh database must not be backed up");
   } finally {
     await cleanup(r);
   }
@@ -277,7 +296,7 @@ test("X6: a malformed --max-runtime is rejected, not stored as NULL", async () =
   }
 });
 
-test("X8: status prints runtime_remaining_s and deadline_in_s", { todo: "src/main.ts prints the raw row (cli.py:24-31 added the derived fields)" }, async () => {
+test("X8: status prints runtime_remaining_s and deadline_in_s", async () => {
   const r = rig();
   try {
     const id = cli(r, "enqueue", "--max-runtime", "30s", "--", "true").stdout.trim();
@@ -290,7 +309,7 @@ test("X8: status prints runtime_remaining_s and deadline_in_s", { todo: "src/mai
   }
 });
 
-test("X9: enqueue accepts --opt=value like argparse", { todo: "hand-rolled parser: 'unknown option --cwd=/tmp'" }, async () => {
+test("X9: enqueue accepts --opt=value like argparse", async () => {
   const r = rig();
   try {
     const out = cli(r, "enqueue", `--cwd=${r.dir}`, "--", "true");
@@ -300,7 +319,7 @@ test("X9: enqueue accepts --opt=value like argparse", { todo: "hand-rolled parse
   }
 });
 
-test("X9: enqueue accepts the command without a -- separator (argparse REMAINDER)", { todo: "hand-rolled parser: 'unknown option echo'" }, async () => {
+test("X9: enqueue accepts the command without a -- separator (argparse REMAINDER)", async () => {
   const r = rig();
   try {
     const out = cli(r, "enqueue", "--priority", "1", "echo", "hi");
@@ -335,7 +354,7 @@ test("X1: worktrees of one repo share the project key (queue.py:124-155)", { tim
   }
 });
 
-test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool class", { todo: "argv0Of splits on a single space, so the inner token keeps its quote (daemon.py:60 uses shlex)", timeout: DAEMON_T }, async () => {
+test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool class", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     fakeBin(r, "vitest", "sleep 2");
@@ -412,7 +431,7 @@ test("X4: SIGTERM stops the daemon even while a job is running", { timeout: DAEM
   }
 });
 
-test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { todo: "spawnRaw uses stdio: 'ignore'", timeout: DAEMON_T }, async () => {
+test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--shell", "--", "echo OUT-FROM-JOB; echo ERR-FROM-JOB >&2");

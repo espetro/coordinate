@@ -1,6 +1,7 @@
 // SQLite durable queue: schema, claim protocol, leases, reaper, waiting jobs.
 // Port of src/coordinate/queue.py (subset kept: no tool-class matching, no config slots).
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
@@ -115,15 +116,114 @@ interface KeyRow {
   key: string;
 }
 
+function migrateJobs(db: Database): void {
+  const row = db.prepareRaw("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'").get([]) as
+    | { sql: string }
+    | undefined;
+  if (row === undefined || row.sql.indexOf("timed_out") !== -1) {
+    return;
+  }
+  const oldCols: string[] = [];
+  const tiOld = db.prepareRaw("PRAGMA table_info(jobs)").all([]);
+  for (const r of tiOld as { name: string }[]) {
+    oldCols.push(r.name);
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(
+      `CREATE TABLE jobs_new(
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT 'cmd',
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued','running','waiting','done','failed','dead','timed_out')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  run_at REAL NOT NULL,
+  lease_owner TEXT,
+  lease_expires_at REAL,
+  waiting_on TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  created_at REAL NOT NULL,
+  max_runtime_s REAL,
+  runtime_used_s REAL NOT NULL DEFAULT 0,
+  deadline_at REAL,
+  claim_at REAL,
+  outcome TEXT,
+  pgid INTEGER,
+  pidfile TEXT
+)`,
+    );
+    const newCols: string[] = [];
+    const tiNew = db.prepareRaw("PRAGMA table_info(jobs_new)").all([]);
+    for (const r of tiNew as { name: string }[]) {
+      newCols.push(r.name);
+    }
+    const shared: string[] = [];
+    for (const col of newCols) {
+      if (oldCols.indexOf(col) !== -1) {
+        shared.push(col);
+      }
+    }
+    db.exec(`INSERT INTO jobs_new(${shared.join(",")}) SELECT ${shared.join(",")} FROM jobs`);
+    db.exec("DROP TABLE jobs");
+    db.exec("ALTER TABLE jobs_new RENAME TO jobs");
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, priority DESC, run_at, id)");
+}
+
+function backupDbFile(p: string): void {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "");
+  try {
+    fs.copyFileSync(p, `${p}.backup-${stamp}`);
+  } catch {
+    // A failed backup must not block the migration; the rebuild below is transactional.
+  }
+}
+
 export function connect(): Database {
   const p = dbPath();
   ensureParentDir(p);
+  if (fs.existsSync(p)) {
+    const db0 = Database.open(p);
+    const row = db0
+      .prepareRaw("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
+      .get([]) as { sql: string } | undefined;
+    db0.close();
+    if (row !== undefined && row.sql.indexOf("timed_out") === -1) {
+      backupDbFile(p);
+    }
+  }
   const db = Database.open(p);
   db.exec("PRAGMA busy_timeout=5000");
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA synchronous=NORMAL");
+  migrateJobs(db);
   for (const ddl of SCHEMA) {
     db.exec(ddl);
+  }
+  const have: string[] = [];
+  const tiJobs = db.prepareRaw("PRAGMA table_info(jobs)").all([]);
+  for (const r of tiJobs as { name: string }[]) {
+    have.push(r.name);
+  }
+  const cols: [string, string][] = [
+    ["pgid", "INTEGER"],
+    ["pidfile", "TEXT"],
+    ["max_runtime_s", "REAL"],
+    ["runtime_used_s", "REAL DEFAULT 0"],
+    ["deadline_at", "REAL"],
+    ["claim_at", "REAL"],
+    ["outcome", "TEXT"],
+  ];
+  for (const [col, typ] of cols) {
+    if (have.indexOf(col) === -1) {
+      db.exec(`ALTER TABLE jobs ADD COLUMN ${col} ${typ}`);
+    }
   }
   return db;
 }

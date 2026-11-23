@@ -28,11 +28,11 @@ coordinate <verb> [args]
 | --- | --- |
 | `--shell` | The command is one quoted string run through the shell |
 | `--cwd <dir>` | Working directory for the job |
-| `--repo <key>` | Group jobs that must not run together. Defaults to the working directory |
+| `--repo <key>` | Group jobs that must not run together. Defaults to the working directory; an empty `--repo ""` skips the repo key |
 | `--priority <n>` | Higher numbers run first. Default 0 |
 | `--max-attempts <n>` | How many times a job may be started. Default 3 |
 | `--max-runtime <duration>` | A deadline such as `90s`, `15m` or `2h` |
-| `--wait-on <event>` | Park the job immediately until `release <event>` |
+| `--wait-on <event>` | Park the job immediately until `release <event>`. Finishing a job releases only its `tool:` slot waiters, so a `--wait-on` job needs an explicit release |
 
 ## Environment
 
