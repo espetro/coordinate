@@ -4,7 +4,6 @@ Design notes, research and spike reports. The user documentation is in `docs/`, 
 
 ## Design
 
-- `archive/extensibility.md`: plugins, config bounds and self-update
 - `t3-integration.md`, `events-bridge.md`: showing jobs in T3 threads
 - `readoption-design.md`: re-attaching to agents after a daemon restart
 - `timecap.md`: execution-time caps for jobs
@@ -28,4 +27,4 @@ Design notes, research and spike reports. The user documentation is in `docs/`, 
 
 ## Archive
 
-`archive/` keeps documents that no longer describe the project: the earlier `fleet` architecture and plan, the rejected DBOS spike, and the first Python reference spike.
+`archive/` keeps documents that no longer describe the project: the earlier `fleet` architecture and plan, the rejected DBOS spike, the first Python reference spike, and the plugin extensibility design (the plugin runner was retired in favor of `forward --exec`).
