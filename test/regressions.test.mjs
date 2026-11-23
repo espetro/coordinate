@@ -173,7 +173,7 @@ test("B8: [slots] accepts the TOML spellings tomllib accepts", async () => {
     const forms = {
       "single-quoted key": "[slots]\n'tool:vitest:*' = 2\n",
       "double-quoted key": '[slots]\n"tool:vitest:*" = 2\n',
-      "bare key": "[slots]\ntool_vitest = 2\n",
+      "crlf line endings": "[slots]\r\n'tool:vitest:*' = 2\r\n",
       "trailing comment": "[slots]\n'tool:vitest:*' = 2 # two\n",
       "header comment": "[slots] # limits\n'tool:vitest:*' = 2\n",
       "underscored integer": "[slots]\n'tool:vitest:*' = 2_0\n",
@@ -181,13 +181,14 @@ test("B8: [slots] accepts the TOML spellings tomllib accepts", async () => {
       "dotted key": "slots.'tool:vitest:*' = 2\n",
       "double-quoted dotted key": 'slots."tool:vitest:*" = 2\n',
       "string array value": "[tools]\nsqlload = { cost = 2, match = ['sqlload', \"sql-load\"] }\n[slots]\n'tool:vitest:*' = 2\n",
+      "multiline string array": "[tools]\nsqlload = { cost = 2, match = [\n  'sqlload',\n  \"sql-load\",\n] }\n[slots]\n'tool:vitest:*' = 2\n",
     };
     const wrong = [];
     for (const [name, body] of Object.entries(forms)) {
       fs.writeFileSync(r.env.COORDINATE_CONFIG, body);
       const got = c.slotLimit("tool:vitest:/p");
       if (got !== (name === "underscored integer" ? 20 : 2)) wrong.push(`${name} -> ${got}`);
-      if (name === "string array value") {
+      if (name === "string array value" || name === "multiline string array") {
         const tc = c.toolClasses();
         if (tc["sqlload"] === undefined || tc["sqlload"].cost !== 2 || JSON.stringify(tc["sqlload"].match) !== JSON.stringify(["sqlload", "sql-load"])) {
           wrong.push(`${name} -> tools overlay ${JSON.stringify(tc["sqlload"])}`);
@@ -221,7 +222,7 @@ test("B8: an invalid config fails loudly with the file and line", async () => {
   }
 });
 
-test("S1: jobs.attempts defaults to 0 like queue.py", { todo: "src/queue.ts:38 has DEFAULT 3; test 'schema matches the Python queue.py tables' compares names only" }, async () => {
+test("S1: jobs.attempts defaults to 0 like queue.py", async () => {
   const r = rig();
   Object.assign(process.env, { COORDINATE_DB: r.db });
   try {
@@ -255,7 +256,7 @@ test("X5: a database created before the timecap columns is migrated, not rejecte
   }
 });
 
-test("X6: [defaults] max_runtime from config.toml caps jobs enqueued without --max-runtime", { todo: "src/main.ts never reads config; jobs are unbounded by default (cli.py:12-21)" }, async () => {
+test("X6: [defaults] max_runtime from config.toml caps jobs enqueued without --max-runtime", async () => {
   const r = rig();
   try {
     fs.writeFileSync(r.env.COORDINATE_CONFIG, '[defaults]\nmax_runtime = "15m"\n');
@@ -266,7 +267,7 @@ test("X6: [defaults] max_runtime from config.toml caps jobs enqueued without --m
   }
 });
 
-test("X6: a malformed --max-runtime is rejected, not stored as NULL", { todo: "parseDuration only validates the no-suffix path; 'xs' becomes NaN, stored as NULL (unbounded)" }, async () => {
+test("X6: a malformed --max-runtime is rejected, not stored as NULL", async () => {
   const r = rig();
   try {
     const out = cli(r, "enqueue", "--max-runtime", "xs", "--", "true");

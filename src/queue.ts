@@ -36,7 +36,7 @@ export const SCHEMA = [
   lease_owner TEXT,
   lease_expires_at REAL,
   waiting_on TEXT,
-  attempts INTEGER NOT NULL DEFAULT 3,
+  attempts INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
   created_at REAL NOT NULL,
   max_runtime_s REAL,

@@ -5,6 +5,7 @@
 
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
+import { ConfigError, defaultMaxRuntimeS, parseDurationSecs } from "./config.ts";
 
 function usage(): string {
   return "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n";
@@ -15,18 +16,17 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-function parseDuration(text: string): number {
-  const t = String(text).trim().toLowerCase();
-  const mult: Record<string, number> = { s: 1.0, m: 60.0, h: 3600.0 };
-  const last = t.slice(-1);
-  if (mult[last] !== undefined) {
-    return Number(t.slice(0, -1)) * mult[last];
+// Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
+// 0 means unbounded; the flag value 0 explicitly disables the machine default.
+function maxRuntimeS(flagValue: string | null): number {
+  if (flagValue === null) {
+    return defaultMaxRuntimeS();
   }
-  const v = Number(t);
-  if (Number.isNaN(v)) {
-    fail("enqueue --max-runtime: bad duration " + JSON.stringify(text) + " (use e.g. 90s, 15m, 2h)");
+  const secs = parseDurationSecs(flagValue);
+  if (secs === null) {
+    fail("enqueue --max-runtime: bad duration " + JSON.stringify(flagValue) + " (use e.g. 90s, 15m, 2h)");
   }
-  return v;
+  return secs;
 }
 
 interface Opts {
@@ -109,8 +109,8 @@ async function main(): Promise<void> {
     if (o.slots.length > 0) {
       payload.slots = o.slots;
     }
-    const maxRuntimeS = o.maxRuntime === null ? null : parseDuration(o.maxRuntime);
-    const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, null, maxRuntimeS !== null && maxRuntimeS > 0 ? maxRuntimeS : null);
+    const cap = maxRuntimeS(o.maxRuntime);
+    const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, null, cap > 0 ? cap : null);
     if (o.waitOn !== null) {
       q.waitOn(db, jid, o.waitOn);
     }
@@ -221,4 +221,9 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+main().catch((e) => {
+  if (e instanceof ConfigError) {
+    fail("coordinate: " + e.message);
+  }
+  fail(String(e instanceof Error ? e.message : e));
+});
