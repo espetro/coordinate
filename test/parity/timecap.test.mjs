@@ -258,7 +258,7 @@ test("test_status_prints_deadline_runtime_and_remaining", { todo: "X8: status pr
   }
 });
 
-test("test_config_default_max_runtime", { todo: "X6: the CLI never reads config.toml, so [defaults] max_runtime is not applied (cli.py:12-21)" }, async () => {
+test("test_config_default_max_runtime", { }, async () => {
   const r = timecapRig();
   try {
     fs.writeFileSync(r.env["COORDINATE_CONFIG"], '[defaults]\nmax_runtime = "2h"\n');
@@ -270,7 +270,7 @@ test("test_config_default_max_runtime", { todo: "X6: the CLI never reads config.
   }
 });
 
-test("test_explicit_zero_disables_the_config_default", { todo: "X6: the CLI never reads config.toml, and --max-runtime 0 is stored as NULL instead of 0 (cli.py:12-21)" }, async () => {
+test("test_explicit_zero_disables_the_config_default", { }, async () => {
   const r = timecapRig();
   try {
     fs.writeFileSync(r.env["COORDINATE_CONFIG"], '[defaults]\nmax_runtime = "2h"\n');
@@ -329,7 +329,7 @@ test("test_old_database_is_migrated_and_keeps_rows", { todo: "X5: connect() has 
   }
 });
 
-test("test_parse_duration_units", { todo: "X6: --max-runtime 0 is stored as NULL instead of 0, so the parsed value is not observable (src/main.ts:113)" }, async () => {
+test("test_parse_duration_units", { }, async () => {
   const r = timecapRig();
   try {
     const cases = [

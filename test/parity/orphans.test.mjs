@@ -33,7 +33,7 @@ async function waitFor(pred, ms, step = 50) {
   return await pred();
 }
 
-test("test_reaper_kills_surviving_process_group_before_requeue", { todo: "X3: reap() never signals the recorded pgid, so the old attempt keeps running beside the retry (queue.py:386 kill_orphans)" }, async () => {
+test("test_reaper_kills_surviving_process_group_before_requeue", { }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-parity-orph-"));
   process.env["COORDINATE_DB"] = path.join(dir, "queue.db");
   process.env["COORDINATE_MACHINE"] = "parity";

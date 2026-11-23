@@ -102,7 +102,7 @@ test("test_unmatched_tool_audited_never_blocked", { timeout: DAEMON_T }, async (
   }
 });
 
-test("test_weighted_cost_excludes_cheaper_sibling", { todo: "B8: the [tools] overlay is dropped, so the custom sqlload class is never matched and never audited (queue.py:75-82)", timeout: DAEMON_T }, async () => {
+test("test_weighted_cost_excludes_cheaper_sibling", { timeout: DAEMON_T }, async () => {
   const { r, repo } = shimRig();
   const log = path.join(r.dir, "spans");
   try {

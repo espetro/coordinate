@@ -36,7 +36,7 @@ function enqueue(r, log, tag, slots = []) {
   assert.equal(out.status, 0, out.stderr);
 }
 
-test("test_slot_key_serializes_same_tool_parallel_to_other", { todo: "A1: claim() never compares an explicit --slot key against its [slots] limit (queue.py:317)", timeout: DAEMON_T }, async () => {
+test("test_slot_key_serializes_same_tool_parallel_to_other", { timeout: DAEMON_T }, async () => {
   const r = slotRig();
   const log = path.join(r.dir, "spans");
   try {
@@ -55,7 +55,7 @@ test("test_slot_key_serializes_same_tool_parallel_to_other", { todo: "A1: claim(
   }
 });
 
-test("test_slot_limit_from_config_allows_two", { todo: "A1: claim() never compares an explicit --slot key against its [slots] limit (queue.py:317)", timeout: DAEMON_T }, async () => {
+test("test_slot_limit_from_config_allows_two", { timeout: DAEMON_T }, async () => {
   const r = slotRig();
   const log = path.join(r.dir, "spans");
   try {
@@ -71,7 +71,7 @@ test("test_slot_limit_from_config_allows_two", { todo: "A1: claim() never compar
   }
 });
 
-test("test_unknown_slot_key_defaults_to_1", { todo: "A1: claim() never compares an explicit --slot key against its [slots] limit (queue.py:317)", timeout: DAEMON_T }, async () => {
+test("test_unknown_slot_key_defaults_to_1", { timeout: DAEMON_T }, async () => {
   const r = slotRig();
   const log = path.join(r.dir, "spans");
   try {
