@@ -399,7 +399,9 @@ def finish(c, jid: int, owner: str, status: str) -> str | None:
 
 
 def reap(c) -> list[int]:
-    """Expired lease: requeue if attempts < max_attempts else dead. Returns affected ids."""
+    """Expired lease: requeue if attempts < max_attempts else dead. Returns affected ids.
+
+    A job whose deadline has passed is never requeued: it goes straight to timed_out."""
     c.execute("BEGIN IMMEDIATE")
     for jid, in c.execute("SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?",
                           (time.time(),)).fetchall():
@@ -408,9 +410,13 @@ def reap(c) -> list[int]:
     for _, pgid, pidfile in c.execute("SELECT id, pgid, pidfile FROM jobs "
                                       "WHERE status='running' AND lease_expires_at<?", (time.time(),)).fetchall():
         kill_orphans(pgid, pidfile)
+    c.execute("UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', "
+              "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL "
+              "WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=?",
+              (time.time(), time.time()))
     rows = c.execute(
         "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, "
-        "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL "
+        "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL "
         "WHERE status='running' AND lease_expires_at<? RETURNING id", (time.time(),)).fetchall()
     c.execute("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')")
     c.execute("COMMIT")

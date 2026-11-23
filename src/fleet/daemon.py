@@ -180,9 +180,10 @@ def _acp_cancel(proc: subprocess.Popen, payload: dict) -> bool:
         return False
 
 
-def _terminate_tree(pgid: int | None, pidfile: str | None, proc: subprocess.Popen | None) -> None:
-    """Grace period, then SIGTERM the process group, then SIGKILL after 10s."""
-    grace = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
+def _terminate_tree(pgid: int | None, pidfile: str | None, proc: subprocess.Popen | None,
+                    grace_s: float = 0.0) -> None:
+    """SIGTERM the process group, then SIGKILL after 10s. The grace period (before the TERM)
+    belongs to the ACP cancel step, so a cmd job is terminated without waiting."""
     term_wait = float(os.environ.get("FLEET_TIMECAP_TERM_S", "10"))
     pids = [pgid]
     if pidfile:
@@ -192,7 +193,8 @@ def _terminate_tree(pgid: int | None, pidfile: str | None, proc: subprocess.Pope
         except (OSError, ValueError):
             pass
     pids = [p for p in pids if p and p > 1]
-    time.sleep(grace)
+    if grace_s > 0:
+        time.sleep(grace_s)
     for p in pids:
         try:
             os.killpg(p, signal.SIGTERM)
@@ -221,12 +223,18 @@ def _expire(c, jid: int, kind: str, payload: dict, pgid: int | None, pidfile: st
     """Timecap expiry: cancel the ACP turn, free the slot, then TERM/KILL the process group.
 
     The terminal transition happens now so the slot is freed and the job is never retried;
-    the kill sequence runs in the background so the daemon keeps serving other jobs."""
+    the kill sequence runs in the background so the daemon keeps serving other jobs.
+
+    ACP jobs get the grace period (FLEET_TIMECAP_GRACE_S) to stop the turn on their own;
+    cmd jobs skip the cancel step and are terminated immediately."""
+    grace = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
     if kind == "acp" and proc is not None:
         _acp_cancel(proc, payload)
+    else:
+        grace = 0.0
     cap = c.execute("SELECT max_runtime_s FROM jobs WHERE id=?", (jid,)).fetchone()[0]
     q.finalize_timed_out(c, jid, outcome=f"max runtime exceeded (cap {cap}s)")
-    threading.Thread(target=_terminate_tree, args=(pgid, pidfile, proc), daemon=True).start()
+    threading.Thread(target=_terminate_tree, args=(pgid, pidfile, proc, grace), daemon=True).start()
 
 
 def run(stop=lambda: False) -> None:
@@ -238,6 +246,12 @@ def run(stop=lambda: False) -> None:
         while not stop():
             busy = False
             now = time.time()
+            # expiry first: a job past its deadline must be timed_out, never recorded as a
+            # plain failed exit by the poll below (the TERM we send is an exit != 0).
+            for jid, kind, raw, pgid, pidfile in q.expired_running(c):
+                proc = running.pop(jid, None)
+                _expire(c, jid, kind, json.loads(raw), pgid, pidfile, proc, owner)
+                busy = True
             for jid, proc in list(running.items()):
                 rc = proc.poll()
                 if rc is not None:
@@ -248,10 +262,6 @@ def run(stop=lambda: False) -> None:
                         # D7 wake: a freed tool slot releases jobs parked on that key
                         for wid in q.release(c, event):
                             busy = True
-            for jid, kind, raw, pgid, pidfile in q.expired_running(c):
-                proc = running.pop(jid, None)
-                _expire(c, jid, kind, json.loads(raw), pgid, pidfile, proc, owner)
-                busy = True
             if now - last_hb >= q.LEASE_S / 3:
                 for jid, proc in list(running.items()):
                     if not q.heartbeat(c, jid, owner):
