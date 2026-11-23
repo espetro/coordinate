@@ -47,11 +47,11 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 
 ## ACP agent sessions
 
-`uv run coordinate` (the Python CLI, `src/coordinate/cli.py`) additionally enqueues `--acp AGENT --cwd DIR --prompt TEXT` jobs: the daemon hosts an ACP session for that agent with resume support. The compiled binary is cmd-only; use the Python CLI for agent sessions until the ACP lane lands in TS.
+The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally enqueued `--acp AGENT --cwd DIR --prompt TEXT` jobs (daemon-hosted ACP session with resume support). The TS binary is cmd-only; the ACP lane TS port is pending, so agent-session enqueue is currently unavailable.
 
 ## Plugins
 
-`~/.config/coordinate/plugins/` (XDG config) holds out-of-process plugin dirs; `coordinate plugins` lists/runs them (Python CLI). Plugins are for policy, notifications and integrations — see `.agents/docs/extensibility.md` before writing one.
+`~/.config/coordinate/plugins/` (XDG config) holds out-of-process plugin dirs; `coordinate plugins` (Python CLI on `legacy/python`) is retired pending the TS port of the plugins runner. Plugins are for policy, notifications and integrations — see `.agents/docs/extensibility.md` before writing one.
 
 ## Verified platforms
 

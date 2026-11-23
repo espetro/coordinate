@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # TypeScript port spike: coordinate on scriptc
 
 Date: 2026-11-23. Tests the TypeScript decision in `research/language-choice.md`: port the queue core, the CLI and the daemon claim loop to the scriptc-compilable subset, build for Linux, and run the existing bench through `--cli` against the Python implementation on the same host.

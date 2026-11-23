@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # Events bridge (bridge a): coordinate jobs visible in T3 threads
 
 Date: 2026-11-23. Branch `feat/events-bridge`. Implements bridge (a) from

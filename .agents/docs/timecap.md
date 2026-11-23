@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # Timecap: execution-time caps for jobs
 
 Date: 2026-11-23. Branch `feat/job-timecap` in `~/.worktrees/fleet-spikes/timecap`, based on `spike/dbos`. Scope: the SQLite backend (`src/fleet/queue.py`, `src/fleet/daemon.py`, `src/fleet/cli.py`); the dbos backend is untouched. Evidence tags: M = measured by us, C = claimed or specified by the task, R = read in the project's own docs.

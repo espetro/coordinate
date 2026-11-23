@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # T3 integration design
 
 Date: 2026-11-23. Assessment and design for T3 thread support plus the pluggability seams it forces. Evidence tags: M = verified from code in this repo, C = speculation or design intent. Code references are on branch `docs/t3-integration` at the time of writing.

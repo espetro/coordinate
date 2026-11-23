@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # Extensibility in v0.1.0: plugins, config, self-update
 
 Date: 2026-11-23 (`date`: Mon Nov 23 17:41 UTC 2026). Design for how users of the v0.1.0 binary release extend and improve coordinate without touching upstream code or opening PRs. This is the applied form of `.agents/docs/research/self-improving-stack.md`: the survey's conclusions, converted into a product surface. Inputs: `research/self-improving-stack.md` and `t3-integration.md`; code state per this worktree's `src/coordinate/`.

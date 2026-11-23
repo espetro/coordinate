@@ -1,3 +1,4 @@
+> Note (2026-11-23): main is now TypeScript + scriptc only. Python paths and `uv`/`pytest` commands below refer to the retired Python implementation, preserved on the `legacy/python` branch.
 # Restate awakeable suspension spike
 
 Close-out of the awakeable park/wake variant. Measured 2026-11-23 on the shared VPS (6 cores, 11GB RAM, load 1.4 to 2.4 during the runs, host state recorded in both result files). Everything below is M unless marked C.

@@ -4,7 +4,7 @@
 
 coordinate is a tool and orchestration layer, not a runtime framework like Rivet or Temporal: it is biased to agent orchestration, generic and pluggable at its module seams, and may also be offered as a library if that proves useful.
 
-Status as of 2026-11-23. Prototype slice P1 below is done: the package, CLI (`coordinate`, daemon `coordinated`) and env (`COORDINATE_*`, with `FLEET_*` read as a fallback) are renamed and state lives under XDG paths (`coordinate/paths.py`); legacy `~/.fleet` files are used with a notice until `coordinate migrate` copies them. Statements marked (M) are measured, (D) are designed but not built, everything else is built and tested.
+Status as of 2026-11-23. The stack is TypeScript plus scriptc only: the product is the scriptc-built binaries in `ts/` (built with `ts/build-bin.sh`). The original Python reference implementation lives on the `legacy/python` branch; main no longer carries Python, `pyproject.toml` or `uv`. Gaps from that removal, pending a TS port: the ACP agent-session enqueue lane (`legacy/python` `src/coordinate/cli.py`), the plugins runner (`plugins.py`), `coordinate service install` (`service.py`) and the `coordinate migrate` verb. Statements marked (M) are measured, (D) are designed but not built, everything else is built and tested.
 
 Reference material lives in `.agents/docs/`: requirements and assessments in `orchestrator-framing.md`, the scoring rubric in `tool-search-rubric.md`, candidate tools in `candidates-survey.md`, spike reports (`*-spike.md`, `bench-v2.md`, `bench-ci.md`, `timecap.md`), designs (`readoption-design.md`, `toolcaps-design.md`, `fallback-design.md`) and research in `research/`. The previous deployment architecture of `fleet` is kept as `fleet-architecture-2026-11-20.md`.
 
@@ -107,7 +107,7 @@ At spawn the daemon injects `COORDINATE_JOB_ID`, `COORDINATE_DEADLINE_AT`, `COOR
 | Daemon idle RSS | 18.5MB |
 | 1,000 parked sessions | +0.2MB RSS, 0.3 to 4.4KB each on disk (two scenario variants, to reconcile) |
 | Wake, event to agent running after `session/load` | p50 218ms, p99 392ms |
-| Enqueue through the CLI, idle host | 97ms median (Python startup dominates) |
+| Enqueue through the CLI, idle host | 97ms median (measured with the retired Python CLI; its startup dominated, see `legacy/python`) |
 | Throughput, 60 trivial jobs | 9.7 jobs/s |
 | Time cap precision | cap + grace + under 0.3s |
 
@@ -115,11 +115,11 @@ Alternatives measured on the same host: Restate 532MB idle, Rivet 128MB idle and
 
 ## Bench and CI
 
-`bench/bench.py` runs scenarios against our backend or any adapter (`--cli "<shim>" --backend custom`). `bench/compare.py` gates a run against `bench/baseline-linux.json` using two bands: 2 x the stdev from `bench/noise-linux.json` and a per-metric percent in `bench/thresholds.toml`; a missing metric fails. `.github/workflows/bench.yml` runs the quick set on every PR once the repo is on GitHub.
+The Python bench harness (`bench/bench.py`, `bench/compare.py`) is retired with the Python stack and lives on `legacy/python`; `bench/results-*.json` and `bench/thresholds.toml` are kept as the cited historical measurements. Benchmarks are now run from the `legacy/python` harness against the TS binaries when needed.
 
 ## Prototype plan
 
-- P1, runnable and installable (done): rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, XDG paths with legacy `~/.fleet` notice and `coordinate migrate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install|uninstall|status` (systemd user unit, launchd agent), release workflow attaching the wheel and sdist to a GitHub Release, install with `uv tool install`.
+- P1, runnable and installable (done): rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, XDG paths with legacy `~/.fleet` notice and `coordinate migrate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install|uninstall|status` (systemd user unit, launchd agent), release workflow attaching the binaries to a GitHub Release, install with `install.sh`.
 - P2, visibility and wakeups: a `mailbox(job_id, kind, payload, dedupe_key, deliver_at)` table borrowed from the actor model (`research/actor-model.md`): each job has an addressable mailbox and undeliverable messages and exhausted jobs land in a dead letter mailbox; signals sent before a job parks are kept instead of lost (today `release()` only updates rows already waiting), wakes carry data, waits get a timeout and any-of, and alarms are messages with a future `deliver_at`. Then the events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
 - P3, re-adoption: detached ACP host, single-instance daemon lock, safe kills by pidfd and start time, `orchestrator-kill` with 0 duplicate turns.
 - P4, multi-device: hub allowances, presence levels, Workspace interface over T3.
