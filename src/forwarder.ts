@@ -27,7 +27,13 @@ export function loadCursor(p: string): number {
 }
 
 export function saveCursor(p: string, id: number): void {
-  fs.mkdirSync(path.dirname(path.resolve(p)), { recursive: true });
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(p)), { recursive: true });
+  } catch (e) {
+    if ((e as { code?: string }).code !== "EEXIST") {
+      throw e;
+    }
+  }
   const tmp = p + ".tmp";
   fs.writeFileSync(tmp, String(id));
   fs.renameSync(tmp, p);

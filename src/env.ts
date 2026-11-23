@@ -37,5 +37,11 @@ export function configPath(): string {
 
 export function ensureParentDir(p: string): void {
   const d = path.dirname(path.resolve(p));
-  fs.mkdirSync(d, { recursive: true });
+  try {
+    fs.mkdirSync(d, { recursive: true });
+  } catch (e) {
+    if ((e as { code?: string }).code !== "EEXIST") {
+      throw e;
+    }
+  }
 }
