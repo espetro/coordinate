@@ -345,12 +345,26 @@ export function run(): void {
   let lastHb = 0.0;
   let lastReap = 0.0;
   let stopping = false;
-  process.on("SIGTERM", () => {
+  // Stop contract (ARCHITECTURE.md, durability): agents keep working when the orchestrator
+  // stops. SIGTERM/SIGINT stop the claim loop and exit cleanly; running children are detached
+  // (handles unref'd) and left alive. The next daemon start reaps their expired leases (X3).
+  const stop = (): void => {
+    if (stopping) {
+      return;
+    }
     stopping = true;
-  });
-  process.on("SIGINT", () => {
-    stopping = true;
-  });
+    for (const r of running) {
+      r.proc.unref();
+      // Detached children keep their own process group; no kill: the job outlives the daemon.
+    }
+    try {
+      db.close();
+    } catch {
+      // already closed by a concurrent loop turn
+    }
+  };
+  process.on("SIGTERM", stop);
+  process.on("SIGINT", stop);
 
   const exitProc = (r: Running, code: number | null): void => {
     const event = q.finish(db, r.jid, owner, code === 0 ? "done" : "failed");
@@ -361,10 +375,6 @@ export function run(): void {
 
   const loop = (): void => {
     if (stopping) {
-      for (const r of running) {
-        killGroup(r.proc);
-      }
-      db.close();
       return;
     }
     let busy = false;

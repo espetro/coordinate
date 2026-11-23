@@ -95,7 +95,7 @@ The `jobs` row carries everything needed after a kill -9: `status`, `priority`, 
 These results come from the Python version (`legacy/python`) and have not been re-measured on the TypeScript binary yet.
 
 - Daemon kill -9 (M, `state-loss`): no job is lost and no lease leaks, parked jobs keep `waiting_on`, and the ACP session id survives. Every running job runs again, and a session that was mid-turn repeats one turn (at-least-once). The restarted daemon still enforces the time cap (M, 4.3s after the kill with a 3s cap).
-- Daemon stop (SIGTERM): agents survive, but a restarted daemon cannot re-adopt them yet. (D) `readoption-design.md` turns the ACP client into a detached host with a journal and a lock file, and the daemon re-adopts before it reaps or claims. The target is zero duplicate turns when only the daemon died.
+- Daemon stop (SIGTERM or SIGINT): the daemon stops claiming, closes the database and exits cleanly; running agents keep working (their child handles are detached and unref'd, so exit is not blocked). A restarted daemon reaps their expired leases and kills the surviving process groups before requeueing, so no job runs twice. (D) The restarted daemon cannot re-adopt the sessions yet. `readoption-design.md` turns the ACP client into a detached host with a journal and a lock file, and the daemon re-adopts before it reaps or claims. The target is zero duplicate turns when only the daemon died.
 - Reboot: no process survives. Sessions resume through ACP `session/load` with one continuation turn.
 
 ## Agent contract

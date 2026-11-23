@@ -372,6 +372,8 @@ test("X4: SIGTERM stops the daemon even while a job is running", { todo: "stoppi
     await new Promise((res) => setTimeout(res, 500)); // let the loop settle into its idle pump
     d.child.kill("SIGTERM");
     assert.ok(await waitFor(() => d.exited, 6000), "daemon is still alive 6s after SIGTERM (Python exited immediately)");
+    const sleeper = rows(r, "SELECT pgid FROM jobs WHERE id=1")[0]?.pgid;
+    assert.ok(sleeper && groupAlive(Number(sleeper)), "the running job must survive the daemon stop (agents keep working)");
   } finally {
     await cleanup(r);
   }
