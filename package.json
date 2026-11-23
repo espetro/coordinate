@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:bin": "sh scripts/build-bin.sh",
+    "docs:build": "pnpm -C docs exec docmd build",
+    "docs:validate": "pnpm -C docs exec docmd validate",
     "test": "sh scripts/build-sqlite-shared.sh && node --test"
   },
   "dependencies": {
@@ -14,6 +16,7 @@
     "@cutils/sqlite": "0.8.0"
   },
   "devDependencies": {
+    "@docmd/core": "0.10.1",
     "@scriptc/runtime-darwin-arm64": "0.4.16",
     "@scriptc/runtime-darwin-x64": "0.4.16",
     "@scriptc/runtime-win32-x64-msvc": "0.4.16",

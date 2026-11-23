@@ -27,7 +27,7 @@ pnpm build:bin     # scriptc binaries into dist/ (Linux x64 on Linux, macOS on m
 
 ## Docs site
 
-`docs/` is plain Markdown. Build it with `cd docs && pnpm dlx @docmd/core@0.10.1 build`, which writes `site/` with the pages, `llms.txt` and `llms-full.txt`. The `docs` workflow builds and checks links on every change, and deploys to Cloudflare Pages once the repo has the `CLOUDFLARE_PAGES_PROJECT` variable and the two Cloudflare secrets set.
+`docs/` is plain Markdown, and docmd is a pinned dev dependency. `pnpm docs:build` writes `site/` with the pages, `llms.txt` and `llms-full.txt`, and `pnpm docs:validate` checks the internal links. The `docs` workflow builds and checks links on every change, and deploys to Cloudflare Pages once the repo has the `CLOUDFLARE_PAGES_PROJECT` variable and the two Cloudflare secrets set.
 
 ## Conventions
 

@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  DOCMD_VERSION: "0.10.1"
-
 jobs:
   build:
     name: build and validate
@@ -24,12 +21,12 @@ jobs:
           node-version: 24
       - name: Install pnpm
         run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Build the site
-        working-directory: docs
-        run: pnpm dlx @docmd/core@${{ env.DOCMD_VERSION }} build
+        run: pnpm docs:build
       - name: Check internal links
-        working-directory: docs
-        run: pnpm dlx @docmd/core@${{ env.DOCMD_VERSION }} validate
+        run: pnpm docs:validate
       - uses: actions/upload-artifact@v4
         with:
           name: site

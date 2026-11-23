@@ -1,5 +1,7 @@
-# pnpm 12 setting: package -> allow its install/build scripts. koffi ships a
-# prebuilt check; @cutils/sqlite is built by hand (its `build` script is not a
-# lifecycle hook pnpm runs).
+# pnpm 12 setting: which dependencies may run their install scripts.
+# koffi loads the SQLite shim in the Node test path. esbuild is a docmd build
+# dependency. docmd's optional Rust engine stays off, it falls back to its JS engine.
 allowBuilds:
   koffi: true
+  esbuild: true
+  "@docmd/engine-rust": false
