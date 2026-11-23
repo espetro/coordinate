@@ -14,6 +14,8 @@ except ImportError:  # pragma: no cover
     tomllib = None
 
 LEASE_S = float(os.environ.get("FLEET_LEASE_S", "30"))
+TIMECAP_GRACE_S = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
+TIMECAP_TERM_S = 10.0  # SIGTERM to SIGKILL gap
 MACHINE = os.environ.get("FLEET_MACHINE", "laptop")
 MACHINE_CAPS = {"laptop": 3, "vps": 6}
 
@@ -117,13 +119,28 @@ def db_path() -> str:
     return os.environ.get("FLEET_DB") or os.path.expanduser("~/.fleet/queue.db")
 
 
+def parse_duration(text: str) -> float:
+    """'15m' style suffix (s/m/h, plain number = seconds) to seconds. 0 = no cap."""
+    t = str(text).strip().lower()
+    mult = {"s": 1.0, "m": 60.0, "h": 3600.0}
+    if t and t[-1] in mult:
+        return float(t[:-1]) * mult[t[-1]]
+    return float(t)
+
+
+def default_max_runtime() -> float:
+    """[defaults] max_runtime from ~/.fleet/config.toml, so no job is unbounded unless capped at 0."""
+    raw = (_config().get("defaults") or {}).get("max_runtime")
+    return parse_duration(raw) if raw is not None else 0.0
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs(
   id INTEGER PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT 'cmd',
   payload TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'queued'
-    CHECK(status IN ('queued','running','waiting','done','failed','dead')),
+    CHECK(status IN ('queued','running','waiting','done','failed','dead','timed_out')),
   priority INTEGER NOT NULL DEFAULT 0,
   run_at REAL NOT NULL,
   lease_owner TEXT,
@@ -132,6 +149,11 @@ CREATE TABLE IF NOT EXISTS jobs(
   attempts INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
   created_at REAL NOT NULL,
+  max_runtime_s REAL,
+  runtime_used_s REAL NOT NULL DEFAULT 0,
+  deadline_at REAL,
+  claim_at REAL,
+  outcome TEXT,
   pgid INTEGER,
   pidfile TEXT
 );
@@ -159,14 +181,44 @@ def connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     c = sqlite3.connect(path, timeout=5, isolation_level=None)
     c.execute("PRAGMA busy_timeout=5000")
+    c.execute("PRAGMA foreign_keys=OFF")
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA synchronous=NORMAL")
+    _migrate_jobs(c)
     c.executescript(SCHEMA)
     have = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
-    for col, typ in (("pgid", "INTEGER"), ("pidfile", "TEXT")):  # migrate pre-orphan-tracking DBs
+    for col, typ in (("pgid", "INTEGER"), ("pidfile", "TEXT"), ("max_runtime_s", "REAL"),
+                     ("runtime_used_s", "REAL DEFAULT 0"), ("deadline_at", "REAL"),
+                     ("claim_at", "REAL"), ("outcome", "TEXT")):  # migrate older DBs
         if col not in have:
             c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
     return c
+
+
+def _migrate_jobs(c) -> None:
+    """Rebuild the jobs table when its CHECK constraint predates 'timed_out'.
+
+    SQLite cannot ALTER a CHECK constraint, so the table is copied into a fresh one with the
+    current schema and swapped in. Every row is preserved."""
+    row = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'").fetchone()
+    if not row or "timed_out" in row[0]:
+        return
+    new_ddl = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS jobs("):]
+    new_ddl = new_ddl[:new_ddl.index(");") + 2].replace("IF NOT EXISTS jobs(", "jobs_new(")
+    old_cols = [r[1] for r in c.execute("PRAGMA table_info(jobs)")]
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        c.execute(new_ddl)
+        new_cols = [r[1] for r in c.execute("PRAGMA table_info(jobs_new)")]
+        shared = [col for col in new_cols if col in old_cols]
+        c.execute(f"INSERT INTO jobs_new({','.join(shared)}) SELECT {','.join(shared)} FROM jobs")
+        c.execute("DROP TABLE jobs")
+        c.execute("ALTER TABLE jobs_new RENAME TO jobs")
+        c.execute("COMMIT")
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
+    c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, priority DESC, run_at, id)")
 
 
 def slot_keys(payload: dict) -> list[str]:
@@ -178,11 +230,13 @@ def slot_keys(payload: dict) -> list[str]:
     return keys
 
 
-def enqueue(c, payload: dict, kind="cmd", priority=0, max_attempts=3, run_at=None) -> int:
+def enqueue(c, payload: dict, kind="cmd", priority=0, max_attempts=3, run_at=None,
+            max_runtime_s: float | None = None) -> int:
     now = time.time()
     cur = c.execute(
-        "INSERT INTO jobs(kind,payload,priority,run_at,max_attempts,created_at) VALUES(?,?,?,?,?,?)",
-        (kind, json.dumps(payload), priority, run_at or now, max_attempts, now))
+        "INSERT INTO jobs(kind,payload,priority,run_at,max_attempts,created_at,max_runtime_s) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (kind, json.dumps(payload), priority, run_at or now, max_attempts, now, max_runtime_s))
     return cur.lastrowid
 
 
@@ -215,9 +269,18 @@ def claim(c, owner: str):
                    and q_used_cost(c, k) + 1 > slot_limit(k) for k in keys):
                 continue
             exp = now + LEASE_S
+            remaining = None
+            row = c.execute("SELECT max_runtime_s, runtime_used_s FROM jobs WHERE id=?", (jid,)).fetchone()
+            if row[0] is not None and row[0] > 0:
+                remaining = row[0] - (row[1] or 0.0)
+                if remaining <= 0:  # budget exhausted while parked/queued: never claim again
+                    c.execute("UPDATE jobs SET status='timed_out', outcome='budget exhausted before claim', "
+                              "lease_owner=NULL, lease_expires_at=NULL WHERE id=?", (jid,))
+                    continue
             c.execute(
                 "UPDATE jobs SET status='running', attempts=attempts+1, lease_owner=?, "
-                "lease_expires_at=? WHERE id=?", (owner, exp, jid))
+                "lease_expires_at=?, claim_at=?, deadline_at=? WHERE id=?",
+                (owner, exp, now, None if remaining is None else now + remaining, jid))
             c.executemany("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)",
                           [(k, exp, jid) for k in keys])
             c.execute("COMMIT")
@@ -294,6 +357,14 @@ def kill_orphans(pgid: int | None, pidfile: str | None) -> None:
                 pass
 
 
+def _charge_runtime(c, jid: int, where: str = "status='running'", args: tuple = ()) -> None:
+    """Charge elapsed running time to the budget. Parked/waiting time never counts: the clock
+    only runs between claim_at and now, and claim_at is cleared when the job stops running."""
+    now = time.time()
+    c.execute("UPDATE jobs SET runtime_used_s=runtime_used_s+? - COALESCE(claim_at, ?) "
+              f"WHERE id=? AND {where} AND claim_at IS NOT NULL", (now, now, jid, *args))
+
+
 def heartbeat(c, jid: int, owner: str) -> bool:
     """Extend lease and slots. False means the lease was lost (cancelled, reaped, parked)."""
     exp = time.time() + LEASE_S
@@ -308,10 +379,14 @@ def heartbeat(c, jid: int, owner: str) -> bool:
 
 def finish(c, jid: int, owner: str, status: str) -> str | None:
     """Mark a running job terminal and drop its leases. Returns the tool-slot event key
-    whose release should wake parked jobs (the first freed tool: key), or None."""
+    whose release should wake parked jobs (the first freed tool: key), or None.
+
+    Running time used is charged to the budget here."""
     c.execute("BEGIN IMMEDIATE")
-    c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL "
-              "WHERE id=? AND status='running' AND lease_owner=?", (status, jid, owner))
+    _charge_runtime(c, jid, "status='running'", ())
+    c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, "
+              "claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?",
+              (status, jid, owner))
     event = None
     for (key,) in c.execute(
             "SELECT key FROM concurrency_slots WHERE job_id=? AND key LIKE 'tool:%'", (jid,)).fetchall():
@@ -326,6 +401,9 @@ def finish(c, jid: int, owner: str, status: str) -> str | None:
 def reap(c) -> list[int]:
     """Expired lease: requeue if attempts < max_attempts else dead. Returns affected ids."""
     c.execute("BEGIN IMMEDIATE")
+    for jid, in c.execute("SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?",
+                          (time.time(),)).fetchall():
+        _charge_runtime(c, jid, "status='running'", ())
     # Kill survivors before the requeue commits, so a retry never runs beside the old attempt.
     for _, pgid, pidfile in c.execute("SELECT id, pgid, pidfile FROM jobs "
                                       "WHERE status='running' AND lease_expires_at<?", (time.time(),)).fetchall():
@@ -345,9 +423,13 @@ def release_tool_lease(c, jid: int) -> None:
 
 
 def wait_on(c, jid: int, event: str) -> bool:
-    """Park a queued or running job on an event. Frees its slots; a running worker loses its lease."""
+    """Park a queued or running job on an event. Frees its slots; a running worker loses its lease.
+
+    Running time used so far is charged to the budget before parking."""
     c.execute("BEGIN IMMEDIATE")
-    cur = c.execute("UPDATE jobs SET status='waiting', waiting_on=?, lease_owner=NULL, lease_expires_at=NULL "
+    _charge_runtime(c, jid, "status='running'", ())
+    cur = c.execute("UPDATE jobs SET status='waiting', waiting_on=?, lease_owner=NULL, "
+                    "lease_expires_at=NULL, claim_at=NULL, deadline_at=NULL "
                     "WHERE id=? AND status IN ('queued','running')", (event, jid))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=?", (jid,))
     c.execute("COMMIT")
@@ -360,10 +442,36 @@ def release(c, event: str) -> list[int]:
     return [r[0] for r in rows]
 
 
+def finalize_timed_out(c, jid: int, outcome="max runtime exceeded") -> bool:
+    """Terminal timecap transition: status timed_out (never retried), budget charged, slot freed.
+
+    Does not require the lease: a restarted daemon enforces deadlines recorded by its predecessor.
+    """
+    c.execute("BEGIN IMMEDIATE")
+    _charge_runtime(c, jid, "status='running'", ())
+    cur = c.execute("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, deadline_at=NULL, "
+                    "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL "
+                    "WHERE id=? AND status='running'", (outcome, jid))
+    c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "
+              "(SELECT 1 FROM jobs WHERE id=? AND status<>'running')", (jid, jid))
+    c.execute("COMMIT")
+    return bool(cur.rowcount)
+
+
+def expired_running(c) -> list[tuple]:
+    """Running jobs past their deadline: (id, kind, payload, pgid, pidfile). Deadline lives in
+    SQLite, so any daemon (including one that just restarted) sees and enforces it."""
+    return c.execute("SELECT id, kind, payload, pgid, pidfile FROM jobs "
+                     "WHERE status='running' AND deadline_at IS NOT NULL AND deadline_at<=?",
+                     (time.time(),)).fetchall()
+
+
 def cancel(c, jid: int) -> bool:
     """Cancel a non-terminal job (recorded as failed). A running worker notices at heartbeat."""
     c.execute("BEGIN IMMEDIATE")
-    cur = c.execute("UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL "
+    _charge_runtime(c, jid, "status='running'", ())
+    cur = c.execute("UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL, "
+                    "claim_at=NULL "
                     "WHERE id=? AND status IN ('queued','running','waiting')", (jid,))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND cost>0", (jid,))
     c.execute("COMMIT")

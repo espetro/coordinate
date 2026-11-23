@@ -3,10 +3,34 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from fleet import queue as q
 
 DBOS = os.environ.get("FLEET_BACKEND") == "dbos"
+
+
+def _max_runtime(spec: str | None) -> float:
+    """Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
+
+    0 means unbounded; the flag value 0 explicitly disables the machine default."""
+    if spec is None:
+        return q.default_max_runtime()
+    try:
+        return q.parse_duration(spec)
+    except ValueError:
+        sys.exit(f"enqueue --max-runtime: bad duration {spec!r} (use e.g. 90s, 15m, 2h)")
+
+
+def _job_view(row: dict) -> dict:
+    """Add the derived timecap fields an agent needs: remaining budget and deadline delta."""
+    cap = row.get("max_runtime_s")
+    used = row.get("runtime_used_s") or 0.0
+    out = dict(row)
+    out["runtime_remaining_s"] = None if not cap else round(max(0.0, cap - used), 3)
+    dl = row.get("deadline_at")
+    out["deadline_in_s"] = None if not dl else round(dl - time.time(), 3)
+    return out
 
 
 def build() -> argparse.ArgumentParser:
@@ -17,6 +41,9 @@ def build() -> argparse.ArgumentParser:
     e.add_argument("--repo", default=None, help="per-repo cap key (default: cwd)")
     e.add_argument("--priority", type=int, default=0)
     e.add_argument("--max-attempts", type=int, default=3)
+    e.add_argument("--max-runtime", default=None, metavar="DUR",
+                   help="execution-time cap for the job, e.g. 15m, 2h, 90s (0 = unbounded; "
+                        "default comes from [defaults] max_runtime in ~/.fleet/config.toml)")
     e.add_argument("--wait-on", default=None, help="park immediately on this event id")
     e.add_argument("--acp", metavar="AGENT", default=None, help="enqueue an acp job for this agent (needs --cwd, --prompt)")
     e.add_argument("--prompt", default=None, help="acp prompt text")
@@ -28,6 +55,8 @@ def build() -> argparse.ArgumentParser:
     e.add_argument("cmd", nargs=argparse.REMAINDER)
     st = s.add_parser("status", help="list jobs, or one job as JSON")
     st.add_argument("id", nargs="?")
+    st.add_argument("--self", action="store_true",
+                    help="status of the job named by $FLEET_JOB_ID (read-only)")
     w = s.add_parser("wait-on", help="park a job on an event id")
     w.add_argument("id", type=int)
     w.add_argument("event")
@@ -114,18 +143,25 @@ def main(argv=None) -> int:
             payload["repo"] = a.repo
         if a.slot:
             payload["slots"] = a.slot
-        jid = q.enqueue(c, payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts)
+        jid = q.enqueue(c, payload, kind=kind, priority=a.priority, max_attempts=a.max_attempts,
+                        max_runtime_s=_max_runtime(a.max_runtime))
         if a.wait_on:
             q.wait_on(c, jid, a.wait_on)
         print(jid)
     elif a.verb == "status":
-        cols = "id,kind,status,priority,attempts,max_attempts,waiting_on,lease_owner,lease_expires_at,pgid,payload"
-        if a.id is not None:
-            cur = c.execute(f"SELECT {cols} FROM jobs WHERE id=?", (a.id,))
+        cols = ("id,kind,status,priority,attempts,max_attempts,waiting_on,lease_owner,lease_expires_at,"
+                "pgid,payload,max_runtime_s,runtime_used_s,deadline_at,outcome")
+        jid = a.id
+        if a.self:
+            jid = os.environ.get("FLEET_JOB_ID")
+            if not jid:
+                sys.exit("status --self: FLEET_JOB_ID is not set")
+        if jid is not None:
+            cur = c.execute(f"SELECT {cols} FROM jobs WHERE id=?", (jid,))
             row = cur.fetchone()
             if not row:
-                sys.exit(f"no job {a.id}")
-            print(json.dumps(dict(zip([d[0] for d in cur.description], row)), indent=2))
+                sys.exit(f"no job {jid}")
+            print(json.dumps(_job_view(dict(zip([d[0] for d in cur.description], row))), indent=2))
         else:
             for row in c.execute("SELECT id,status,attempts,max_attempts,waiting_on,payload FROM jobs ORDER BY id"):
                 print("\t".join("" if v is None else str(v) for v in row))
