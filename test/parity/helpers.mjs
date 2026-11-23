@@ -176,21 +176,29 @@ export function peakOverlap(logPath, tags = null) {
 }
 
 // Sample live running rows until `total` jobs are done; returns [peak, done].
+// Keeps one connection open: the Python suite opens a fresh connection per query, but the
+// numbers are the same and a long drain must not leak handles.
 export function drain(r, total, timeout = 90000) {
   const end = Date.now() + timeout;
   let peak = 0;
   let done = 0;
-  while (Date.now() < end && done < total) {
-    const running = Number(
-      rows(r, "SELECT COUNT(*) AS n FROM jobs WHERE status='running' AND lease_expires_at>?").length > 0
-        ? rows(r, "SELECT COUNT(*) AS n FROM jobs WHERE status='running' AND lease_expires_at>?")[0].n
-        : 0,
-    );
-    peak = Math.max(peak, running);
-    const d = rows(r, "SELECT COUNT(*) AS n FROM jobs WHERE status='done'")[0];
-    done = d ? Number(d.n) : 0;
-    // sample without burning the CPU
-    spawnSync(process.execPath, ["-e", "setTimeout(()=>{},20)"]);
+  const db = Database.open(r.db);
+  try {
+    db.exec("PRAGMA busy_timeout=5000");
+    while (Date.now() < end && done < total) {
+      const running = Number(
+        db.prepareRaw("SELECT COUNT(*) AS n FROM jobs WHERE status='running' AND lease_expires_at>?").getOrNull([Date.now() / 1000]).n,
+      );
+      peak = Math.max(peak, running);
+      done = Number(db.prepareRaw("SELECT COUNT(*) AS n FROM jobs WHERE status='done'").getOrNull([]).n);
+      // sample without burning the CPU
+      const until = Date.now() + 20;
+      while (Date.now() < until) {
+        // busy wait a fraction of the sample interval
+      }
+    }
+  } finally {
+    db.close();
   }
   return [peak, done];
 }
