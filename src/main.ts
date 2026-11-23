@@ -16,6 +16,29 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+// Add the derived timecap fields an agent needs: remaining budget and deadline delta (cli.py:24-31).
+function jobView(job: q.Job): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const keys: (keyof q.Job)[] = [
+    "id", "kind", "payload", "status", "priority", "run_at", "lease_owner", "lease_expires_at",
+    "waiting_on", "attempts", "max_attempts", "created_at", "max_runtime_s", "runtime_used_s",
+    "deadline_at", "claim_at", "outcome", "pgid", "pidfile",
+  ];
+  for (const k of keys) {
+    out[k] = job[k];
+  }
+  const cap = job.max_runtime_s;
+  const used = job.runtime_used_s;
+  out["runtime_remaining_s"] = cap === null || cap <= 0 ? null : round3(Math.max(0, cap - used));
+  const dl = job.deadline_at;
+  out["deadline_in_s"] = dl === null || dl <= 0 ? null : round3(dl - Date.now() / 1000);
+  return out;
+}
+
+function round3(x: number): number {
+  return Math.round(x * 1000) / 1000;
+}
+
 // Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
 // 0 means unbounded; the flag value 0 explicitly disables the machine default.
 function maxRuntimeS(flagValue: string | null): number {
@@ -136,7 +159,7 @@ async function main(): Promise<void> {
       if (job === null) {
         fail("no job " + jidText);
       }
-      process.stdout.write(JSON.stringify(job, null, 2) + "\n");
+      process.stdout.write(JSON.stringify(jobView(job), null, 2) + "\n");
     } else {
       const rows = db.prepareRaw("SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id").all([]) as Record<string, unknown>[];
       for (const r of rows) {

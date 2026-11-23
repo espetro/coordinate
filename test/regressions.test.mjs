@@ -296,7 +296,7 @@ test("X6: a malformed --max-runtime is rejected, not stored as NULL", async () =
   }
 });
 
-test("X8: status prints runtime_remaining_s and deadline_in_s", { todo: "src/main.ts prints the raw row (cli.py:24-31 added the derived fields)" }, async () => {
+test("X8: status prints runtime_remaining_s and deadline_in_s", async () => {
   const r = rig();
   try {
     const id = cli(r, "enqueue", "--max-runtime", "30s", "--", "true").stdout.trim();
