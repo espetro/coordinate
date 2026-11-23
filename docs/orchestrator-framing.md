@@ -151,6 +151,24 @@ Process note: two spike agents were SIGKILLed during other sessions' kill -9 tes
 
 Conclusion: no candidate beats our own SQLite scheduler on the gates. The plan is glue plus borrowed designs: Rivet-style hibernate and wake for parked sessions, Restate-style suspension without holding a slot (we already have it), detached ACP hosts for re-adoption, and the remaining bench scenarios (park-density, wake-latency, harness-swap, partition, presence-drop, lock-contention) to measure each step.
 
+## Assessment 10: outcome-driven jobs, time caps and agent self-awareness (2026-11-22)
+
+Time cap per job: yes, and every job gets one. A job carries `max_runtime` (for example 15 minutes for a research question) and the machine config carries a default, so nothing is unbounded unless asked with `--max-runtime 0`. This is the `harness launch --box` rule moved into the scheduler, where it survives the session that launched it. The budget counts running time only, so a job parked on an await or a rate limit does not burn it, and the deadline is a column in SQLite (`deadline_at`), never daemon memory, so a kill -9 and restart still enforces it. On expiry the dispatcher sends ACP `session/cancel`, waits a grace period, then SIGTERM and SIGKILL on the process group, and the job ends as `timed_out`, a terminal status that is not retried. In progress: `feat/job-timecap` (spk-timecap).
+
+Outcome-driven means the job states what done looks like (an output file, a commit, a PR) and the cap is the cost ceiling to get there. A timed out job is a result, not a failure to hide: it shows up in `fleet stats` and in the bench, and the Improver can learn from it (caps that always expire are mis-sized, prompts that always hang are bad).
+
+Should agents read the dispatcher: yes, read-only, with identity via env. The daemon injects `FLEET_JOB_ID`, `FLEET_DEADLINE_AT`, `FLEET_MACHINE` and `FLEET_DB` at spawn. `fleet status --self` returns the job row (status, attempts, `waiting_on`, lease, deadline, runtime used and left) and `fleet stats` gives queue state. This closes the awareness loop at zero new infra: an agent can see it has 3 minutes left and write its summary, or see why it was parked. Adversarial points: an agent that can read the queue can also be prompted to act on it, so when `FLEET_JOB_ID` is set the CLI should refuse mutating commands (cancel, reprioritize, enqueue) unless an explicit allowance exists (for example a fan-out role that may enqueue children with a parent id). An MCP wrapper of the same read commands is optional and comes later; the CLI works in every harness today.
+
+## Assessment 11: worktrees are not ours to enforce
+
+T3 already creates and binds worktrees per thread (`workspaceStrategy`), and Orca has its own. Fleet should not duplicate that. The Workspace module is an interface (`prepare(job) -> cwd`, `release`, `describe`) with T3 as the default implementation when a job comes through T3, a pass-through implementation (use the given cwd as is) when standalone, and a plain `git worktree add` implementation only as a fallback for headless queue jobs. The scheduler keeps one thing: repo leases must key on the repository, not the worktree path, so two worktrees of one repo still share `repo:<name>` caps. `project_key` (src/fleet/queue.py) does not do this today: it looks for a `.git` directory, but in a worktree `.git` is a file, so a job in any worktree under `~/.worktrees` walks up to `/` and every worktree job of every repo shares one key (too strict, never too loose). Fix: resolve with `git rev-parse --git-common-dir` (or read the `gitdir:` line) and key on the main repository, with a test for two worktrees of one repo and two different repos.
+
+## Assessment 12: measurement policy and the benchmark as a regression gate
+
+No cell stays n/a. Each one is either measured or recorded as "not expressible" with the reason. Density runs go 1,000 first and 10,000 only when 1,000 extrapolates inside the budget (Rivet: 1,489MB at 10,000 parked, which is the number to beat; in progress: spk-park for SQLite and Restate, spk-rivetfill for Rivet's queue cells).
+
+The bench measures trade-offs, not only megabytes: state lost on kill -9 (jobs lost, jobs run twice, duplicate turns, leases leaked, fields that differ before and after), wake latency, timeout precision, and the noise floor that decides what counts as a change. `bench/compare.py` turns a results file into a pass or fail against a committed Linux baseline, and a GitHub Actions workflow runs the quick set on every PR (in progress: spk-ci). The workflow is written but nothing is pushed: fleet has no remote yet, and creating one is the user's call.
+
 ## Modules
 
 | Module | Responsibility | Today | Interface |
@@ -160,6 +178,7 @@ Conclusion: no candidate beats our own SQLite scheduler on the gates. The plan i
 | Session store | Durable session records, TTL and GC | fleet SQLite, T3 threads | `put`, `get`, `park`, `wake`, `expire` |
 | Scheduler | Queue, soft caps, priority, placement, park and wake | fleet daemon | `enqueue`, `admit`, `park`, `wake`, `stats` |
 | Coordination | Locks, tool leases, rate limits, awaits | fleet toolcaps | `acquire`, `release`, `await`, `signal` |
+| Workspace | Give a job a working directory (worktree, sandbox or plain cwd) and release it | T3 `workspaceStrategy` | `prepare`, `release`, `describe` |
 | Context | Shared notes and handoffs across harnesses and devices | git, T3 threads | `append`, `read`, `handoff` |
 | Control panel | Human view and control | T3 Code, Orca | consumes the modules above |
 | Improver | Propose, evaluate, keep or revert config, prompts and plugins | none | `propose`, `evaluate`, `promote`, `revert` |
