@@ -54,9 +54,11 @@ Nothing refused: `scriptc coverage` reports 100 percent of 1315 analyzed stateme
 
 Also noted: `@cutils/cli` cannot express `nargs=REMAINDER` positional capture, so the CLI seam is hand-rolled (`src/main.ts`). If the CLI grows, this is the place where the port diverges most from the Python argparse surface (acp flags, `--shell` validation parity, `migrate`/`service` verbs are not ported at all).
 
-## Not done (out of scope, per task)
+## macOS arm64 build (verified 2026-11-23 on kinosmac)
 
-- macOS build (SQLite on macOS through `@cutils/sqlite` remains the open question from the research doc).
+The open question is answered: `@cutils/sqlite` works on macOS. `scriptc build main-elf.ts --npm-static @cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json --no-keep-llvm` produces a 3.6 MB `darwin-arm64` binary that runs the full loop on this Mac: `enqueue` writes SQLite, `daemon` claims and runs the job, `status`/`stats`/`events` all read back correctly (enqueued, claimed, done transitions all land in the events table). Two dev-only caveats, neither affects the shipped binary: (1) the package's `build:shared` script is Linux-shaped (`-Wl,-Bsymbolic`, `-shared`), so `node --test` on macOS needs the archive rebuilt by hand and a `-dynamiclib` `.so`; (2) koffi 2.14.1 segfaults in `InstanceData` teardown at process exit on Node 26/macOS arm64 after all tests pass, so `node --test` reports the file failed despite 12/12 green. CI on Linux is unaffected.
+
+## Not done (out of scope, per task)
 - ACP lane of the daemon (cmd jobs only), telemetry, service install, orchestrator-kill/state-loss, timecap enforcement, chaos scenario.
 - scriptc 0.4.16 re-validation (2026-11-23, done): rebuilt both ELFs, tests and bench re-run, gates unchanged, recorded in `bench/results-ts-0.4.16-linux-vps.json` and above. Upgrades stay gated behind the bench as the research doc recommends.
 - Comparison against `bench/thresholds.toml` gates: the TS results share the Python result schema, so `bench/compare.py` applies unchanged; the boolean scenarios pass the same thresholds.
