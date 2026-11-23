@@ -98,8 +98,8 @@ function main(): void {
     if (o.shell && cmd.length !== 1) {
       fail('enqueue --shell: pass the command as ONE quoted string, e.g. --shell -- \'sh -c "echo hi"\'');
     }
-    const payload: q.Payload = { cmd: o.shell ? cmd[0] : cmd, cwd: o.cwd };
-    if (o.repo) {
+    const payload: q.Payload = { cmd: o.shell ? cmd[0] : cmd, cwd: o.cwd, repo: null, slots: null, session: null };
+    if (o.repo !== null) {
       payload.repo = o.repo;
     }
     if (o.slots.length > 0) {

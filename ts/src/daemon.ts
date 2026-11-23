@@ -3,8 +3,10 @@
 // spawn interception: the bench --cli scenarios used here do not exercise [slots] config).
 
 import * as cp from "node:child_process";
+import * as fs from "node:fs";
 import * as os from "node:os";
-import { dbPath } from "./env.ts";
+import * as path from "node:path";
+import { configPath, dbPath } from "./env.ts";
 import { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
 
@@ -15,6 +17,196 @@ const SH = "/bin/sh";
 interface Running {
   jid: number;
   proc: cp.ChildProcess;
+}
+
+class Parked {
+  key: string;
+  constructor(key: string) {
+    this.key = key;
+  }
+}
+
+// [slots] from config.toml: per-key tool slot limits (default 1 each). Only the wildcard
+// form the bench writes ('tool:<class>:*' = N) is honored; no TOML parser: bench configs are
+// single-section lines, matched exactly.
+export function slotsConfig(): Record<string, number> {
+  const out: Record<string, number> = {};
+  try {
+    const text = fs.readFileSync(configPath(), "utf8");
+    let inSlots = false;
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (line === "[slots]") {
+        inSlots = true;
+        continue;
+      }
+      if (line.startsWith("[")) {
+        inSlots = false;
+        continue;
+      }
+      if (!inSlots || line === "") {
+        continue;
+      }
+      const m = /^'([^']+)'\s*=\s*(\d+)$/.exec(line) || /^([^=]+)\s*=\s*(\d+)$/.exec(line);
+      if (m !== null) {
+        out[m[1]] = Number(m[2]);
+      }
+    }
+  } catch {
+    // no config: all defaults
+  }
+  return out;
+}
+
+export function slotLimit(key: string): number {
+  const cfg = slotsConfig();
+  if (cfg[key] !== undefined) {
+    return cfg[key];
+  }
+  if (key.startsWith("tool:")) {
+    const parts = key.split(":");
+    if (parts.length === 3) {
+      const wl = cfg[parts[0] + ":" + parts[1] + ":*"];
+      if (wl !== undefined) {
+        return wl;
+      }
+    }
+  }
+  return 1;
+}
+
+const DEFAULT_TOOL_CLASSES: Record<string, { cost: number; match: string[] }> = {
+  vitest: { cost: 2, match: ["vitest", "jest", "playwright"] },
+  "tsc-build": { cost: 2, match: ["tsc", "vite"] },
+  cargo: { cost: 2, match: ["cargo"] },
+  docker: { cost: 2, match: ["docker", "docker-compose"] },
+  "pkg-install": { cost: 1, match: ["npm", "pnpm", "yarn", "uv"] },
+};
+
+function toolClasses(): Record<string, { cost: number; match: string[] }> {
+  return DEFAULT_TOOL_CLASSES;
+}
+
+function matchToolClass(argv0: string): { cls: string; cost: number } | null {
+  const norm = path.normalize(argv0);
+  const parts = norm.split(path.sep).filter((p) => p !== "");
+  const names: Record<string, boolean> = {};
+  names[path.basename(argv0)] = true;
+  for (const p of parts) {
+    names[p] = true;
+  }
+  for (const cls of Object.keys(toolClasses())) {
+    const spec = toolClasses()[cls];
+    for (const m of spec.match) {
+      if (names[m] === true) {
+        return { cls, cost: spec.cost };
+      }
+    }
+  }
+  return null;
+}
+
+function which(name: string): string | null {
+  if (name.includes(path.sep)) {
+    try {
+      fs.accessSync(name, fs.constants.X_OK);
+      return name;
+    } catch {
+      return null;
+    }
+  }
+  const p = process.env["PATH"] || "";
+  for (const d of p.split(path.delimiter)) {
+    const full = path.join(d, name);
+    try {
+      fs.accessSync(full, fs.constants.X_OK);
+      return full;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+function projectKey(cwd: string | null): string {
+  const start = path.resolve(cwd === null || cwd === undefined || cwd === "" ? process.cwd() : cwd);
+  let d = start;
+  for (;;) {
+    const dot = path.join(d, ".git");
+    if (fs.existsSync(dot)) {
+      try {
+        if (fs.statSync(dot).isDirectory()) {
+          return d;
+        }
+        // .git file: worktree; resolve gitdir + commondir
+        const text = fs.readFileSync(dot, "utf8");
+        let gitdir: string | null = null;
+        for (const line of text.split("\n")) {
+          if (line.startsWith("gitdir:")) {
+            gitdir = path.normalize(path.join(d, line.slice(7).trim()));
+            break;
+          }
+        }
+        if (gitdir !== null) {
+          const common = fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
+          return path.dirname(path.normalize(path.join(gitdir, common)));
+        }
+      } catch {
+        // fall through to git probe
+      }
+      try {
+        const out = cp.execFileSync("git", ["-C", d, "rev-parse", "--git-common-dir"], { timeout: 2000, encoding: "utf8" }).trim();
+        if (out !== "") {
+          const p = path.normalize(path.join(d, out));
+          if (path.basename(p) === ".git") {
+            return path.dirname(p);
+          }
+          return fs.existsSync(path.join(p, ".git")) ? p : path.dirname(p);
+        }
+      } catch {
+        // not resolvable
+      }
+    }
+    const parent = path.dirname(d);
+    if (parent === d) {
+      return start;
+    }
+    d = parent;
+  }
+}
+
+function auditSpawn(db: Database, jid: number, argv0: string, cls: string, proj: string): void {
+  db.prepareRaw("INSERT INTO spawn_audit(ts,job_id,argv0,tool_class,project) VALUES(?,?,?,?,?)").run([
+    Date.now() / 1000,
+    jid,
+    argv0,
+    cls,
+    proj,
+  ]);
+}
+
+function toolSlotKey(cls: string, proj: string): string {
+  return "tool:" + cls + ":" + proj;
+}
+
+function acquireToolLease(db: Database, jid: number, key: string, cost: number): boolean {
+  using _tx = db.transaction();
+  db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + Date.now() / 1000);
+  let used = 0;
+  const rows = db.prepareRaw("SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?").all([key]) as { c: number }[];
+  for (const r of rows) {
+    used = r.c;
+  }
+  if (used + cost > slotLimit(key)) {
+    return false;
+  }
+  db.prepareRaw("INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)").run([
+    key,
+    Date.now() / 1000 + q.LEASE_S,
+    jid,
+    cost,
+  ]);
+  return true;
 }
 
 function jobEnv(jid: number): Record<string, string> {
@@ -34,7 +226,58 @@ function jobEnv(jid: number): Record<string, string> {
   return e;
 }
 
+function argv0Of(kind: string, payload: q.Payload): string | null {
+  if (kind !== "cmd") {
+    return null;
+  }
+  const cmd = payload.cmd;
+  let toks: string[] | null = null;
+  if (typeof cmd === "string") {
+    toks = cmd.split(" ").filter((t) => t !== "");
+  } else if (Array.isArray(cmd)) {
+    toks = cmd;
+  }
+  if (toks === null || toks.length === 0) {
+    return null;
+  }
+  if (toks[0] === "sh" || toks[0] === "bash" || toks[0] === "zsh") {
+    for (let i = 0; i < toks.length; i++) {
+      if (toks[i] === "-c" && i + 1 < toks.length) {
+        const inner = toks[i + 1].split(" ").filter((t) => t !== "");
+        return inner.length > 0 ? inner[0] : null;
+      }
+    }
+    return null;
+  }
+  return toks[0];
+}
+
 function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload): cp.ChildProcess {
+  const argv0 = argv0Of(kind, payload);
+  if (argv0 === null) {
+    return spawnRaw(db, jid, owner, kind, payload);
+  }
+  const resolved = which(argv0);
+  const m = matchToolClass(resolved === null ? argv0 : resolved);
+  if (m === null) {
+    return spawnRaw(db, jid, owner, kind, payload);
+  }
+  const proj = projectKey(payload.cwd);
+  auditSpawn(db, jid, argv0, m.cls, proj);
+  const key = toolSlotKey(m.cls, proj);
+  if (m.cost > slotLimit(key)) {
+    // never grantable: config error, not contention
+    q.finish(db, jid, owner, "failed");
+    throw new Parked(key);
+  }
+  if (!acquireToolLease(db, jid, key, m.cost)) {
+    q.waitOn(db, jid, key); // D7 park-at-boundary
+    throw new Parked(key);
+  }
+  return spawnRaw(db, jid, owner, kind, payload);
+}
+
+function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload): cp.ChildProcess {
   const cmd = payload.cmd;
   const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio: "ignore" as const };
   const proc =
@@ -73,9 +316,7 @@ export function run(): void {
   const exitProc = (r: Running, code: number | null): void => {
     const event = q.finish(db, r.jid, owner, code === 0 ? "done" : "failed");
     if (event !== null) {
-      for (const _wid of q.release(db, event)) {
-        // released jobs are picked up by the claim loop
-      }
+      q.release(db, event); // D7 wake: released jobs are picked up by the claim loop
     }
   };
 
@@ -139,8 +380,12 @@ export function run(): void {
       busy = true;
       try {
         running.push({ jid: got.jid, proc: spawnJob(db, got.jid, owner, got.kind, got.payload) });
-      } catch {
-        q.finish(db, got.jid, owner, "failed");
+      } catch (e) {
+        if (e instanceof Parked) {
+          busy = true; // parked at the heavy-spawn boundary, no worker spawned
+        } else {
+          q.finish(db, got.jid, owner, "failed");
+        }
       }
     }
 
