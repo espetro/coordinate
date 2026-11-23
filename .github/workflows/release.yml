@@ -94,7 +94,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           file "coordinate-${VERSION}-darwin-arm64" | grep -q "Mach-O.*arm64"
-          file "coordinate-${VERSION}-darwin-x64" | grep -q "Mach-O.*x86-64"
+          file "coordinate-${VERSION}-darwin-x64" | grep -q "Mach-O.*x86_64"
 
       - name: Build windows-x64 (cross-compiled, smoked on windows-latest below)
         working-directory: ts
