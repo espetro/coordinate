@@ -20,6 +20,6 @@
     "koffi": "2.14.1",
     "typescript": "~5.9.0"
   },
-  "author": "Joaquin Terrasa",
+  "author": "Joaquin Terrasa & contributors",
   "license": "Apache-2.0"
 }

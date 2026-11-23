@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/espetro/coordinate/main/install.sh 
 mise use -g github:espetro/coordinate        # alternative
 ```
 
-Binary lands in `~/.local/bin/coordinate`. Per-device DB defaults to `$XDG_STATE_HOME/coordinate/queue.db`; override with `COORDINATE_DB`. Never share one DB file across machines — each device runs its own queue.
+Binary lands in `~/.local/bin/coordinate`. Per-device DB defaults to `$XDG_STATE_HOME/coordinate/queue.db`; override with `COORDINATE_DB`. Never share one DB file across machines. Each device runs its own queue.
 
 ## Core verbs
 
@@ -51,7 +51,7 @@ The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally en
 
 ## Plugins
 
-`~/.config/coordinate/plugins/` (XDG config) holds out-of-process plugin dirs; `coordinate plugins` (Python CLI on `legacy/python`) is retired pending the TS port of the plugins runner. Plugins are for policy, notifications and integrations — see `.agents/docs/extensibility.md` before writing one.
+`~/.config/coordinate/plugins/` (XDG config) holds out-of-process plugin dirs; `coordinate plugins` (Python CLI on `legacy/python`) is retired pending the TS port of the plugins runner. Plugins are for policy, notifications and integrations. Read `.agents/docs/extensibility.md` before writing one.
 
 ## Verified platforms
 
