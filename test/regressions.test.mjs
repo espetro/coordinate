@@ -396,7 +396,7 @@ test("X3: reap kills the surviving process group before the job is requeued (que
   }
 });
 
-test("X4: SIGTERM stops the daemon even while a job is running", { todo: "stopping is only checked at the top of loop(), which the idle pump never re-enters", timeout: DAEMON_T }, async () => {
+test("X4: SIGTERM stops the daemon even while a job is running", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--", "sleep", "318");
