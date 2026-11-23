@@ -173,6 +173,9 @@ importers:
         specifier: 0.8.0
         version: 0.8.0(koffi@2.14.1)
     devDependencies:
+      '@scriptc/runtime-win32-x64-msvc':
+        specifier: 0.4.16
+        version: 0.4.16
       '@types/node':
         specifier: 24.0.0
         version: 24.0.0
@@ -198,6 +201,9 @@ packages:
       koffi:
         optional: true
 
+  '@scriptc/runtime-win32-x64-msvc@0.4.16':
+    resolution: {integrity: sha512-hrRR+o6139wN4hc+a1MZJIl3BbF5Iau4R75rbsaoc9He7BZGVmbndtcCzE04rjXS1aVJPEqQYoU0NTcOxAJE/g==}
+
   '@types/node@24.0.0':
     resolution: {integrity: sha512-yZQa2zm87aRVcqDyH5+4Hv9KYgSdgwX1rFnGvpbzMaC7YAljmhBET93TPiTd3ObwTL+gSpIzPKg5BqVxdCvxKg==}
 
@@ -219,6 +225,8 @@ snapshots:
   '@cutils/sqlite@0.8.0(koffi@2.14.1)':
     optionalDependencies:
       koffi: 2.14.1
+
+  '@scriptc/runtime-win32-x64-msvc@0.4.16': {}
 
   '@types/node@24.0.0':
     dependencies:

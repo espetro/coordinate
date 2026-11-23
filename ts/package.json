@@ -13,6 +13,7 @@
     "@cutils/sqlite": "0.8.0"
   },
   "devDependencies": {
+    "@scriptc/runtime-win32-x64-msvc": "0.4.16",
     "@types/node": "24.0.0",
     "koffi": "2.14.1",
     "typescript": "~5.9.0"

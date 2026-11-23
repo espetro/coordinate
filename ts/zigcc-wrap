@@ -1,0 +1,3 @@
+#!/bin/sh
+# zig >= 0.15 removed the "zig cc" driver scriptc invokes; this wrapper restores it.
+exec /opt/mise/installs/zig/0.14.1/zig cc "$@"
