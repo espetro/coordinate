@@ -4,6 +4,7 @@
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
+import * as cfg from "./config.ts";
 
 export const LEASE_S = Number(env("LEASE_S", "30"));
 export const MACHINE = env("MACHINE", "laptop") as string;
@@ -203,6 +204,17 @@ export function claim(db: Database, owner: string): Parsed | null {
     let blocked = false;
     for (const k of keys) {
       if (k.startsWith("repo:") && (used[k] === undefined ? 0 : used[k]) >= repoCap()) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) {
+      continue;
+    }
+    // static tool keys honor their [slots] limits at claim time (weighted, D3)
+    blocked = false;
+    for (const k of keys) {
+      if (!k.startsWith("machine:") && !k.startsWith("repo:") && qUsedCost(db, k) + 1 > cfg.slotLimit(k)) {
         blocked = true;
         break;
       }

@@ -148,7 +148,7 @@ const DAEMON_T = 60000;
 
 // ---- queue module and config reader (in process) -----------------------------------------------
 
-test("A1: explicit --slot keys are limit-checked at claim (queue.py:317)", { todo: "claim() only bounds repo: keys; --slot gets lease rows but no limit check" }, async () => {
+test("A1: explicit --slot keys are limit-checked at claim (queue.py:317)", async () => {
   const r = rig();
   Object.assign(process.env, { COORDINATE_DB: r.db, COORDINATE_MACHINE: "regress", COORDINATE_CAP: "3", COORDINATE_REPO_CAP: "1" });
   delete process.env.COORDINATE_CONFIG;
