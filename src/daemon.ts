@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { configPath, dbPath } from "./env.ts";
 import { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
+import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, toolClasses, validateConfig } from "./config.ts";
 
 const BACKOFF_MAX = 2.0;
 const BACKOFF_MIN = 0.05;
@@ -24,67 +25,6 @@ class Parked {
   constructor(key: string) {
     this.key = key;
   }
-}
-
-// [slots] from config.toml: per-key tool slot limits (default 1 each). Only the wildcard
-// form the bench writes ('tool:<class>:*' = N) is honored; no TOML parser: bench configs are
-// single-section lines, matched exactly.
-export function slotsConfig(): Record<string, number> {
-  const out: Record<string, number> = {};
-  try {
-    const text = fs.readFileSync(configPath(), "utf8");
-    let inSlots = false;
-    for (const raw of text.split("\n")) {
-      const line = raw.trim();
-      if (line === "[slots]") {
-        inSlots = true;
-        continue;
-      }
-      if (line.startsWith("[")) {
-        inSlots = false;
-        continue;
-      }
-      if (!inSlots || line === "") {
-        continue;
-      }
-      const m = /^'([^']+)'\s*=\s*(\d+)$/.exec(line) || /^([^=]+)\s*=\s*(\d+)$/.exec(line);
-      if (m !== null) {
-        out[m[1]] = Number(m[2]);
-      }
-    }
-  } catch {
-    // no config: all defaults
-  }
-  return out;
-}
-
-export function slotLimit(key: string): number {
-  const cfg = slotsConfig();
-  if (cfg[key] !== undefined) {
-    return cfg[key];
-  }
-  if (key.startsWith("tool:")) {
-    const parts = key.split(":");
-    if (parts.length === 3) {
-      const wl = cfg[parts[0] + ":" + parts[1] + ":*"];
-      if (wl !== undefined) {
-        return wl;
-      }
-    }
-  }
-  return 1;
-}
-
-const DEFAULT_TOOL_CLASSES: Record<string, { cost: number; match: string[] }> = {
-  vitest: { cost: 2, match: ["vitest", "jest", "playwright"] },
-  "tsc-build": { cost: 2, match: ["tsc", "vite"] },
-  cargo: { cost: 2, match: ["cargo"] },
-  docker: { cost: 2, match: ["docker", "docker-compose"] },
-  "pkg-install": { cost: 1, match: ["npm", "pnpm", "yarn", "uv"] },
-};
-
-function toolClasses(): Record<string, { cost: number; match: string[] }> {
-  return DEFAULT_TOOL_CLASSES;
 }
 
 function matchToolClass(argv0: string): { cls: string; cost: number } | null {
@@ -315,6 +255,16 @@ function killGroup(proc: cp.ChildProcess): void {
 }
 
 export function run(): void {
+  try {
+    validateConfig();
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      process.stderr.write("coordinate: " + e.file + ":" + e.line + ": invalid config: " + e.message.split(": ").slice(2).join(": ") + "\n");
+    } else {
+      process.stderr.write("coordinate: " + String(e instanceof Error ? e.message : e) + "\n");
+    }
+    process.exit(1);
+  }
   const db = q.connect();
   const owner = os.hostname() + ":" + process.pid;
   const running: Running[] = [];

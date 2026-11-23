@@ -165,25 +165,57 @@ test("A1: explicit --slot keys are limit-checked at claim (queue.py:317)", { tod
   }
 });
 
-test("B8: [slots] accepts the TOML spellings tomllib accepts", { todo: "src/daemon.ts slotsConfig() is a line matcher: only single-quoted keys without trailing comments work" }, async () => {
+test("B8: [slots] accepts the TOML spellings tomllib accepts", async () => {
   const r = rig();
   Object.assign(process.env, { COORDINATE_DB: r.db, COORDINATE_CONFIG: r.env.COORDINATE_CONFIG });
   try {
-    const d = await import("../src/daemon.ts");
+    const c = await import("../src/config.ts");
     const forms = {
+      "single-quoted key": "[slots]\n'tool:vitest:*' = 2\n",
       "double-quoted key": '[slots]\n"tool:vitest:*" = 2\n',
+      "bare key": "[slots]\ntool_vitest = 2\n",
       "trailing comment": "[slots]\n'tool:vitest:*' = 2 # two\n",
       "header comment": "[slots] # limits\n'tool:vitest:*' = 2\n",
+      "underscored integer": "[slots]\n'tool:vitest:*' = 2_0\n",
       "inline table": "slots = { 'tool:vitest:*' = 2 }\n",
       "dotted key": "slots.'tool:vitest:*' = 2\n",
+      "double-quoted dotted key": 'slots."tool:vitest:*" = 2\n',
+      "string array value": "[tools]\nsqlload = { cost = 2, match = ['sqlload', \"sql-load\"] }\n[slots]\n'tool:vitest:*' = 2\n",
     };
     const wrong = [];
     for (const [name, body] of Object.entries(forms)) {
       fs.writeFileSync(r.env.COORDINATE_CONFIG, body);
-      const got = d.slotLimit("tool:vitest:/p");
-      if (got !== 2) wrong.push(`${name} -> ${got}`);
+      const got = c.slotLimit("tool:vitest:/p");
+      if (got !== (name === "underscored integer" ? 20 : 2)) wrong.push(`${name} -> ${got}`);
+      if (name === "string array value") {
+        const tc = c.toolClasses();
+        if (tc["sqlload"] === undefined || tc["sqlload"].cost !== 2 || JSON.stringify(tc["sqlload"].match) !== JSON.stringify(["sqlload", "sql-load"])) {
+          wrong.push(`${name} -> tools overlay ${JSON.stringify(tc["sqlload"])}`);
+        }
+      }
     }
-    assert.deepEqual(wrong, [], "every spelling must give limit 2 (Python gave 2 for all of them)");
+    assert.deepEqual(wrong, [], "every spelling must parse (Python tomllib gave the same limits)");
+  } finally {
+    fs.rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test("B8: an invalid config fails loudly with the file and line", async () => {
+  const r = rig();
+  Object.assign(process.env, { COORDINATE_DB: r.db, COORDINATE_CONFIG: r.env.COORDINATE_CONFIG });
+  try {
+    const c = await import("../src/config.ts");
+    fs.writeFileSync(r.env.COORDINATE_CONFIG, "[slots]\n'ok' = 1\nthis is not toml\n");
+    assert.throws(() => c.readConfig(), (e) => {
+      assert.match(String(e.message), new RegExp("^" + r.env.COORDINATE_CONFIG.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") + ":3:"));
+      return true;
+    });
+    fs.writeFileSync(r.env.COORDINATE_CONFIG, "[slots]\n'tool:vitest:*' = \"two\"\n");
+    assert.throws(() => c.validateConfig(), /tool\.vitest\.\*|slots\.tool/);
+    assert.throws(() => c.validateConfig(), (e) => {
+      assert.match(String(e.message), new RegExp("^" + r.env.COORDINATE_CONFIG.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") + ":2:"));
+      return true;
+    });
   } finally {
     fs.rmSync(r.dir, { recursive: true, force: true });
   }
