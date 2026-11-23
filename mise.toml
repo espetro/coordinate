@@ -5,4 +5,4 @@
 # CI does not use this file: the release workflow installs both itself.
 [tools]
 zig = "0.14.1"
-scriptc = "github:vercel-labs/scriptc@0.4.16"
+"github:vercel-labs/scriptc" = "0.4.16"

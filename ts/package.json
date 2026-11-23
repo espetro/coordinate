@@ -6,7 +6,7 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "dependencies": {
     "@cutils/cli": "0.8.0",
