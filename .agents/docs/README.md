@@ -4,7 +4,7 @@ Design notes, research and spike reports. The user documentation is in `docs/`, 
 
 ## Design
 
-- `extensibility.md`: plugins, config bounds and self-update
+- `archive/extensibility.md`: plugins, config bounds and self-update
 - `t3-integration.md`, `events-bridge.md`: showing jobs in T3 threads
 - `readoption-design.md`: re-attaching to agents after a daemon restart
 - `timecap.md`: execution-time caps for jobs

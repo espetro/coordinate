@@ -5,7 +5,7 @@ description: "Durable per-device job/session queue (SQLite + single binary). Use
 
 # coordinate
 
-Durable local job queue: a job is one SQLite row plus a process the daemon spawns. Single static binary (scriptc build of `ts/`), no service dependencies, per-device database.
+Durable local job queue: a job is one SQLite row plus a process the daemon spawns. Single static binary, no service dependencies, per-device database.
 
 ## When to use it
 
@@ -48,10 +48,6 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 ## ACP agent sessions
 
 The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally enqueued `--acp AGENT --cwd DIR --prompt TEXT` jobs (daemon-hosted ACP session with resume support). The TS binary is cmd-only; the ACP lane TS port is pending, so agent-session enqueue is currently unavailable.
-
-## Plugins
-
-`~/.config/coordinate/plugins/` (XDG config) holds out-of-process plugin dirs; `coordinate plugins` (Python CLI on `legacy/python`) is retired pending the TS port of the plugins runner. Plugins are for policy, notifications and integrations. Read `.agents/docs/extensibility.md` before writing one.
 
 ## Verified platforms
 

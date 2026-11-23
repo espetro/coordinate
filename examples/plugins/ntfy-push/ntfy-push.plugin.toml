@@ -1,5 +1,0 @@
-name = "ntfy-push"
-interface = "hook"
-version = "0.1.0"
-timeout_s = 5
-sandbox = "no-network"  # declaration only in v0.1.0; the loader records it, does not enforce it
