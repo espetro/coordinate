@@ -212,3 +212,9 @@ Against option B specifically (for option A):
 - PyPI JSON API for `rivetkit-client`, `python-rivetkit-client` (404), `pykka`, `thespian`, `ray`, `dapr`; GitHub API for pykka and Thespian activity.
 - developers.cloudflare.com/durable-objects/api/alarms; docs.restate.dev/concepts/services; docs.dapr.io actors features and concepts.
 - Local: the coordinate docs listed under Inputs, `src/fleet/queue.py` (`wait_on`, `release`, schema), `src/fleet/daemon.py` (park, wake loop).
+
+## Author's position (2026-11-23)
+
+Memory is not the reason to pass on Rivet: 1.5GB for 10,000 parked actors is a reasonable number for what it does, and the budget lines above should be read as a comparison, not a verdict. The reason to keep our own approach is that it measures better on the same host (1,000 parked sessions add 0.2MB to the daemon) and fits what coordinate is. Rivet is a framework and runtime for building stateful backends; coordinate is a tool and orchestration layer for agent sessions, generic and pluggable at its seams, that could also be offered as a library if that proves useful. Borrowing the model fits that position; adopting the runtime does not.
+
+The mailbox is the part to borrow first. A mailbox is a queue with an addressee, and it gives the dead letter queue a natural place: a message that cannot be delivered or a job that exhausts its attempts lands in a dead letter mailbox instead of a status flag.

@@ -2,6 +2,8 @@
 
 `coordinate` is a personal, local-first orchestration layer for AI coding-agent sessions. It runs standalone, but its main use is next to a control panel such as T3 Code or Orca. The name plays on two meanings: to coordinate (orchestrate) agents, and a coordinate system (which device, which slot, which session). The CLI is `coordinate`; the per-device daemon is `coordinated`.
 
+coordinate is a tool and orchestration layer, not a runtime framework like Rivet or Temporal: it is biased to agent orchestration, generic and pluggable at its module seams, and may also be offered as a library if that proves useful.
+
 Status as of 2026-11-23. The code is still the `fleet` package (CLI `fleet`, env `FLEET_*`, store `~/.fleet/queue.db`); the rename is prototype slice P1 below. Statements marked (M) are measured, (D) are designed but not built, everything else is built and tested.
 
 Reference material lives in `.agents/docs/`: requirements and assessments in `orchestrator-framing.md`, the scoring rubric in `tool-search-rubric.md`, candidate tools in `candidates-survey.md`, spike reports (`*-spike.md`, `bench-v2.md`, `bench-ci.md`, `timecap.md`), designs (`readoption-design.md`, `toolcaps-design.md`, `fallback-design.md`) and research in `research/`. The previous deployment architecture of `fleet` is kept as `fleet-architecture-2026-11-20.md`.
@@ -44,12 +46,29 @@ flowchart TB
 | Workspace | Give a job a working directory and release it | (D) T3 default, pass-through standalone | `prepare`, `release`, `describe` |
 | Connector | Reach other devices, publish device state, delegate | T3 linked environments | `connect`, `publish_state`, `delegate`, `read_remote` |
 | Observability | Events, alerts, `why`, notifications | (D) `research/observability.md` | `emit`, `query`, `alert` |
-| Telemetry | Anonymous usage insights for the author | (D) `research/telemetry.md` | `record`, `flush`, `status` |
+| Telemetry | Pseudonymous usage insights for the author, PostHog EU | (D) `research/telemetry.md` | `record`, `flush`, `status` |
 | Context | Shared notes and handoffs across harnesses and devices | git, T3 threads; (D) beads-style append-only files | `append`, `read`, `handoff` |
 | Improver | Tune config, prompts and plugins against the bench | (D) `research/self-improving-stack.md` | `propose`, `evaluate`, `promote`, `revert` |
 | Control panel | Human view and control | T3 Code, Orca, the CLI | consumes the modules above |
 
 Worktrees are not ours to enforce: T3 and Orca already create them. Repo leases key on the repository, not the worktree path (known bug: `project_key` treats a worktree's `.git` file as "not a repo" and falls back to `/`, which is too strict; fix in P1).
+
+## Files on disk
+
+XDG locations on Linux and macOS alike (the convention CLI tools such as uv and gh follow on macOS too, rather than `~/Library`), resolved in one module and overridable by the `XDG_*` variables:
+
+| What | Path |
+|---|---|
+| Config | `~/.config/coordinate/config.toml` |
+| Queue, mailbox, events, telemetry outbox | `~/.local/state/coordinate/queue.db` |
+| Logs | `~/.local/state/coordinate/logs/` |
+| Runtime (pid files, locks, sockets) | `$XDG_RUNTIME_DIR/coordinate/`, else `~/.local/state/coordinate/run/` |
+
+The queue is state, not data or cache: it matters across restarts but is not a user document, and TTL bounds it. Legacy `~/.fleet/` is read when the new files do not exist, and `coordinate migrate` copies it over without deleting it.
+
+## Telemetry
+
+On by default, pseudonymous, sent to PostHog EU (`https://eu.i.posthog.com`). The README states it up front, a one-time notice is shown on the first interactive run and at `coordinate service install`, and nothing is sent until that notice has been shown. One switch turns it off: `coordinate telemetry off` (writes the config); the cross-tool `DO_NOT_TRACK=1` is also honored, and CI and tests never send. Only the daemon sends: a daily summary plus rare lifecycle and error events, from an outbox table. Never sent: prompts, outputs, paths, repo or branch names, hostnames, usernames, env values, commands, error messages. Design: `.agents/docs/research/telemetry.md`.
 
 ## Job lifecycle
 
@@ -101,7 +120,7 @@ Alternatives measured on the same host: Restate 532MB idle, Rivet 128MB idle and
 ## Prototype plan
 
 - P1, runnable and installable: rename to `coordinate` (package, CLI, `coordinated`, `COORDINATE_*` env with `FLEET_*` fallback, `~/.coordinate`), drop the DBOS spike backend from the runtime, fix `project_key` for worktrees, `coordinate service install` (launchd, systemd user unit), release workflow that attaches a wheel to a GitHub Release, install with `uv tool install`.
-- P2, visibility and wakeups: a `mailbox(job_id, kind, payload, dedupe_key, deliver_at)` table borrowed from the actor model (`research/actor-model.md`): signals sent before a job parks are kept instead of lost (today `release()` only updates rows already waiting), wakes carry data, waits get a timeout and any-of, and alarms are messages with a future `deliver_at`. Then the events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
+- P2, visibility and wakeups: a `mailbox(job_id, kind, payload, dedupe_key, deliver_at)` table borrowed from the actor model (`research/actor-model.md`): each job has an addressable mailbox and undeliverable messages and exhausted jobs land in a dead letter mailbox; signals sent before a job parks are kept instead of lost (today `release()` only updates rows already waiting), wakes carry data, waits get a timeout and any-of, and alarms are messages with a future `deliver_at`. Then the events table, `coordinate events|tail|why|health|alerts`, ntfy alerts, telemetry with a first-run notice.
 - P3, re-adoption: detached ACP host, single-instance daemon lock, safe kills by pidfd and start time, `orchestrator-kill` with 0 duplicate turns.
 - P4, multi-device: hub allowances, presence levels, Workspace interface over T3.
 

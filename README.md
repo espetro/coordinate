@@ -2,6 +2,8 @@
 
 Local-first orchestration for AI coding-agent sessions: a per-device daemon (`coordinated`) with a durable SQLite queue, soft concurrency caps, parked sessions woken by events, per-job time caps, and ACP or tmux dispatch. Built to run next to a control panel such as T3 Code. Design and status: [ARCHITECTURE.md](ARCHITECTURE.md). Research, spikes and decisions: `.agents/docs/`.
 
+**Telemetry:** installing and running coordinate sends pseudonymous usage data (daily counts and rare lifecycle and error events, never prompts, paths, repo names, hostnames or command text) to PostHog in the EU, so the author can see what to fix and build next. Turn it off with `coordinate telemetry off` or `DO_NOT_TRACK=1`. Details: [ARCHITECTURE.md](ARCHITECTURE.md#telemetry).
+
 Pre-release. The code is still the `fleet` package and CLI until prototype slice P1 renames it; the usage below reflects the current names.
 
 Per-machine durable job queue with lease-based concurrency caps. Pure stdlib Python, one SQLite file.

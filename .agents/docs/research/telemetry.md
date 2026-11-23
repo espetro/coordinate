@@ -320,3 +320,9 @@ Go's model fits coordinate well: telemetry mode `local` by default (the rollups 
 - Whether PostHog retention insights work on events sent with `process_person_profile: false` (verify on the real project with the author's own install before building the dashboard).
 - Whether any colleague is in the EU or covered by a works council; this decides default-on versus the `service install` prompt.
 - Whether `fleet_id` is worth its linking cost before P4 ships; it can wait until multi-device exists.
+
+## 9. Decisions (author, 2026-11-23)
+
+- Region: EU. Host `https://eu.i.posthog.com`. Turn on "Discard client IP data" in the project settings.
+- Opt-out surface simplified to one switch, `coordinate telemetry on|off` (stored in config), plus `DO_NOT_TRACK=1` because it is the cross-tool convention and costs nothing. `COORDINATE_TELEMETRY_DISABLED` is dropped. CI and test detection stay as automatic behavior, not as user-facing switches. `coordinate telemetry status` and `preview` stay as read-only commands.
+- Notice: stated in the README ("installing and running coordinate sends pseudonymous usage data; turn it off with ..."), plus the one-time notice on the first interactive run and at `coordinate service install`. Caveat recorded, not legal advice: under ePrivacy Art. 5(3) as read by EDPB 2/2023, a README statement or the act of installing is not consent in the GDPR sense (consent needs a specific, informed, affirmative act), so for EU users this is notice plus easy opt-out, the same posture as Next.js and Vercel CLI, with a small residual risk the author accepts for a small colleague audience. If that changes (wider distribution, a works council, a complaint), switch to the y/N question at `service install`.
