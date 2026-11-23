@@ -18,6 +18,8 @@ Environment:
   STUB_BALLAST_MB  MB of RSS ballast: this many MiB of bytes are allocated and touched
                  at startup and kept alive (default 0; use 60 for codex/maki-like,
                  240 for claude-like)
+  STUB_FOREVER    1 makes a turn never end (the agent stops answering the prompt), so a
+                 timecap has to cancel and kill it
 
 Usage (matches the ACP convention used by real harnesses): the client spawns this
 process with cwd set, speaks JSON-RPC over stdin/stdout, one JSON object per line.
@@ -84,14 +86,24 @@ class Agent:
         self.send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def turn(self, sid: str):
-        """One simulated turn: stream STUB_CHUNKS updates over STUB_TURN_MS, then end_turn."""
+        """One simulated turn: stream STUB_CHUNKS updates over STUB_TURN_MS, then end_turn.
+
+        With STUB_FOREVER=1 the turn never ends: the agent keeps the turn open and never
+        answers, unless session/cancel arrives."""
         n = int(os.environ.get("STUB_CHUNKS", "5") or 5)
         dur = int(os.environ.get("STUB_TURN_MS", "2000") or 2000) / 1000
         step = dur / max(n, 1)
+        forever = os.environ.get("STUB_FOREVER", "0") not in ("0", "", "false")
         with self.lock:
             s = self.state["sessions"].setdefault(sid, {"turns_done": 0, "turns_started": 0, "loads": 0})
             s["turns_started"] = s.get("turns_started", 0) + 1
         save_state(self.state)
+        if forever:
+            # never end the turn: block until the process is cancelled or killed
+            while True:
+                time.sleep(0.5)
+                if sid in self.cancelled:
+                    return CANCELLED
         for i in range(n):
             if sid in self.cancelled:
                 with self.lock:

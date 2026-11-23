@@ -99,9 +99,23 @@ def _spawn_raw(c, jid: int, owner: str, kind: str, payload: dict) -> subprocess.
         return spawn_acp(c, jid, owner, payload)[0]
     cmd = payload["cmd"]
     proc = subprocess.Popen(cmd, shell=isinstance(cmd, str), executable=SH if isinstance(cmd, str) else None,
-                            cwd=payload.get("cwd"), start_new_session=True)
+                            cwd=payload.get("cwd"), start_new_session=True, env=_job_env(c, jid))
     q.set_proc(c, jid, owner, proc.pid, None)
     return proc
+
+
+def _job_env(c, jid: int) -> dict:
+    """Env contract for the child: FLEET_JOB_ID, FLEET_DEADLINE_AT, FLEET_MACHINE, FLEET_DB.
+
+    FLEET_DEADLINE_AT is the absolute epoch-second deadline of this attempt (empty when the
+    job carries no cap), so the agent can read its own identity and budget."""
+    env = os.environ.copy()
+    env["FLEET_JOB_ID"] = str(jid)
+    row = c.execute("SELECT deadline_at FROM jobs WHERE id=?", (jid,)).fetchone()
+    env["FLEET_DEADLINE_AT"] = str(int(row[0])) if row and row[0] else ""
+    env["FLEET_MACHINE"] = q.MACHINE
+    env["FLEET_DB"] = q.db_path()
+    return env
 
 
 def _pump_session(proc: subprocess.Popen, jid: int, owner: str) -> None:
@@ -134,7 +148,8 @@ def spawn_acp(c, jid: int, owner: str, payload: dict) -> tuple[subprocess.Popen,
         cmd += ["--model", payload["model"]]
     if payload.get("session"):
         cmd += ["--session", payload["session"]]
-    proc = subprocess.Popen(cmd, cwd=payload["cwd"], start_new_session=True, stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, cwd=payload["cwd"], start_new_session=True, stdout=subprocess.PIPE,
+                            stdin=subprocess.PIPE, text=True, env=_job_env(c, jid))
     q.set_proc(c, jid, owner, proc.pid, pidfile)
     threading.Thread(target=_pump_session, args=(proc, jid, owner), daemon=True).start()
     return proc, pidfile
@@ -148,6 +163,80 @@ def kill(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
+def _acp_cancel(proc: subprocess.Popen, payload: dict) -> bool:
+    """Send an ACP session/cancel to the running agent (best effort).
+
+    The ACP command (fleet-acp) reads JSON-RPC requests on stdin, so a session/cancel
+    notification is how the dispatcher asks a running turn to stop."""
+    sid = payload.get("session")
+    if not sid or proc.stdin is None:
+        return False
+    try:
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "session/cancel",
+                                      "params": {"sessionId": sid}}) + "\n")
+        proc.stdin.flush()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _terminate_tree(pgid: int | None, pidfile: str | None, proc: subprocess.Popen | None,
+                    grace_s: float = 0.0) -> None:
+    """SIGTERM the process group, then SIGKILL after 10s. The grace period (before the TERM)
+    belongs to the ACP cancel step, so a cmd job is terminated without waiting."""
+    term_wait = float(os.environ.get("FLEET_TIMECAP_TERM_S", "10"))
+    pids = [pgid]
+    if pidfile:
+        try:
+            with open(pidfile) as f:
+                pids.append(int(f.read().strip()))
+        except (OSError, ValueError):
+            pass
+    pids = [p for p in pids if p and p > 1]
+    if grace_s > 0:
+        time.sleep(grace_s)
+    for p in pids:
+        try:
+            os.killpg(p, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if proc is not None:
+        try:
+            proc.wait(timeout=term_wait)
+        except subprocess.TimeoutExpired:
+            pass
+    time.sleep(0.1)
+    for p in pids:
+        try:
+            os.killpg(p, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if pidfile:
+        try:
+            os.unlink(pidfile)
+        except OSError:
+            pass
+
+
+def _expire(c, jid: int, kind: str, payload: dict, pgid: int | None, pidfile: str | None,
+            proc: subprocess.Popen | None, owner: str) -> None:
+    """Timecap expiry: cancel the ACP turn, free the slot, then TERM/KILL the process group.
+
+    The terminal transition happens now so the slot is freed and the job is never retried;
+    the kill sequence runs in the background so the daemon keeps serving other jobs.
+
+    ACP jobs get the grace period (FLEET_TIMECAP_GRACE_S) to stop the turn on their own;
+    cmd jobs skip the cancel step and are terminated immediately."""
+    grace = float(os.environ.get("FLEET_TIMECAP_GRACE_S", "30"))
+    if kind == "acp" and proc is not None:
+        _acp_cancel(proc, payload)
+    else:
+        grace = 0.0
+    cap = c.execute("SELECT max_runtime_s FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+    q.finalize_timed_out(c, jid, outcome=f"max runtime exceeded (cap {cap}s)")
+    threading.Thread(target=_terminate_tree, args=(pgid, pidfile, proc, grace), daemon=True).start()
+
+
 def run(stop=lambda: False) -> None:
     c = q.connect()
     owner = f"{os.uname().nodename}:{os.getpid()}"
@@ -157,6 +246,12 @@ def run(stop=lambda: False) -> None:
         while not stop():
             busy = False
             now = time.time()
+            # expiry first: a job past its deadline must be timed_out, never recorded as a
+            # plain failed exit by the poll below (the TERM we send is an exit != 0).
+            for jid, kind, raw, pgid, pidfile in q.expired_running(c):
+                proc = running.pop(jid, None)
+                _expire(c, jid, kind, json.loads(raw), pgid, pidfile, proc, owner)
+                busy = True
             for jid, proc in list(running.items()):
                 rc = proc.poll()
                 if rc is not None:
