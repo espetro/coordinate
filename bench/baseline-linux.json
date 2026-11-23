@@ -1,0 +1,273 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/ci",
+  "host": {
+    "load_1m": 0.6,
+    "load_5m": 0.38,
+    "load_15m": 0.22,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8681,
+    "timestamp": "2026-11-23T00:46:30+0000"
+  },
+  "enqueue_cli_median_ms": 93.5,
+  "enqueue_cli_p95_ms": 107.4,
+  "idle_rss_mb": 18.4,
+  "idle_cpu_pct": 0.0,
+  "throughput_jobs": 60,
+  "throughput_all_done": true,
+  "enqueue_total_s": 6.61,
+  "throughput_makespan_s": 6.88,
+  "throughput_jobs_per_s": 8.72,
+  "peak_rss_mb": 18.8,
+  "cap": 3,
+  "cap_jobs": 9,
+  "cap_all_done": true,
+  "cap_max_concurrency": 3,
+  "cap_holds": true,
+  "cap_makespan_s": 6.45,
+  "cap_ideal_s": 3.0,
+  "repo_all_done": true,
+  "repo_shared_max_concurrency": 1,
+  "repo_cap_holds": true,
+  "priority_order": [
+    "p9",
+    "p5",
+    "p1",
+    "p0"
+  ],
+  "priority_ok": true,
+  "chaos_all_done": true,
+  "chaos_recovery_to_all_done_s": 14.48,
+  "chaos_total_executions": 12,
+  "chaos_duplicated_jobs": 3,
+  "tool_all_done": true,
+  "tool_vitest_max_concurrency": 1,
+  "tool_cap_holds": true,
+  "tool_trivial_ran_while_parked": true,
+  "orchkill_jobs": 3,
+  "orchkill_all_done": true,
+  "orchkill_done": 3,
+  "orchkill_recovery_s": 25.91,
+  "orchkill_agents_alive_before_kill": 3,
+  "orchkill_agents_alive_after_kill": 3,
+  "orchkill_orphan_agents_surviving": 0,
+  "orchkill_duplicate_turns": 3,
+  "orchkill_resumed_via_session_load": 3,
+  "orchkill_restarted": 0,
+  "orchkill_per_job": [
+    {
+      "job": 1,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-644153-1795394913358142147",
+      "payload_session": "stub-644153-1795394913358142147",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    },
+    {
+      "job": 2,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-644196-1795394915419454995",
+      "payload_session": "stub-644196-1795394915419454995",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    },
+    {
+      "job": 3,
+      "status": "done",
+      "attempts": 2,
+      "session_id": "stub-644198-1795394915392379358",
+      "payload_session": "stub-644198-1795394915392379358",
+      "turns_started": 2,
+      "turns_done": 1,
+      "loads": 1
+    }
+  ],
+  "stateloss_live_jobs": 2,
+  "stateloss_parked_jobs": 2,
+  "stateloss_tool_jobs": 1,
+  "stateloss_acp_jobs": 1,
+  "stateloss_jobs_lost": 0,
+  "stateloss_jobs_lost_ids": [],
+  "stateloss_never_finished": 0,
+  "stateloss_never_finished_ids": [],
+  "stateloss_jobs_run_twice": 4,
+  "stateloss_jobs_run_twice_ids": [
+    1,
+    2,
+    5,
+    6
+  ],
+  "stateloss_duplicate_turns": 1,
+  "stateloss_duplicate_turns_before_kill": 0,
+  "stateloss_leases_leaked": 0,
+  "stateloss_leases_leaked_detail": [],
+  "stateloss_leases_leaked_right_after_kill": 0,
+  "stateloss_parked_still_parked": 2,
+  "stateloss_parked_released": 0,
+  "stateloss_session_id_kept": [
+    {
+      "job": 6,
+      "before": "stub-644773-1795394948171912205",
+      "after": "stub-644773-1795394948171912205",
+      "kept": true
+    }
+  ],
+  "stateloss_field_diff": [
+    {
+      "job": 1,
+      "field": "attempts",
+      "before": 1,
+      "after": 2
+    },
+    {
+      "job": 1,
+      "field": "lease_owner",
+      "before": "vps-ef376962:644719",
+      "after": null
+    },
+    {
+      "job": 1,
+      "field": "pgid",
+      "before": 644746,
+      "after": null
+    },
+    {
+      "job": 1,
+      "field": "status",
+      "before": "running",
+      "after": "done"
+    },
+    {
+      "job": 2,
+      "field": "attempts",
+      "before": 1,
+      "after": 2
+    },
+    {
+      "job": 2,
+      "field": "lease_owner",
+      "before": "vps-ef376962:644719",
+      "after": null
+    },
+    {
+      "job": 2,
+      "field": "pgid",
+      "before": 644748,
+      "after": null
+    },
+    {
+      "job": 2,
+      "field": "status",
+      "before": "running",
+      "after": "done"
+    },
+    {
+      "job": 5,
+      "field": "attempts",
+      "before": 1,
+      "after": 2
+    },
+    {
+      "job": 5,
+      "field": "lease_owner",
+      "before": "vps-ef376962:644719",
+      "after": null
+    },
+    {
+      "job": 5,
+      "field": "pgid",
+      "before": 644766,
+      "after": null
+    },
+    {
+      "job": 5,
+      "field": "status",
+      "before": "running",
+      "after": "done"
+    },
+    {
+      "job": 6,
+      "field": "attempts",
+      "before": 1,
+      "after": 2
+    },
+    {
+      "job": 6,
+      "field": "lease_owner",
+      "before": "vps-ef376962:644719",
+      "after": null
+    },
+    {
+      "job": 6,
+      "field": "pgid",
+      "before": 644767,
+      "after": null
+    },
+    {
+      "job": 6,
+      "field": "pidfile",
+      "before": "/tmp/fleetbench-state-loss-h_j0871u/pids/6.agent",
+      "after": null
+    },
+    {
+      "job": 6,
+      "field": "status",
+      "before": "running",
+      "after": "done"
+    }
+  ],
+  "stateloss_session_diff": [
+    {
+      "session": "stub-644773-1795394948171912205",
+      "field": "loads",
+      "before": null,
+      "after": 1
+    },
+    {
+      "session": "stub-644773-1795394948171912205",
+      "field": "stop",
+      "before": null,
+      "after": "end_turn"
+    },
+    {
+      "session": "stub-644773-1795394948171912205",
+      "field": "turns_done",
+      "before": 0,
+      "after": 1
+    },
+    {
+      "session": "stub-644773-1795394948171912205",
+      "field": "turns_started",
+      "before": 1,
+      "after": 2
+    }
+  ],
+  "stateloss_session_before": {
+    "stub-644773-1795394948171912205": {
+      "turns_done": 0,
+      "turns_started": 1
+    }
+  },
+  "stateloss_session_after": {
+    "stub-644773-1795394948171912205": {
+      "turns_done": 1,
+      "turns_started": 2,
+      "loads": 1,
+      "stop": "end_turn"
+    }
+  },
+  "stateloss_orphan_agents_surviving": 0,
+  "stateloss_recovery_s": 25.89,
+  "stateloss_host": {
+    "load_1m": 1.0,
+    "load_5m": 0.78,
+    "load_15m": 0.41,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8600,
+    "timestamp": "2026-11-23T00:49:34+0000"
+  }
+}

@@ -1,0 +1,182 @@
+# Regression thresholds for bench/compare.py.
+#
+# Two independent ways a numeric metric can fail:
+#   1. the absolute drift is larger than 2 x stdev from the noise file (bench/noise-linux.json),
+#   2. the relative drift is larger than the per-metric percent tolerance below.
+#
+# A metric fails only when BOTH are exceeded, so a noisy metric on a shared runner does not
+# fail the job for a change that is inside its own noise floor, and a stable metric is not
+# allowed to drift just because its stdev happens to be zero.
+#
+# `direction` says which way is worse:
+#   "higher_is_worse"  latency, RSS, seconds, bytes, counts of waste
+#   "lower_is_worse"   throughput, jobs per second
+#   "none"             the metric must simply stay equal to the baseline (counts, concurrency caps)
+#
+# `max` is an optional absolute ceiling that a metric may never cross, whatever the baseline says.
+# `min` is an optional absolute floor, same idea.
+
+[defaults]
+direction = "higher_is_worse"
+percent_tolerance = 25.0
+
+# --- per-metric overrides -------------------------------------------------------
+
+[metrics.enqueue_cli_median_ms]
+percent_tolerance = 30.0
+
+[metrics.enqueue_cli_p95_ms]
+percent_tolerance = 35.0
+
+[metrics.idle_rss_mb]
+percent_tolerance = 20.0
+
+[metrics.idle_cpu_pct]
+percent_tolerance = 50.0
+# the baseline is 0 percent, so a percent tolerance would be zero; allow 2 percent of CPU
+absolute_tolerance = 2.0
+
+[metrics.throughput_makespan_s]
+percent_tolerance = 25.0
+
+[metrics.throughput_jobs_per_s]
+direction = "lower_is_worse"
+percent_tolerance = 25.0
+
+[metrics.cap_makespan_s]
+percent_tolerance = 25.0
+
+[metrics.chaos_recovery_to_all_done_s]
+percent_tolerance = 40.0
+
+[metrics.orchkill_recovery_s]
+percent_tolerance = 40.0
+
+[metrics.stateloss_recovery_s]
+percent_tolerance = 40.0
+
+[metrics.peak_rss_mb]
+percent_tolerance = 20.0
+
+# counts that describe the semantics of the run, not the speed: they must not change at all
+[metrics.cap_max_concurrency]
+direction = "none"
+
+[metrics.cap_jobs]
+direction = "none"
+
+[metrics.throughput_jobs]
+direction = "none"
+
+[metrics.repo_shared_max_concurrency]
+direction = "none"
+
+[metrics.tool_vitest_max_concurrency]
+direction = "none"
+
+[metrics.chaos_duplicated_jobs]
+direction = "none"
+
+[metrics.chaos_total_executions]
+direction = "none"
+
+[metrics.orchkill_jobs]
+direction = "none"
+
+[metrics.orchkill_done]
+direction = "none"
+
+[metrics.orchkill_agents_alive_before_kill]
+direction = "none"
+
+[metrics.orchkill_agents_alive_after_kill]
+direction = "none"
+
+[metrics.orchkill_orphan_agents_surviving]
+direction = "none"
+max = 0
+
+[metrics.orchkill_duplicate_turns]
+direction = "none"
+
+[metrics.orchkill_resumed_via_session_load]
+direction = "none"
+
+[metrics.orchkill_restarted]
+direction = "none"
+
+[metrics.stateloss_live_jobs]
+direction = "none"
+
+[metrics.stateloss_parked_jobs]
+direction = "none"
+
+[metrics.stateloss_tool_jobs]
+direction = "none"
+
+[metrics.stateloss_acp_jobs]
+direction = "none"
+
+# durability counts: losing a job or leaking a lease is always a regression
+[metrics.stateloss_jobs_lost]
+direction = "none"
+max = 0
+
+[metrics.stateloss_jobs_run_twice]
+direction = "none"
+
+[metrics.stateloss_duplicate_turns]
+direction = "none"
+
+[metrics.stateloss_duplicate_turns_before_kill]
+direction = "none"
+
+[metrics.stateloss_never_finished]
+direction = "none"
+max = 0
+
+[metrics.stateloss_leases_leaked]
+direction = "none"
+max = 0
+
+[metrics.stateloss_leases_leaked_right_after_kill]
+direction = "none"
+max = 0
+
+[metrics.stateloss_parked_still_parked]
+direction = "none"
+
+[metrics.stateloss_parked_released]
+direction = "none"
+
+[metrics.stateloss_orphan_agents_surviving]
+direction = "none"
+max = 0
+
+# park-density: the long set only, gated once a baseline with these numbers exists
+[metrics.parkdensity_total_parked]
+direction = "none"
+
+[metrics.parkdensity_rss_delta_mb]
+percent_tolerance = 50.0
+
+[metrics.parkdensity_db_bytes_per_session]
+percent_tolerance = 20.0
+
+[metrics.parkdensity_enqueue_per_session_ms]
+percent_tolerance = 50.0
+
+# --- boolean gates: all of these must hold --------------------------------------
+
+[gates]
+cap_holds = true
+cap_all_done = true
+repo_cap_holds = true
+repo_all_done = true
+chaos_all_done = true
+tool_cap_holds = true
+tool_all_done = true
+tool_trivial_ran_while_parked = true
+priority_ok = true
+throughput_all_done = true
+orchkill_all_done = true

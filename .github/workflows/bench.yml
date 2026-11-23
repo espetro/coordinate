@@ -1,0 +1,97 @@
+name: bench
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      scenario_set:
+        description: "Which scenario set to run: quick (the CI set) or long (quick plus park-density 10k)"
+        type: choice
+        default: long
+        options:
+          - quick
+          - long
+      park_density_steps:
+        description: "park-density step sizes, comma separated (long set only)"
+        type: string
+        default: "1000,10000"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench ${{ inputs.scenario_set || 'quick' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups --frozen
+
+      - name: Run the benchmark
+        id: bench
+        env:
+          SCENARIO_SET: ${{ inputs.scenario_set || 'quick' }}
+          PARK_DENSITY_STEPS: ${{ inputs.park_density_steps || '1000,10000' }}
+        run: |
+          set -euo pipefail
+          QUICK="cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,state-loss"
+          mkdir -p bench/results
+          if [ "$SCENARIO_SET" = "long" ]; then
+            ONLY="$QUICK,park-density"
+          else
+            ONLY="$QUICK"
+          fi
+          echo "scenario set: $SCENARIO_SET"
+          echo "scenarios: $ONLY"
+          .venv/bin/python bench/bench.py \
+            --tree . \
+            --backend sqlite \
+            --only "$ONLY" \
+            --park-density-steps "$PARK_DENSITY_STEPS" \
+            --out bench/results/results-ci.json
+        # the compare step still runs when the benchmark itself failed, so the job summary
+        # says why; the job fails either way, because compare.py cannot read a missing file
+        continue-on-error: true
+
+      - name: Compare against the baseline
+        id: compare
+        env:
+          SCENARIO_SET: ${{ inputs.scenario_set || 'quick' }}
+        run: |
+          set -uo pipefail
+          .venv/bin/python bench/compare.py \
+            --baseline bench/baseline-linux.json \
+            --current bench/results/results-ci.json \
+            --thresholds bench/thresholds.toml \
+            --noise bench/noise-linux.json \
+            --out bench/results/table.md
+          rc=$?
+          echo "compare exit code: $rc"
+          {
+            echo "### Bench comparison (${SCENARIO_SET})"
+            echo
+            echo '```markdown'
+            cat bench/results/table.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ inputs.scenario_set || 'quick' }}-${{ github.run_id }}
+          path: bench/results/
+          if-no-files-found: warn
+          retention-days: 14

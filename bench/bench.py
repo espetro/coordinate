@@ -6,10 +6,12 @@ write themselves, so the same script runs against the SQLite backend and FLEET_B
   python bench/bench.py --tree PATH_TO_CHECKOUT [--backend sqlite|dbos] --out results.json
 """
 import argparse
+import atexit
 import json
 import os
 import shlex
 import signal
+import sqlite3
 import statistics
 import subprocess
 import sys
@@ -22,6 +24,10 @@ STAMP = "perl -MTime::HiRes=time -e 'printf \"%.3f\\n\", time'"
 
 
 class Fleet:
+    # daemons this bench started and has not stopped yet; the atexit hook kills them by exact
+    # pid, so a scenario that raises never leaves a daemon behind on a shared host.
+    _live: list["Fleet"] = []
+
     def __init__(self, tree: Path, backend: str, workdir: Path, cap: int, lease: float = 5):
         self.tree, self.dir = tree, workdir
         self.py = str(tree / ".venv" / "bin" / "python")
@@ -43,6 +49,7 @@ class Fleet:
         log = open(self.dir / "daemon.log", "ab")
         self.daemon = subprocess.Popen([*self.cmd, "daemon"], env=self.env, cwd=self.dir,
                                        stdout=log, stderr=log, start_new_session=True)
+        Fleet._live.append(self)
         return self.daemon
 
     def stop(self, sig=signal.SIGTERM):
@@ -52,6 +59,11 @@ class Fleet:
             except ProcessLookupError:
                 pass
             self.daemon.wait()
+        if self in Fleet._live:
+            Fleet._live.remove(self)
+
+    def kill9(self):
+        self.stop(signal.SIGKILL)
 
     def kill9(self):
         self.stop(signal.SIGKILL)
@@ -82,6 +94,23 @@ class Fleet:
         if priority:
             args += ["--priority", str(priority)]
         return self.cli(*args, "--", shell)
+
+
+def _kill_leftover_daemons() -> None:
+    """Kill every daemon this bench started and has not stopped, by exact pid.
+
+    The bench runs on a shared host, so a daemon left behind by a scenario that raised would
+    keep running. Only pids this process recorded are touched, never a pattern.
+    """
+    for f in list(Fleet._live):
+        try:
+            f.stop(signal.SIGKILL)
+        except Exception:
+            pass
+    Fleet._live.clear()
+
+
+atexit.register(_kill_leftover_daemons)
 
 
 def span_cmd(log: Path, tag: str, sleep: float) -> str:
@@ -679,12 +708,298 @@ def scenario_timecap(tree, backend, tmp):
     return out
 
 
+def _job_rows(db: Path) -> dict[int, dict]:
+    """Every job row of the SQLite store, keyed by job id, with the volatile lease fields dropped."""
+    out = {}
+    if not db.exists():
+        return out
+    c = sqlite3.connect(str(db))
+    c.row_factory = sqlite3.Row
+    try:
+        for r in c.execute("SELECT * FROM jobs ORDER BY id"):
+            d = {k: r[k] for k in r.keys()}
+            d.pop("lease_expires_at", None)   # a wall clock deadline, not state
+            out[d["id"]] = d
+    finally:
+        c.close()
+    return out
+
+
+def _slot_rows(db: Path) -> dict[int, list[dict]]:
+    """Concurrency slots per job id: the leases (machine, repo and weighted tool slots)."""
+    out: dict[int, list[dict]] = {}
+    if not db.exists():
+        return out
+    c = sqlite3.connect(str(db))
+    c.row_factory = sqlite3.Row
+    try:
+        for r in c.execute("SELECT key, lease_expires_at, job_id, cost FROM concurrency_slots ORDER BY key"):
+            out.setdefault(r["job_id"], []).append(
+                {"key": r["key"], "cost": r["cost"], "lease_expires_at": r["lease_expires_at"]})
+    finally:
+        c.close()
+    return out
+
+
+def _stub_sessions(path: Path) -> dict:
+    """The stub ACP agent's own session state file (per working directory)."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text()).get("sessions", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def scenario_state_loss(tree, backend, tmp, live=2, parked=2, turn_ms=20000, lease=4):
+    """What survives kill -9 of the orchestrator, and what is lost.
+
+    Sets up four kinds of in-flight state at once:
+      - live jobs (long running shell jobs),
+      - parked jobs (waiting on an event, holding no process),
+      - a tool lease (a heavy-class job holding a weighted tool: slot),
+      - an ACP session mid-turn (the stub agent of bench/stub_acp_agent.py).
+
+    Then kill -9 the daemon group, restart it, and report what was lost, what ran twice, which
+    leases leaked, and which job fields differ before versus after. The diff is over the job
+    rows of the durable store and over the stub agent's own session state file, so the report
+    separates "the store kept it" from "the store kept it but the in-memory copy was gone".
+    """
+    reg = _acp_registry(tree, tmp)
+    f = _acp_fleet(tree, backend, tmp, cap=live + 2, lease=lease)
+    f.env["STUB_TURN_MS"] = str(turn_ms)
+    f.env["STUB_CHUNKS"] = "40"
+    db = Path(f.env["FLEET_DB"])
+    log = tmp / "spans"
+
+    # a heavy-class binary so the daemon takes a weighted tool lease for it
+    bindir = tmp / "bin"
+    bindir.mkdir()
+    (bindir / "vitest").write_text(
+        f"#!/bin/sh\necho s tool $({STAMP}) >> {log}\nsleep {lease * 2}\necho e tool $({STAMP}) >> {log}\n")
+    (bindir / "vitest").chmod(0o755)
+    f.env["PATH"] = f"{bindir}:{f.env.get('PATH', '')}"
+    cfg = Path(f.env["FLEET_CONFIG"])
+    cfg.write_text("[slots]\n'tool:vitest:*' = 2\n")
+
+    f.start()
+    time.sleep(3)
+
+    live_ids, parked_ids, tool_ids, acp_ids = [], [], [], []
+    for i in range(live):
+        repo = tmp / f"live{i}"
+        repo.mkdir(parents=True, exist_ok=True)
+        live_ids.append(int(f.cli("enqueue", "--cwd", str(repo), "--shell", "--",
+                                   f"echo s live{i} $({STAMP}) >> {log}; sleep {lease * 3}; "
+                                   f"echo e live{i} $({STAMP}) >> {log}")))
+    for i in range(parked):
+        repo = tmp / f"parked{i}"
+        repo.mkdir(parents=True, exist_ok=True)
+        jid = int(f.cli("enqueue", "--cwd", str(repo), "--shell", "--wait-on", "evt-human",
+                        "--", f"echo s parked{i} $({STAMP}) >> {log}"))
+        parked_ids.append(jid)
+    tool_repo = tmp / "toolproj"
+    (tool_repo / ".git").mkdir(parents=True)
+    tool_ids.append(int(f.cli("enqueue", "--cwd", str(tool_repo), "--shell", "--", "vitest run")))
+    acp_repo = tmp / "acpjob"
+    acp_repo.mkdir(parents=True, exist_ok=True)
+    acp_ids.append(int(f.cli("enqueue", "--acp", "stub", "--cwd", str(acp_repo), "--prompt", "mid turn",
+                              "--registry", reg)))
+
+    # wait until the live jobs, the tool lease and the ACP agent are all in flight
+    deadline = time.time() + 60
+    acp_sid = None
+    while time.time() < deadline:
+        rows = _job_rows(db)
+        running = [j for j, r in rows.items() if r["status"] == "running"]
+        slots = _slot_rows(db)
+        tool_held = any(s["key"].startswith("tool:") for sl in slots.values() for s in sl)
+        acp_sid = None
+        for jid in acp_ids:
+            st = json.loads(f.cli("status", str(jid)))
+            payload = json.loads(st["payload"]) if isinstance(st["payload"], str) else (st["payload"] or {})
+            acp_sid = payload.get("session")
+        if len(running) >= live + 1 and tool_held and acp_sid:
+            break
+        time.sleep(0.3)
+
+    before_rows = _job_rows(db)
+    before_slots = _slot_rows(db)
+    before_sessions = _stub_sessions(acp_repo / ".stub-acp-sessions.json")
+    agent_pids = _agent_pids(db)
+
+    # kill -9 the daemon group we started (exact pid, verified through /proc)
+    daemon_pid = f.daemon.pid
+    cmdline = Path(f"/proc/{daemon_pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+    if "daemon" not in cmdline:
+        raise RuntimeError(f"refusing to kill pid {daemon_pid}: cmdline {cmdline} is not the fleet daemon")
+    t_kill = time.time()
+    f.kill9()
+    time.sleep(0.3)
+
+    # state right after the kill, before the restart: what the store still holds
+    post_kill_rows = _job_rows(db)
+    post_kill_slots = _slot_rows(db)
+
+    f.start()
+    # wait for the terminal states of the jobs that can finish without a human
+    terminal = {"done", "failed", "dead"}
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        rows = _job_rows(db)
+        if all(rows.get(j, {}).get("status") in terminal for j in live_ids + tool_ids + acp_ids):
+            break
+        time.sleep(0.3)
+    recovery = time.time() - t_kill
+
+    after_rows = _job_rows(db)
+    after_slots = _slot_rows(db)
+    after_sessions = _stub_sessions(acp_repo / ".stub-acp-sessions.json")
+
+    # cleanup: every agent the bench started, by exact pid and process group
+    survivors = [p for p in set(list(agent_pids.values()) + list(_agent_pids(db).values())) if _alive(p)]
+    for p in survivors:
+        _kill_group(p)
+    time.sleep(0.4)
+    for p in survivors:
+        if _alive(p):
+            try:
+                os.kill(p, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    # ---- counts ----
+    all_ids = live_ids + parked_ids + tool_ids + acp_ids
+    lost = [j for j in all_ids if j not in after_rows]
+    never_finished = [j for j in live_ids + tool_ids + acp_ids
+                      if after_rows.get(j, {}).get("status") not in terminal]
+    # a job ran twice if the durable row shows more attempts than one
+    ran_twice = [j for j in all_ids if after_rows.get(j, {}).get("attempts", 0) > 1]
+    # duplicate turns, from the stub agent's own counters
+    dup_turns = 0
+    for sid, rec in after_sessions.items():
+        dup_turns += max(0, rec.get("turns_started", 0) - 1)
+    dup_turns_before = sum(max(0, rec.get("turns_started", 0) - 1) for rec in before_sessions.values())
+
+    # leases leaked: a slot row whose job is not running, or whose deadline has passed
+    now = time.time()
+    leaked_slots = []
+    for jid, sl in after_slots.items():
+        st = after_rows.get(jid, {}).get("status")
+        if st != "running" or all(s["lease_expires_at"] <= now for s in sl):
+            leaked_slots.extend({"job_id": jid, "key": s["key"], "cost": s["cost"],
+                                 "expired": s["lease_expires_at"] <= now} for s in sl)
+    post_kill_leaked = []
+    for jid, sl in post_kill_slots.items():
+        st = post_kill_rows.get(jid, {}).get("status")
+        if st != "running":
+            post_kill_leaked.extend({"job_id": jid, "key": s["key"]} for s in sl)
+
+    # ---- field diff, before the kill versus after the restart ----
+    field_diff = []
+    for jid in all_ids:
+        b, a = before_rows.get(jid, {}), after_rows.get(jid, {})
+        for key in sorted(set(b) | set(a)):
+            if b.get(key) != a.get(key):
+                field_diff.append({"job": jid, "field": key, "before": b.get(key), "after": a.get(key)})
+
+    # the stub agent's session state, before versus after
+    session_diff = []
+    for sid in sorted(set(before_sessions) | set(after_sessions)):
+        b, a = before_sessions.get(sid, {}), after_sessions.get(sid, {})
+        for key in sorted(set(b) | set(a)):
+            if b.get(key) != a.get(key):
+                session_diff.append({"session": sid, "field": key, "before": b.get(key), "after": a.get(key)})
+
+    # the durable ACP session id: kept in the job payload, so the retry can resume it
+    session_id_kept = []
+    for jid in acp_ids:
+        b, a = before_rows.get(jid, {}), after_rows.get(jid, {})
+        bs = (json.loads(b["payload"]) if b.get("payload") else {}).get("session")
+        as_ = (json.loads(a["payload"]) if a.get("payload") else {}).get("session")
+        session_id_kept.append({"job": jid, "before": bs, "after": as_, "kept": bool(bs) and bs == as_})
+
+    f.stop()
+    return {"stateloss_live_jobs": len(live_ids), "stateloss_parked_jobs": len(parked_ids),
+            "stateloss_tool_jobs": len(tool_ids), "stateloss_acp_jobs": len(acp_ids),
+            "stateloss_jobs_lost": len(lost), "stateloss_jobs_lost_ids": lost,
+            "stateloss_never_finished": len(never_finished), "stateloss_never_finished_ids": never_finished,
+            "stateloss_jobs_run_twice": len(ran_twice), "stateloss_jobs_run_twice_ids": ran_twice,
+            "stateloss_duplicate_turns": dup_turns,
+            "stateloss_duplicate_turns_before_kill": dup_turns_before,
+            "stateloss_leases_leaked": len(leaked_slots), "stateloss_leases_leaked_detail": leaked_slots,
+            "stateloss_leases_leaked_right_after_kill": len(post_kill_leaked),
+            "stateloss_parked_still_parked": sum(1 for j in parked_ids
+                                                 if after_rows.get(j, {}).get("status") == "waiting"),
+            "stateloss_parked_released": sum(1 for j in parked_ids
+                                             if after_rows.get(j, {}).get("status") == "queued"),
+            "stateloss_session_id_kept": session_id_kept,
+            "stateloss_field_diff": field_diff, "stateloss_session_diff": session_diff,
+            "stateloss_session_before": before_sessions, "stateloss_session_after": after_sessions,
+            "stateloss_orphan_agents_surviving": len(survivors),
+            "stateloss_recovery_s": round(recovery, 2),
+            "stateloss_host": _host_state()}
+
+
+def scenario_park_density(tree, backend, tmp, steps=(1000, 10000)):
+    """Open many parked sessions and measure the orchestrator's cost per parked session.
+
+    A parked session holds no process, so the cost is the durable row plus the orchestrator's
+    own memory. The steps are cumulative: 1,000 parked sessions first, then 10,000 more.
+    """
+    f = Fleet(tree, backend, tmp, cap=2, lease=120)
+    db = Path(f.env["FLEET_DB"])
+    out = {"parkdensity_steps": [], "parkdensity_baseline_rss_mb": 0.0,
+           "parkdensity_host": _host_state()}
+    try:
+        f.start()
+        time.sleep(4)
+        baseline_rss = f.rss_mb()
+        out["parkdensity_baseline_rss_mb"] = round(baseline_rss, 1)
+        for n in steps:
+            t0 = time.time()
+            r = subprocess.run([str(tree / ".venv" / "bin" / "python"),
+                                str(Path(__file__).parent / "park_filler.py"),
+                                "--db", str(db), "--count", str(n), "--event", "park-evt"],
+                               capture_output=True, text=True, cwd=str(tmp))
+            if r.returncode:
+                raise RuntimeError(f"park_filler failed: {r.stderr[-400:]}")
+            elapsed = time.time() - t0
+            time.sleep(1.5)  # let the daemon notice the new rows
+            rss = f.rss_mb()
+            db_bytes = db.stat().st_size if db.exists() else 0
+            rows = _job_rows(db)
+            parked = sum(1 for r2 in rows.values() if r2["status"] == "waiting")
+            out["parkdensity_steps"].append({
+                "step_parked_sessions": n,
+                "total_parked_sessions": parked,
+                "enqueue_s": round(elapsed, 2),
+                "enqueue_per_session_ms": round(elapsed / n * 1000, 3),
+                "orchestrator_rss_mb": round(rss, 1),
+                "orchestrator_rss_delta_mb": round(rss - baseline_rss, 2),
+                "db_bytes": db_bytes,
+                "db_bytes_per_parked_session": round(db_bytes / parked, 1) if parked else None,
+                "rss_kb_per_parked_session": round((rss - baseline_rss) * 1024 / parked, 3) if parked else None,
+                "host": _host_state(),
+            })
+    finally:
+        f.stop()  # never leave the daemon behind, even when the scenario raises
+    # top level summaries, so the comparison can gate on them (the steps stay as detail)
+    last = out["parkdensity_steps"][-1]
+    out["parkdensity_total_parked"] = last["total_parked_sessions"]
+    out["parkdensity_rss_delta_mb"] = last["orchestrator_rss_delta_mb"]
+    out["parkdensity_db_bytes_per_session"] = last["db_bytes_per_parked_session"]
+    out["parkdensity_enqueue_per_session_ms"] = last["enqueue_per_session_ms"]
+    return out
+
+
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
              "cap": scenario_cap, "repo": scenario_repo_contention, "priority": scenario_priority,
              "chaos": scenario_chaos, "toolpark": scenario_tool_park,
              "orchestrator-kill": scenario_orchestrator_kill, "live-density": scenario_live_density,
              "timecap": scenario_timecap,
-             "noise-floor": scenario_noise_floor}
+             "noise-floor": scenario_noise_floor, "state-loss": scenario_state_loss,
+             "park-density": scenario_park_density}
 
 
 def _host_state() -> dict:
@@ -712,6 +1027,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--repeats", type=int, default=10, help="noise-floor: repeats per scenario")
     ap.add_argument("--noise-scenarios", default=None, help="noise-floor: comma separated subset of scenarios")
+    ap.add_argument("--park-density-steps", default=None,
+                    help="park-density: comma separated step sizes (default 1000,10000)")
     a = ap.parse_args()
     global CLI_OVERRIDE
     CLI_OVERRIDE = a.cli
@@ -726,6 +1043,9 @@ def main():
                 if name == "noise-floor":
                     res.update(SCENARIOS[name](tree, a.backend, Path(t), repeats=a.repeats,
                                              subset=a.noise_scenarios))
+                elif name == "park-density":
+                    steps = tuple(int(x) for x in (a.park_density_steps or "1000,10000").split(",") if x.strip())
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), steps=steps))
                 else:
                     res.update(SCENARIOS[name](tree, a.backend, Path(t)))
             except Exception as e:  # keep going, record the failure
