@@ -1,6 +1,6 @@
 # Rivet spike: results
 
-Branch `spike/rivet` (worktree `~/.worktrees/fleet-spikes/rivet`). Measured 2026-11-22 on the shared VPS (Linux x86_64, 6 cores, 11.7 GB RAM, uptime 1d23h, three other spike sessions running; `free -m` available was 8.3 GB at the idle measurement and 6.7 GB at the 10k measurement). Raw numbers in `bench/results-rivet-vps.json`; adapter code under `bench/adapters/rivet/`.
+Branch `spike/rivet` (worktree `~/.worktrees/fleet-spikes/rivet`). Measured 2026-11-22 on the shared VPS (Linux x86_64, 6 cores, 11.7 GB RAM, uptime 1d23h, three other spike sessions running; `free -m` available was 8.3 GB at the idle measurement and 6.7 GB at the 10k measurement). Raw numbers in `.agents/docs/data/results-rivet-vps.json`; adapter code under `bench/adapters/rivet/`.
 
 ## Setup and versions
 
@@ -83,7 +83,7 @@ Follow-up to this spike: the previous session's shim (`bench/adapters/rivet/src/
 - rivetkit does not honor `RIVET_ENDPOINT` for spawning the local engine, only for connecting to one: with the variable set, the runner never starts an engine and the node pool never becomes ready. The shim now spawns the engine per run on a free port (recorded in a port file inside the run's data dir), so parallel or stale daemons on the shared host cannot collide, and it kills only the engine it spawned (by exact pid, verified via `/proc/<pid>/cmdline`) on shutdown, including one left behind by a previous crashed run of the same data dir.
 - The enqueue spool was compacted after daemon start replay, which would have resubmitted jobs the engine had already journalled. Acknowledged records are now dropped from the spool at enqueue time.
 
-## Results (M, 2026-11-23, shared VPS, 11.7 GB RAM, MemAvailable 7.8 GB, load 0.7 to 0.8 at start; `bench/results-rivet-fill-vps.json`)
+## Results (M, 2026-11-23, shared VPS, 11.7 GB RAM, MemAvailable 7.8 GB, load 0.7 to 0.8 at start; `.agents/docs/data/results-rivet-fill-vps.json`)
 
 | Metric | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (this shim) |
 |---|---|---|---|

@@ -4,7 +4,7 @@
 # not translate native inputs (docs/platforms, cross-target limits).
 # usage: build-darwin-sqlite.sh [arm64|x64]
 set -eu
-cd "$(dirname "$0")/node_modules/@cutils/sqlite"
+cd "$(dirname "$0")/../node_modules/@cutils/sqlite"
 ARCH="${1:-arm64}"
 case "$ARCH" in
   arm64) TARGET="aarch64-macos.14.0" ;;

@@ -1,6 +1,6 @@
 # Terminal fallback spike: tmux vs Herdr vs zmx
 
-Scope: pick the M2 terminal fallback for our fleet agents, or confirm we stay on tmux. Candidate features: detach-and-resume of agent CLIs, addressable sessions a dispatcher can script without attaching, low idle footprint, sane behaviour when the server or a client dies. Measured 2026-11-22 on VPS host vps-ef376962 (Debian 13, kernel 6.117, 8 GB RAM) with bench/term_fallback.py and bench/fakeworker.py; raw numbers in bench/results-term-fallback-vps.json. Tags: M measured this run, R reference docs or upstream repo, B benchmark code, K knowledge call from prior spike sessions.
+Scope: pick the M2 terminal fallback for our fleet agents, or confirm we stay on tmux. Candidate features: detach-and-resume of agent CLIs, addressable sessions a dispatcher can script without attaching, low idle footprint, sane behaviour when the server or a client dies. Measured 2026-11-22 on VPS host vps-ef376962 (Debian 13, kernel 6.117, 8 GB RAM) with bench/term_fallback.py and bench/fakeworker.py; raw numbers in .agents/docs/data/results-term-fallback-vps.json. Tags: M measured this run, R reference docs or upstream repo, B benchmark code, K knowledge call from prior spike sessions.
 
 ## Tools and versions [R]
 
@@ -8,7 +8,7 @@ tmux 3.5a, herdr 0.9.5 (self-contained 28.9 MB binary, ghostty_vt 1.4.1-dev vend
 
 ## Results [M]
 
-All numbers from bench/results-term-fallback-vps.json, medians over the runs the bench recorded. RSS slope is a least-squares fit over the 1/5/20 session points. The zmx RSS columns are invalid: per-session daemons did not match the isolated-TMPDIR ownership check, so the measured pid set was empty and RSS reads as 0.0 MB. The 46-48 MB herdr figures include the server and everything it spawned in the measurement window; tmux 4.8-4.9 MB is the server alone plus the hold session.
+All numbers from .agents/docs/data/results-term-fallback-vps.json, medians over the runs the bench recorded. RSS slope is a least-squares fit over the 1/5/20 session points. The zmx RSS columns are invalid: per-session daemons did not match the isolated-TMPDIR ownership check, so the measured pid set was empty and RSS reads as 0.0 MB. The 46-48 MB herdr figures include the server and everything it spawned in the measurement window; tmux 4.8-4.9 MB is the server alone plus the hold session.
 
 | Metric | tmux 3.5a | herdr 0.9.5 | zmx 1.0.1 |
 | --- | --- | --- | --- |

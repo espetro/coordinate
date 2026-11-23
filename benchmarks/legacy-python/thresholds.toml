@@ -1,7 +1,7 @@
 # Regression thresholds for bench/compare.py.
 #
 # Two independent ways a numeric metric can fail:
-#   1. the absolute drift is larger than 2 x stdev from the noise file (bench/noise-linux.json),
+#   1. the absolute drift is larger than 2 x stdev from the noise file (benchmarks/legacy-python/noise-linux.json),
 #   2. the relative drift is larger than the per-metric percent tolerance below.
 #
 # A metric fails only when BOTH are exceeded, so a noisy metric on a shared runner does not

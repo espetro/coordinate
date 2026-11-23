@@ -24,12 +24,12 @@ uv sync
 # noise floor (10 repeats of a chosen subset)
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only noise-floor --noise-scenarios cli,cap,chaos --repeats 10 \
-  --out bench/results-noise-sqlite-vps.json
+  --out benchmarks/results/results-noise-sqlite-vps.json
 
 # the v2 scenario set
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,live-density \
-  --out bench/results-v2-sqlite-vps.json
+  --out benchmarks/results/results-v2-sqlite-vps.json
 ```
 
 Useful flags: `--repeats N` (default 10) and `--noise-scenarios a,b,c` (default `cli,cap,chaos`). Every result file records the host state (load average, memory available, timestamp) next to the measurements, because the VPS is shared with other spike sessions.
@@ -38,7 +38,7 @@ The stub agent is configured through the environment the daemon passes down: `ST
 
 ## Measured noise floor (M)
 
-`bench/results-noise-sqlite-vps.json`, 10 repeats of `cli`, `cap` and `chaos` on the SQLite backend, VPS (Linux x86_64, 6 cores, 11GB, shared with three other spike sessions), 2026-11-22. Load average at the start of the run was 6.8 over 1 minute and 2.82 over 5 minutes, so the machine was busy and the numbers are upper bounds.
+`benchmarks/results/results-noise-sqlite-vps.json`, 10 repeats of `cli`, `cap` and `chaos` on the SQLite backend, VPS (Linux x86_64, 6 cores, 11GB, shared with three other spike sessions), 2026-11-22. Load average at the start of the run was 6.8 over 1 minute and 2.82 over 5 minutes, so the machine was busy and the numbers are upper bounds.
 
 | Scenario | Metric | Mean | Stdev | Min | Max | cv % |
 |---|---|---|---|---|---|---|
@@ -55,7 +55,7 @@ Consequence for the improvement loop: an enqueue latency change under 12ms and a
 
 ## Measured v2 results (M)
 
-`bench/results-v2-sqlite-vps.json`, same machine and date. Baseline gates all passed: `cap_holds`, `repo_cap_holds`, `chaos_all_done`, `tool_cap_holds`, `priority_ok` and `tool_trivial_ran_while_parked` are true, `enqueue_cli_median_ms` is 106.3 (gate 300), idle RSS 18.6MB with 0% CPU, 60 trivial jobs in 7.2s at cap 6 (8.33 jobs per second).
+`benchmarks/results/results-v2-sqlite-vps.json`, same machine and date. Baseline gates all passed: `cap_holds`, `repo_cap_holds`, `chaos_all_done`, `tool_cap_holds`, `priority_ok` and `tool_trivial_ran_while_parked` are true, `enqueue_cli_median_ms` is 106.3 (gate 300), idle RSS 18.6MB with 0% CPU, 60 trivial jobs in 7.2s at cap 6 (8.33 jobs per second).
 
 `orchestrator-kill` with K = 3 stub ACP sessions and a 20s turn: all 3 jobs completed (`orchkill_all_done` true), the 3 agent processes were still alive right after the daemon group was killed with `kill -9` (`orchkill_agents_alive_after_kill` = 3), so the agents outlive the orchestrator as G4 requires, and recovery to all done took 28.2s. Every job ran twice (`attempts` = 2) and every retry resumed the same session id through ACP `session/load` (`orchkill_resumed_via_session_load` = 3, `orchkill_restarted` = 0). Each killed mid-turn attempt counted as one duplicate turn, so `orchkill_duplicate_turns` = 3. The orchestrator cannot re-adopt a running agent process, it resumes the session instead, which is the S3 path. `orchkill_orphan_agents_surviving` = 0 after the scenario's cleanup, which kills the agents the bench started by exact pid and process group.
 
@@ -71,7 +71,7 @@ One caveat found while running this scenario (M): fleet's daemon does not unwind
 
 ## Idle noise floor (M, 2026-11-23 00:33 UTC)
 
-`bench/results-noise-sqlite-vps-idle.json`, 10 repeats of `cli`, `cap`, `chaos` and `throughput` on the SQLite backend, same VPS with no other sessions running (load average 0.00 at the start). This file, not the shared-host run above, is the reference for regression thresholds.
+`benchmarks/results/results-noise-sqlite-vps-idle.json`, 10 repeats of `cli`, `cap`, `chaos` and `throughput` on the SQLite backend, same VPS with no other sessions running (load average 0.00 at the start). This file, not the shared-host run above, is the reference for regression thresholds.
 
 | Metric | Mean | Stdev | cv |
 |---|---|---|---|
@@ -94,4 +94,4 @@ The field diff over the job rows shows exactly which state the crash cost. Only 
 
 `park-density` opens 1,000 and then 10,000 more parked sessions and measures the orchestrator's cost per parked session. 11,000 parked sessions measured (M) cost the orchestrator 0MB of extra RSS (18.4MB before and after) and 303 bytes each in the SQLite store. The bulk path is `bench/park_filler.py`, which calls fleet's own `queue.enqueue` and `queue.wait_on` in one process, because one CLI process per job would have taken about 16 minutes at the measured 95ms per enqueue.
 
-The comparison gate is `bench/compare.py` with `bench/thresholds.toml`. A numeric metric fails only when it is worse than both the noise band (2 x stdev from the idle noise floor in `bench/noise-linux.json`) and the per-metric percent tolerance, and a metric that the run did not produce fails too, so a crashed scenario cannot pass silently. The committed Linux baseline is `bench/baseline-linux.json`, produced from the quick scenario set on this host: the run took 3m4s, enqueue median 93.5ms, idle RSS 18.4MB at 0 percent CPU, 8.72 jobs per second, and every gate held.
+The comparison gate is `bench/compare.py` with `benchmarks/legacy-python/thresholds.toml`. A numeric metric fails only when it is worse than both the noise band (2 x stdev from the idle noise floor in `benchmarks/legacy-python/noise-linux.json`) and the per-metric percent tolerance, and a metric that the run did not produce fails too, so a crashed scenario cannot pass silently. The committed Linux baseline is `benchmarks/legacy-python/baseline-linux.json`, produced from the quick scenario set on this host: the run took 3m4s, enqueue median 93.5ms, idle RSS 18.4MB at 0 percent CPU, 8.72 jobs per second, and every gate held.

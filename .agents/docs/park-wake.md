@@ -2,7 +2,7 @@
 
 Close-out of the park/wake spike. Measured 2026-11-23 on the shared VPS (6 cores, 11GB RAM, load 0.2 to 0.9 during the runs, host state recorded in every result file). Everything below is M unless marked C.
 
-Results: `bench/results-wake-sqlite-vps.json` (1,000 parked), `bench/results-wake-sqlite-10k-vps.json` (10,000 parked), `bench/results-park-restate-vps.json` (Restate, 1,000 parked), `bench/results-bytes-sqlite-vps.json` and `bench/results-bytes-sqlite-vps-full.json` (the bytes). Method and the earlier spike results: `.agents/docs/orchestrator-framing.md` assessment 9.
+Results: `benchmarks/results/results-wake-sqlite-vps.json` (1,000 parked), `benchmarks/results/results-wake-sqlite-10k-vps.json` (10,000 parked), `.agents/docs/data/results-park-restate-vps.json` (Restate, 1,000 parked), `benchmarks/results/results-bytes-sqlite-vps.json` and `benchmarks/results/results-bytes-sqlite-vps-full.json` (the bytes). Method and the earlier spike results: `.agents/docs/orchestrator-framing.md` assessment 9.
 
 ## Method
 
@@ -22,9 +22,9 @@ The Restate experiment uses `bench/adapters/restate/park_wake.py`. Restate has n
 
 | | SQLite (ours) | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
 |---|---|---|---|
-| 1,000 parked sessions, RSS of the whole stack | 18.5MB idle, 18.7MB parked (M, `bench/results-park-sqlite-vps.json`) | 367.9MB idle, 851.2MB parked (M, `bench/results-park-restate-vps.json`) | not measured at 1,000 |
-| 10,000 parked sessions, RSS of the whole stack | 18.5MB idle, 19.1MB parked (M, `bench/results-park-sqlite-10k-vps.json`) | not measured (M: the 1,000 run already passes the memory budget) | 1,489MB (M, Rivet spike) |
-| Bytes per parked session on disk | 326 bytes (M, dbstat, 10,000 sessions, no WAL) | 91,398 bytes of data directory growth per parked invocation (M, `bench/results-park-restate-vps.json`) | 24KB (M, Rivet spike) |
+| 1,000 parked sessions, RSS of the whole stack | 18.5MB idle, 18.7MB parked (M, `benchmarks/results/results-park-sqlite-vps.json`) | 367.9MB idle, 851.2MB parked (M, `.agents/docs/data/results-park-restate-vps.json`) | not measured at 1,000 |
+| 10,000 parked sessions, RSS of the whole stack | 18.5MB idle, 19.1MB parked (M, `benchmarks/results/results-park-sqlite-10k-vps.json`) | not measured (M: the 1,000 run already passes the memory budget) | 1,489MB (M, Rivet spike) |
+| Bytes per parked session on disk | 326 bytes (M, dbstat, 10,000 sessions, no WAL) | 91,398 bytes of data directory growth per parked invocation (M, `.agents/docs/data/results-park-restate-vps.json`) | 24KB (M, Rivet spike) |
 | Wake latency, p50 | 112ms at 1,000 parked, 115ms at 10,000 parked (M) | 158.8ms (M, the lease release to the first parked job completing) | 5 to 6ms (M, Rivet spike) |
 | Wake latency, p99 | 173ms at 1,000 parked, 167ms at 10,000 parked (M) | not measured (single sample) | 10.6ms at 10k, but 2,034ms at 1k (M, bimodal: 3 of 40 samples were 1.3 to 2.0s) |
 | Enqueue of one parked session | 98ms through the CLI (M, Python startup), 0.1ms in the bulk filler | 202ms through the shim CLI (M, `park_enqueue_per_invocation_ms`) | 270ms (M) |
@@ -42,11 +42,11 @@ The per-session numbers that were reported before (4,444 bytes at 1,000 sessions
 | 10,000 sessions, one connection open | 3,051,520 | 4,161,040 | 7,212,560 | 721 |
 | 10,000 sessions, no second connection | 3,088,384 | 0 | 3,088,384 | 309 |
 
-(M, `bench/results-bytes-sqlite-vps.json`, the `wal_experiment` section.)
+(M, `benchmarks/results/results-bytes-sqlite-vps.json`, the `wal_experiment` section.)
 
 The mechanism: in WAL mode SQLite resets and truncates the WAL when the last connection to the database closes. The daemon holds a connection open for as long as it runs, so the WAL is never reset, and it grows to a high-water mark of 4,128,272 bytes (plus the 32,768 byte `-shm` file). Every subsequent commit reuses that space, so the WAL cost is a fixed overhead that the per-session number amortizes: 4,161,040 bytes over 1,000 sessions looks like 4,161 bytes each, over 10,000 it looks like 416, and the rest of the difference between 721 and 309 is where the WAL's high-water mark sits relative to the row data.
 
-The rows themselves, measured with `dbstat` on 10,000 parked sessions (M, `bench/results-bytes-sqlite-vps-full.json`):
+The rows themselves, measured with `dbstat` on 10,000 parked sessions (M, `benchmarks/results/results-bytes-sqlite-vps-full.json`):
 
 | Object | Bytes per session (shell job payload) | Bytes per session (ACP payload) |
 |---|---|---|
@@ -63,7 +63,7 @@ The remaining difference against the CI number of 303 bytes per session at 11,00
 
 ## Does the TTL reclaim shrink the file
 
-Measured on copies of the 10,000-session store (`bench/results-bytes-sqlite-vps-full.json`, the `reclaim` section):
+Measured on copies of the 10,000-session store (`benchmarks/results/results-bytes-sqlite-vps-full.json`, the `reclaim` section):
 
 | Variant | File before | File after | Freelist after |
 |---|---|---|---|
@@ -77,7 +77,7 @@ The reclaim that the production code does today (delete the row, leave the file 
 
 ## Wake latency breakdown
 
-From `bench/results-wake-sqlite-vps.json` and `bench/results-wake-sqlite-10k-vps.json` (M, p50 over 200 wakes):
+From `benchmarks/results/results-wake-sqlite-vps.json` and `benchmarks/results/results-wake-sqlite-10k-vps.json` (M, p50 over 200 wakes):
 
 | Stage | 1,000 parked | 10,000 parked |
 |---|---|---|
@@ -108,7 +108,7 @@ The parked-session bytes (326 per shell job, 249 per ACP session) are dominated 
 
 The WAL overhead (4,161,040 bytes fixed) goes away by checkpointing: `PRAGMA wal_checkpoint(TRUNCATE)` on a timer, or by not holding a second connection open during the bulk fill. With a periodic checkpoint the store of 10,000 parked sessions is 3.1MB, and the reclaim becomes visible with `incremental_vacuum`.
 
-Restate's numbers (367.9MB idle, 851.2MB parked, 91,398 bytes of data directory growth per parked invocation) are the ones that decide it. The 367.9MB idle is the server's RocksDB (an earlier draft of this section carried 393MB idle, 410MB parked and 30,787 bytes per parked; those figures match no result file or commit in this repo and were superseded, so they are struck here: the JSON in `bench/results-park-restate-vps.json` is authoritative). The per-parked cost is about 280 times ours, not 50. The same draft also carried a 52ms Restate wake and a 217ms enqueue; the JSON records wake_ms 158.8 and park_enqueue_per_invocation_ms 202.0, which are used here. Root cause: the salvage commit of this write-up (891aaa9) is the only source of those numbers; no results file at any commit or in the on-disk data dir supports them, so they are treated as transcribed from a run whose results were not saved. Even if the parking is elegant, the footprint fails the memory budget on every device we run, which is why the earlier verdict stands: keep the SQLite scheduler, copy the design (a parked job frees its slot) rather than adopt the runtime.
+Restate's numbers (367.9MB idle, 851.2MB parked, 91,398 bytes of data directory growth per parked invocation) are the ones that decide it. The 367.9MB idle is the server's RocksDB (an earlier draft of this section carried 393MB idle, 410MB parked and 30,787 bytes per parked; those figures match no result file or commit in this repo and were superseded, so they are struck here: the JSON in `.agents/docs/data/results-park-restate-vps.json` is authoritative). The per-parked cost is about 280 times ours, not 50. The same draft also carried a 52ms Restate wake and a 217ms enqueue; the JSON records wake_ms 158.8 and park_enqueue_per_invocation_ms 202.0, which are used here. Root cause: the salvage commit of this write-up (891aaa9) is the only source of those numbers; no results file at any commit or in the on-disk data dir supports them, so they are treated as transcribed from a run whose results were not saved. Even if the parking is elegant, the footprint fails the memory budget on every device we run, which is why the earlier verdict stands: keep the SQLite scheduler, copy the design (a parked job frees its slot) rather than adopt the runtime.
 
 ## Open questions
 

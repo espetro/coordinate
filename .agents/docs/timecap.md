@@ -34,7 +34,7 @@ At spawn the daemon sets these variables in the child's environment:
 
 ## Measured results [M]
 
-`bench/results-timecap-vps.json`, produced by the new `timecap` scenario in `bench/bench.py` on the shared VPS (Linux x86_64, 11 GB RAM, load 1.24 over 1 minute and 0.83 over 5 minutes at the start of the run, 8535 MB memory available, 2026-11-23). The scenario uses the stub ACP agent (`bench/stub_acp_agent.py`) with `STUB_FOREVER=1`, which opens a turn and never answers it, so only the dispatcher can end it. The cap is 3s and the grace period is 2s (the default 30s would dominate the measurement).
+`benchmarks/results/results-timecap-vps.json`, produced by the new `timecap` scenario in `bench/bench.py` on the shared VPS (Linux x86_64, 11 GB RAM, load 1.24 over 1 minute and 0.83 over 5 minutes at the start of the run, 8535 MB memory available, 2026-11-23). The scenario uses the stub ACP agent (`bench/stub_acp_agent.py`) with `STUB_FOREVER=1`, which opens a turn and never answers it, so only the dispatcher can end it. The cap is 3s and the grace period is 2s (the default 30s would dominate the measurement).
 
 | Part | Status | Attempts | Enqueue to `timed_out` | Pids gone after | Slot reused | Orphan pids |
 |---|---|---|---|---|---|---|

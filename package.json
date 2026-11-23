@@ -1,11 +1,12 @@
 {
-  "name": "coordinate-ts",
+  "name": "coordinate",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:bin": "sh scripts/build-bin.sh",
     "test": "sh scripts/build-sqlite-shared.sh && node --test"
   },
   "dependencies": {

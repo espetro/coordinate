@@ -24,8 +24,6 @@ jobs:
       - name: Install pnpm
         run: corepack enable && corepack prepare pnpm@12.16.1 --activate
       - name: Install dependencies
-        working-directory: ts
         run: pnpm install --frozen-lockfile
       - name: Test
-        working-directory: ts
         run: pnpm test

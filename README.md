@@ -57,7 +57,7 @@ Each device keeps its own database under `$XDG_STATE_HOME/coordinate/queue.db`. 
 | macOS x64 | `coordinate-*-darwin-x64` | cross-compiled |
 | Windows x64 | `coordinate-*-windows-x64.exe` | best-effort smoke test per release |
 
-To build from source you need [scriptc](https://github.com/vercel-labs/scriptc) 0.4.16, pnpm and zig 0.14.1. Run `mise install` in a checkout to get all three, as pinned in `mise.toml`, then see [`ts/build-bin.sh`](ts/build-bin.sh).
+To build from source you need [scriptc](https://github.com/vercel-labs/scriptc) 0.4.16, pnpm and zig 0.14.1. Run `mise install` in a checkout to get all three, as pinned in `mise.toml`, then see [`scripts/build-bin.sh`](scripts/build-bin.sh).
 
 ## Docs
 

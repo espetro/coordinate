@@ -1,5 +1,5 @@
 # Toolchain pins for repo-local dev (mise install). zig 0.14.1 is required for
-# the scriptc cross-compiles in ts/build-*.sh (zig >= 0.15 lacks the `zig cc`
+# the scriptc cross-compiles in scripts/build-*.sh (zig >= 0.15 lacks the `zig cc`
 # driver scriptc invokes); scriptc 0.4.16 is the validated compiler
 # (see .agents/docs/ts-port-spike.md).
 # CI does not use this file: the release workflow installs both itself.

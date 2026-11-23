@@ -60,7 +60,7 @@ test("CLI forward: filtering, {message} substitution, cursor resume", async () =
   db.close();
 
   const log = path.join(d, "fwd.log");  const cursor = path.join(d, "cursor");
-  const exe = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "coordinate.mjs");
+  const exe = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "bin", "coordinate.mjs");
   const env = {
     ...process.env,
     XDG_STATE_HOME: d,

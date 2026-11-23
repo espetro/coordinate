@@ -13,8 +13,8 @@ Date: 2026-11-23. Branch `feat/events-bridge`. Implements bridge (a) from
    `follow(c, since_id)` returns ordered rows after `since_id`; `max_id()` gives the tail cursor. Readers are ordinary WAL read connections, so a follower never blocks the daemon writer (M: same WAL mode `connect()` already sets).
 2. `coordinate events [--since ID] [--follow]` (Python CLI, `src/coordinate/cli.py`).
    JSONL, one object per line: `{"id", "ts", "job_id", "kind", "data"}`. `--follow` polls `MAX(id)` at 0.5s until Ctrl-C (M).
-3. The same events table and emission in the TS port (`ts/src/queue.ts`).
-   The TS daemon gets every transition it actually performs: `enqueued`, `claimed`, `done`/`failed` (`finish`), `timed_out` (reap deadline, `finalizeTimedOut`, budget exhausted at claim), `requeued`/`dead` (reap), `parked` (`waitOn`), `released`, `cancelled`, `requeued` (dead retry) (M). `coordinate events` exists in the TS CLI (`ts/src/main.ts`) with the same JSONL shape and `--follow`/`--since`.
+3. The same events table and emission in the TS port (`src/queue.ts`).
+   The TS daemon gets every transition it actually performs: `enqueued`, `claimed`, `done`/`failed` (`finish`), `timed_out` (reap deadline, `finalizeTimedOut`, budget exhausted at claim), `requeued`/`dead` (reap), `parked` (`waitOn`), `released`, `cancelled`, `requeued` (dead retry) (M). `coordinate events` exists in the TS CLI (`src/main.ts`) with the same JSONL shape and `--follow`/`--since`.
    TS difference from Python, kept honest: the TS port has no tool-class slot logic and no acp kind, so it emits no events those paths would produce (M).
 4. Forwarder: `src/coordinate_t3_forwarder.py` (Python ops tool, not shipped in the package).
    Reads the events table through the `coordinate` package (read-only WAL path), filters to terminal transitions by default (`done,failed,timed_out,cancelled,dead,requeued`, `--kinds` to change, empty string for all), and sends one `t3 thread send <thread> "[machine] coordinate[kind] job N ..."` message per transition.

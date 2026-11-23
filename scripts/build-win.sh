@@ -4,14 +4,14 @@
 # the @scriptc/runtime-win32-x64-msvc pack (devDependency, same version as scriptc),
 # and a COFF build of @cutils/sqlite's static shim (see build-win-shim.sh).
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 ZIG=${ZIG:-zig}
-OUT=${OUT:-../win-spike/coordinate.exe}
+OUT=${OUT:-dist/coordinate-windows-x64.exe}
 export ZIG
-mkdir -p ../win-spike
+mkdir -p "$(dirname "$OUT")"
 exec env SCRIPTC_TARGET=x86_64-windows-gnu \
-  SCRIPTC_LINKER="$PWD/zigcc-wrap" \
-  scriptc build main-elf.ts \
+  SCRIPTC_LINKER="$PWD/scripts/zigcc-wrap" \
+  scriptc build src/main-elf.ts \
   --npm-static @cutils/sqlite,@cutils/cli \
   --ffi node_modules/@cutils/sqlite/ffi.json \
   -o "$OUT" "$@"

@@ -40,23 +40,21 @@ jobs:
       - name: Install scriptc ${{ env.SCRIPTC_VERSION }}
         run: npm install -g scriptc@${{ env.SCRIPTC_VERSION }}
 
-      - name: Install ts dependencies
-        working-directory: ts
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build Linux binaries
-        working-directory: ts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          scriptc build main-elf.ts \
+          scriptc build src/main-elf.ts \
             --npm-static @cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
-            -o "../coordinate-${VERSION}-linux-x64-gnu"
-          scriptc build main-elf.ts \
+            -o "coordinate-${VERSION}-linux-x64-gnu"
+          scriptc build src/main-elf.ts \
             --npm-static @cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
             --static \
-            -o "../coordinate-${VERSION}-linux-x64-musl"
+            -o "coordinate-${VERSION}-linux-x64-musl"
 
       - name: Smoke test Linux binaries
         run: |
@@ -65,30 +63,28 @@ jobs:
           "./coordinate-${VERSION}-linux-x64-musl" --help
 
       - name: Build darwin-arm64 (cross-compiled, not runnable here)
-        working-directory: ts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ./build-darwin-sqlite.sh arm64
+          ./scripts/build-darwin-sqlite.sh arm64
           cp node_modules/@cutils/sqlite/build-arm64/libsqlite3-shim.a \
             node_modules/@cutils/sqlite/build/libsqlite3-shim.a
           SCRIPTC_TARGET=arm64-apple-macosx14.0.0 \
-            scriptc build main-elf.ts \
+            scriptc build src/main-elf.ts \
             --npm-static @cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
-            -o "../coordinate-${VERSION}-darwin-arm64"
+            -o "coordinate-${VERSION}-darwin-arm64"
 
       - name: Build darwin-x64 (cross-compiled, not runnable here)
-        working-directory: ts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ./build-darwin-sqlite.sh x64
+          ./scripts/build-darwin-sqlite.sh x64
           cp node_modules/@cutils/sqlite/build-x64/libsqlite3-shim.a \
             node_modules/@cutils/sqlite/build/libsqlite3-shim.a
           SCRIPTC_TARGET=x86_64-apple-macosx14.0.0 \
-            scriptc build main-elf.ts \
+            scriptc build src/main-elf.ts \
             --npm-static @cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
-            -o "../coordinate-${VERSION}-darwin-x64"
+            -o "coordinate-${VERSION}-darwin-x64"
 
       - name: Verify darwin binaries are Mach-O
         run: |
@@ -97,11 +93,10 @@ jobs:
           file "coordinate-${VERSION}-darwin-x64" | grep -q "Mach-O.*x86_64"
 
       - name: Build windows-x64 (cross-compiled, smoked on windows-latest below)
-        working-directory: ts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ./build-win-shim.sh
-          OUT="../coordinate-${VERSION}-windows-x64.exe" ./build-win.sh
+          ./scripts/build-win-shim.sh
+          OUT="coordinate-${VERSION}-windows-x64.exe" ./scripts/build-win.sh
 
       - name: Tarballs and checksums
         run: |

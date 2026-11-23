@@ -4,7 +4,7 @@
 
 Rivet and Temporal are runtime frameworks that you build on. coordinate is a tool you run, aimed at agent orchestration. Its modules have plain interfaces so that parts can be swapped, and it could also ship as a library if that turns out to be useful.
 
-Status as of 2026-11-23. The code is TypeScript compiled with scriptc. The binaries come from `ts/` through `ts/build-bin.sh`. The Python version is on the `legacy/python` branch, and `main` has no Python, `pyproject.toml` or `uv`. These parts have not moved to TypeScript yet: ACP agent-session enqueue, the plugins runner, `coordinate service install` and `coordinate migrate`. In this document (M) marks a measured number and (D) marks a design that is not built. Anything unmarked is built and tested. Numbers measured before the port came from the Python version and say so.
+Status as of 2026-11-23. The code is TypeScript compiled with scriptc. The binaries come from `ts/` through `scripts/build-bin.sh`. The Python version is on the `legacy/python` branch, and `main` has no Python, `pyproject.toml` or `uv`. These parts have not moved to TypeScript yet: ACP agent-session enqueue, the plugins runner, `coordinate service install` and `coordinate migrate`. In this document (M) marks a measured number and (D) marks a design that is not built. Anything unmarked is built and tested. Numbers measured before the port came from the Python version and say so.
 
 Reference material is in `.agents/docs/`. Requirements and assessments are in `orchestrator-framing.md`, the scoring rubric in `tool-search-rubric.md`, candidate tools in `candidates-survey.md`. Spike reports are the `*-spike.md` files plus `bench-v2.md`, `bench-ci.md` and `timecap.md`. Designs are `readoption-design.md`, `toolcaps-design.md` and `fallback-design.md`, and research is under `research/`. The earlier `fleet` deployment architecture is `fleet-architecture-2026-11-20.md`.
 
@@ -118,7 +118,7 @@ Parked sessions and wake time were measured on the Python daemon only (M): 10,00
 
 ## Bench and CI
 
-`.github/workflows/ci.yml` runs the TypeScript tests on every push and pull request. The Python bench harness (`bench/bench.py`, `bench/compare.py`) went away with the Python stack and is on `legacy/python`, so there is no regression gate on performance until the harness is ported or pointed at the TypeScript binary. `bench/results-*.json` and `bench/thresholds.toml` stay as the cited historical measurements.
+`.github/workflows/ci.yml` runs the TypeScript tests on every push and pull request. The Python bench harness (`bench/bench.py`, `bench/compare.py`) went away with the Python stack and is on `legacy/python`, so there is no regression gate on performance until the harness is ported or pointed at the TypeScript binary. `bench/results-*.json` and `benchmarks/legacy-python/thresholds.toml` stay as the cited historical measurements.
 
 ## Prototype plan
 

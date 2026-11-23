@@ -1,10 +1,6 @@
 node_modules/
-.stub-acp-sessions.json
-__pycache__/
-bench/results/
-*.pyc
-
-# scriptc build outputs (distributed as release assets, not source)
-ts/bin/coordinate-*
-ts/dist/
-ts/node_modules/
+dist/
+*.ll
+.scriptc/
+/coordinate-*
+.DS_Store

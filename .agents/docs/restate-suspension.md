@@ -5,7 +5,7 @@ Close-out of the awakeable park/wake variant. Measured 2026-11-23 on the shared 
 
 Question: does replacing the polling park (`ctx.sleep(200ms)` loop) with a durable awakeable give Restate true park semantics on this stack, and what does the awakeable resolution itself cost?
 
-Results: `bench/results-restate-suspension-vps.json` (awakeable variant, 1,000 parked) and `bench/results-park-restate-vps-awakeable-session.json` (same-session polling baseline via `park_wake.py`). Adapter: `bench/adapters/restate/park_wake_awakeable.py`; services: `bench/adapters/restate/worker.py`. Method otherwise as `.agents/docs/park-wake.md`.
+Results: `.agents/docs/data/results-restate-suspension-vps.json` (awakeable variant, 1,000 parked) and `.agents/docs/data/results-park-restate-vps-awakeable-session.json` (same-session polling baseline via `park_wake.py`). Adapter: `bench/adapters/restate/park_wake_awakeable.py`; services: `bench/adapters/restate/worker.py`. Method otherwise as `.agents/docs/park-wake.md`.
 
 ## Method
 
@@ -51,4 +51,4 @@ No, as configured. The registration, durable waiter list, and resolution all wor
 
 ## Verdict for the footprint table
 
-The verdict does not change: keep the SQLite scheduler, copy the design rather than adopt the runtime (M). Even granting the awakeable variant its best numbers, the stack idles at 730.3MB and parks 1,000 invocations at 1,019.8MB (M), against 18.7MB parked for the SQLite scheduler at the same population (M, `bench/results-park-sqlite-vps.json`), and the disk growth is 294KB per parked invocation against SQLite's 326 bytes (M). The idle RSS alone (730MB, M) is 39x the entire SQLite stack parked. The awakeable variant is a genuine improvement over polling (41% less RSS per parked, push wake) and is the right shape for a hosted Restate deployment, but the 393 to 730MB idle floor is the server's RocksDB and is unaffected by the park mechanism (M, across all three Restate runs).
+The verdict does not change: keep the SQLite scheduler, copy the design rather than adopt the runtime (M). Even granting the awakeable variant its best numbers, the stack idles at 730.3MB and parks 1,000 invocations at 1,019.8MB (M), against 18.7MB parked for the SQLite scheduler at the same population (M, `benchmarks/results/results-park-sqlite-vps.json`), and the disk growth is 294KB per parked invocation against SQLite's 326 bytes (M). The idle RSS alone (730MB, M) is 39x the entire SQLite stack parked. The awakeable variant is a genuine improvement over polling (41% less RSS per parked, push wake) and is the right shape for a hosted Restate deployment, but the 393 to 730MB idle floor is the server's RocksDB and is unaffected by the park mechanism (M, across all three Restate runs).

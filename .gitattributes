@@ -1,2 +1,2 @@
 .agents/** linguist-documentation
-bench/results-*.json linguist-generated
+benchmarks/results/*.json linguist-generated

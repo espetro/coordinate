@@ -107,7 +107,7 @@ An active row naming a plugin that fails discovery is a startup warning, not an 
 
 ### 2.3 What is deliberately not a knob
 
-The gate thresholds, bench pass criteria, fitness definitions and TTL/GC rules are not config: they are code (M: `bench/compare.py` + `bench/thresholds.toml` exist in-tree, and the survey puts all of these in Tier 0, survey 3.1). Rationale: autoresearch's evaluator-tampering issue is precisely "the agent owns the file that prints the metric" (M: survey 1.1, issue #599); making gates configurable re-creates that surface for anyone with write access to config, including a future improvement loop. The correct reading of the survey for a product: the protected layer is protected by not having a config surface at all, not by policy text next to one (C, design judgement; supported by the Exo template, R: arXiv 2611.00463).
+The gate thresholds, bench pass criteria, fitness definitions and TTL/GC rules are not config: they are code (M: `bench/compare.py` + `benchmarks/legacy-python/thresholds.toml` exist in-tree, and the survey puts all of these in Tier 0, survey 3.1). Rationale: autoresearch's evaluator-tampering issue is precisely "the agent owns the file that prints the metric" (M: survey 1.1, issue #599); making gates configurable re-creates that surface for anyone with write access to config, including a future improvement loop. The correct reading of the survey for a product: the protected layer is protected by not having a config surface at all, not by policy text next to one (C, design judgement; supported by the Exo template, R: arXiv 2611.00463).
 
 ## 3. Self-update
 

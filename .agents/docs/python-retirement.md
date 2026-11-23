@@ -11,13 +11,13 @@ CLI surface: enqueue, status, wait-on, release, cancel, stats, events,
 
 | File | LOC | Role | TS status |
 |---|---|---|---|
-| `src/coordinate/queue.py` | 564 | Full queue: tool-class slot matching, config slots, ACP pid-file bookkeeping, lease/deadline edge cases | **Partial port** (`ts/src/queue.ts` ~420 lines): cmd lane core, slots wildcard-only, no config TOML slots, no ACP fields |
-| `src/coordinate/daemon.py` | 315 | Claim loop, spawn, park/wake, reaper, timecap; **ACP lane** (`spawn_acp`, stdout drain, session cancel, pid-file group kill) | cmd lane ported (`ts/src/daemon.ts`); ACP lane absent |
-| `src/coordinate/cli.py` | 180 | argparse CLI incl. `--acp/--prompt/--registry/--model` enqueue lane | cmd verbs ported (`ts/src/main.ts`); `--acp` flags not ported |
+| `src/coordinate/queue.py` | 564 | Full queue: tool-class slot matching, config slots, ACP pid-file bookkeeping, lease/deadline edge cases | **Partial port** (`src/queue.ts` ~420 lines): cmd lane core, slots wildcard-only, no config TOML slots, no ACP fields |
+| `src/coordinate/daemon.py` | 315 | Claim loop, spawn, park/wake, reaper, timecap; **ACP lane** (`spawn_acp`, stdout drain, session cancel, pid-file group kill) | cmd lane ported (`src/daemon.ts`); ACP lane absent |
+| `src/coordinate/cli.py` | 180 | argparse CLI incl. `--acp/--prompt/--registry/--model` enqueue lane | cmd verbs ported (`src/main.ts`); `--acp` flags not ported |
 | `src/coordinate/service.py` | 106 | systemd user-unit install/boot (daemon lifecycle) | Not ported. Portable now (shelling out to `systemctl`, no Python stdlib dependency) |
 | `src/coordinate/plugins.py` | 150 | Plugin loader discovery/hooks | Not ported. Portable now; needs a decision on plugin contract (exec-based plugins keep it language-neutral) |
-| `src/coordinate/paths.py` | 107 | XDG paths, config bounds | Ported as `ts/src/env.ts` (subset) |
-| `src/coordinate/events.py` | 44 | events tail helpers | Ported inline in `ts/src/main.ts` (`events` verb) + `forwarder.ts` |
+| `src/coordinate/paths.py` | 107 | XDG paths, config bounds | Ported as `src/env.ts` (subset) |
+| `src/coordinate/events.py` | 44 | events tail helpers | Ported inline in `src/main.ts` (`events` verb) + `forwarder.ts` |
 | `__init__/__main__/daemon_cli` | 16 | Entry shims | Replaced by the single binary |
 
 ### Ops/bench (not shipped)

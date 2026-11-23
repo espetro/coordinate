@@ -6,7 +6,7 @@
 # Extra: zig's mingw does not export stat64i32 (an ucrt CRT alias); the shim's
 # TU and the amalgamation reference it, so a two-function bridge object is added.
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 ZIG=${ZIG:-zig}
 PKG=node_modules/@cutils/sqlite
 CFLAGS="-O2 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_FTS5"

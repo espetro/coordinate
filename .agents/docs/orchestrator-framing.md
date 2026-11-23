@@ -129,7 +129,7 @@ This requires every module to sit behind the interfaces below, so the loop swaps
 
 ## Assessment 9: spike results (2026-11-22, VPS)
 
-Four spikes ran on the VPS against the adapter contract and bench (`.agents/docs/restate-spike.md`, `.agents/docs/rivet-spike.md`, `.agents/docs/term-fallback-spike.md`, `.agents/docs/bench-v2.md`). All numbers are M on the shared VPS, load recorded in each result file. The Rivet queue-scenario numbers come from `bench/results-rivet-fill-vps.json` (the one-actor coordinator shim in `bench/adapters/rivet/`), added after the first Rivet spike, which covered only the session-store shape.
+Four spikes ran on the VPS against the adapter contract and bench (`.agents/docs/restate-spike.md`, `.agents/docs/rivet-spike.md`, `.agents/docs/term-fallback-spike.md`, `.agents/docs/bench-v2.md`). All numbers are M on the shared VPS, load recorded in each result file. The Rivet queue-scenario numbers come from `.agents/docs/data/results-rivet-fill-vps.json` (the one-actor coordinator shim in `bench/adapters/rivet/`), added after the first Rivet spike, which covered only the session-store shape.
 
 | | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
 |---|---|---|---|

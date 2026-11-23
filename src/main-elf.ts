@@ -1,2 +1,2 @@
 /// <reference path="./shims.d.ts" />
-import "./src/main.ts";
+import "./main.ts";

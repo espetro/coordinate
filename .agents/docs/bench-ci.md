@@ -11,7 +11,7 @@ The bench suite runs in GitHub Actions on every pull request and on every push t
 | `Install uv` | `astral-sh/setup-uv@v5` with the uv cache keyed on `uv.lock` |
 | `Install the project` | `uv sync --all-groups --frozen`, which creates the `.venv` the bench drives |
 | `Run the benchmark` | `bench/bench.py` over the quick scenario set, writing `bench/results/results-ci.json` |
-| `Compare against the baseline` | `bench/compare.py` against `bench/baseline-linux.json`, with `bench/thresholds.toml` and `bench/noise-linux.json`; the markdown table goes to `$GITHUB_STEP_SUMMARY` and the exit code fails the job |
+| `Compare against the baseline` | `bench/compare.py` against `benchmarks/legacy-python/baseline-linux.json`, with `benchmarks/legacy-python/thresholds.toml` and `benchmarks/legacy-python/noise-linux.json`; the markdown table goes to `$GITHUB_STEP_SUMMARY` and the exit code fails the job |
 | `Upload the results` | `bench/results/` as a workflow artifact, 14 days of retention |
 
 The quick scenario set is `cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,state-loss`. It took 3m4s on the VPS (M), so the job fits comfortably in the 10 minute target and inside the 45 minute job timeout.
@@ -22,9 +22,9 @@ The `workflow_dispatch` event adds two inputs. `scenario_set` picks `quick` or `
 
 A GitHub runner is a shared, virtualized, two-core machine whose neighbours are not ours. The same code produces different latencies on every run, so an absolute number like "enqueue must be under 300ms" is either so loose it catches nothing or so tight it fails on noise. The comparison therefore works in two bands, and a metric has to escape both to fail.
 
-The first band is the metric's own noise, measured on an idle host. `bench/noise-linux.json` holds 10 repeats of `cli`, `cap`, `chaos` and `throughput` with a load average of 0.00 at the start of the run (M, branch `spike/noise-idle`). The stdev of each metric in that file is the metric's noise on a quiet machine, and the band is twice that stdev. For `enqueue_cli_median_ms` the stdev is 6.4ms, so the band is about 13ms; for `chaos_recovery_to_all_done_s` the stdev is 0.003s, so the band is 0.006s.
+The first band is the metric's own noise, measured on an idle host. `benchmarks/legacy-python/noise-linux.json` holds 10 repeats of `cli`, `cap`, `chaos` and `throughput` with a load average of 0.00 at the start of the run (M, branch `spike/noise-idle`). The stdev of each metric in that file is the metric's noise on a quiet machine, and the band is twice that stdev. For `enqueue_cli_median_ms` the stdev is 6.4ms, so the band is about 13ms; for `chaos_recovery_to_all_done_s` the stdev is 0.003s, so the band is 0.006s.
 
-The second band is a per-metric percent tolerance in `bench/thresholds.toml`, because the noise file only covers the four scenarios it measured. The tolerance is wide where the metric is noisy by nature and tight where the number is supposed to be stable. `enqueue_cli_p95_ms` gets 35 percent because it is a second order statistic over ten samples and had a coefficient of variation of 8.9 percent (M); `idle_rss_mb` gets 20 percent; the recovery times get 40 percent because they include a lease expiry wait.
+The second band is a per-metric percent tolerance in `benchmarks/legacy-python/thresholds.toml`, because the noise file only covers the four scenarios it measured. The tolerance is wide where the metric is noisy by nature and tight where the number is supposed to be stable. `enqueue_cli_p95_ms` gets 35 percent because it is a second order statistic over ten samples and had a coefficient of variation of 8.9 percent (M); `idle_rss_mb` gets 20 percent; the recovery times get 40 percent because they include a lease expiry wait.
 
 A metric fails only when it is worse than both bands, so a noisy metric cannot fail the job for a change inside its own noise, and a stable metric cannot drift just because its stdev happens to be small. Metrics whose baseline is near zero get an `absolute_tolerance`, which is the floor of the band: `idle_cpu_pct` has a baseline of 0 percent, so a percent tolerance would be zero and any wobble would fail the job.
 
@@ -45,25 +45,25 @@ uv sync --all-groups
 # on a quiet host, with the quick scenario set
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,state-loss \
-  --out bench/baseline-linux.json
+  --out benchmarks/legacy-python/baseline-linux.json
 
 # the noise floor, on an idle host, with the same four scenarios the old one covers
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only noise-floor --noise-scenarios cli,cap,chaos,throughput --repeats 10 \
-  --out bench/noise-linux.json
+  --out benchmarks/legacy-python/noise-linux.json
 ```
 
 Then check the new baseline against itself and commit it together with the change that caused the drift.
 
 ```sh
-.venv/bin/python bench/compare.py --baseline bench/baseline-linux.json \
-  --current bench/baseline-linux.json --thresholds bench/thresholds.toml \
-  --noise bench/noise-linux.json
+.venv/bin/python bench/compare.py --baseline benchmarks/legacy-python/baseline-linux.json \
+  --current benchmarks/legacy-python/baseline-linux.json --thresholds benchmarks/legacy-python/thresholds.toml \
+  --noise benchmarks/legacy-python/noise-linux.json
 ```
 
 Two rules for a refresh. First, refresh the baseline from the same code the pull request changes, never from `main`, otherwise the baseline hides the regression it is supposed to catch. Second, refresh the noise floor only from an idle host and only when the metric's own noise has changed; a noise file taken on a busy machine makes every threshold meaningless, which is why the committed one was measured with a load average of 0.00 (M) rather than the 6.8 of the first run.
 
-If the drift is real and wanted, raise the per-metric percent tolerance in `bench/thresholds.toml` instead of the baseline, so the record of how much the metric is allowed to move stays next to the decision. If the drift is not wanted, the job was right to fail.
+If the drift is real and wanted, raise the per-metric percent tolerance in `benchmarks/legacy-python/thresholds.toml` instead of the baseline, so the record of how much the metric is allowed to move stays next to the decision. If the drift is not wanted, the job was right to fail.
 
 ## What the numbers said when this was set up
 
