@@ -38,6 +38,12 @@ Every number comes from a result file in [`benchmarks/`](benchmarks/).
 - [Agent skill](skills/coordinate/SKILL.md): copy it into your agent's skills directory
 - [Contributing](CONTRIBUTING.md)
 
+## Ecosystem
+
+- [scriptc](https://github.com/vercel-labs/scriptc) — the TypeScript-to-binary compiler coordinate is built with
+- [cutils](https://github.com/sigilco/cutils) — `@cutils/sqlite` and `@cutils/cli`, the scriptc-compilable packages under the hood
+- [cauce](https://github.com/espetro/cauce) — sibling single-binary tool for agents
+
 ## License
 
 [Apache-2.0](LICENSE). Copyright 2026 Joaquin Terrasa & contributors.
