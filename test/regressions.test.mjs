@@ -317,7 +317,7 @@ test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool 
   }
 });
 
-test("X2: a missing binary fails the job and the daemon stays up", { todo: "cp.spawn reports ENOENT as an unhandled 'error' event; the daemon dies and the row stays running", timeout: DAEMON_T }, async () => {
+test("X2: a missing binary fails the job and the daemon stays up", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--", "/nonexistent/regress-binary-xyz", "arg");
@@ -330,7 +330,7 @@ test("X2: a missing binary fails the job and the daemon stays up", { todo: "cp.s
   }
 });
 
-test("X2: a nonexistent cwd fails the job and the daemon stays up", { todo: "same unhandled 'error' event as the missing binary", timeout: DAEMON_T }, async () => {
+test("X2: a nonexistent cwd fails the job and the daemon stays up", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--cwd", path.join(r.dir, "does-not-exist"), "--", "true");

@@ -259,11 +259,12 @@ export function heartbeat(db: Database, jid: number, owner: string): boolean {
   return cur.changes > 0;
 }
 
-export function finish(db: Database, jid: number, owner: string, status: string): string | null {
+export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null): string | null {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
-  db.prepareRaw("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?").run([
+  db.prepareRaw("UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?").run([
     status,
+    outcome,
     jid,
     owner,
   ]);

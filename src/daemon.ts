@@ -1,6 +1,10 @@
 // Dispatcher daemon: claim loop, subprocess execution, lease heartbeat, reaper.
 // Port of src/coordinate/daemon.py run() for cmd jobs only (no ACP lane, no tool-class
 // spawn interception: the bench --cli scenarios used here do not exercise [slots] config).
+// Python's Popen raised OSError synchronously and the loop recorded `failed` (daemon.py:307-309);
+// node reports the same failures asynchronously as an `error` event on the ChildProcess, so
+// spawnJob passes the running list down and spawnRaw marks the entry on error instead of
+// letting the unhandled event crash the daemon.
 
 import * as cp from "node:child_process";
 import * as fs from "node:fs";
@@ -17,6 +21,7 @@ const SH = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
 interface Running {
   jid: number;
   proc: cp.ChildProcess;
+  spawnErrored?: boolean;
 }
 
 class Parked {
@@ -252,15 +257,15 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
   return toks[0];
 }
 
-function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload): cp.ChildProcess {
+function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const argv0 = argv0Of(kind, payload);
   if (argv0 === null) {
-    return spawnRaw(db, jid, owner, kind, payload);
+    return spawnRaw(db, jid, owner, kind, payload, running);
   }
   const resolved = which(argv0);
   const m = matchToolClass(resolved === null ? argv0 : resolved);
   if (m === null) {
-    return spawnRaw(db, jid, owner, kind, payload);
+    return spawnRaw(db, jid, owner, kind, payload, running);
   }
   const proj = projectKey(payload.cwd);
   auditSpawn(db, jid, argv0, m.cls, proj);
@@ -274,10 +279,10 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
     q.waitOn(db, jid, key); // D7 park-at-boundary
     throw new Parked(key);
   }
-  return spawnRaw(db, jid, owner, kind, payload);
+  return spawnRaw(db, jid, owner, kind, payload, running);
 }
 
-function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload): cp.ChildProcess {
+function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
   const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio: "ignore" as const };
   const win = process.platform === "win32";
@@ -287,7 +292,25 @@ function spawnRaw(db: Database, jid: number, owner: string, kind: string, payloa
         ? cp.spawn(SH, ["/c", cmd], opts)
         : cp.spawn(SH, ["-c", cmd], opts)
       : cp.spawn(cmd[0], cmd.slice(1), opts);
-  q.setProc(db, jid, owner, proc.pid === undefined || proc.pid === null ? 0 : proc.pid);
+  // The handler must be attached before the pid check: on Linux, cp.spawn reports ENOENT
+  // with pid already undefined, and the 'error' event still arrives on the next tick. An
+  // unhandled 'error' event crashes the whole daemon.
+  proc.on("error", (err: Error) => {
+    const r = running.find((x) => x.jid === jid);
+    if (r !== undefined) {
+      r.spawnErrored = true;
+    }
+    const event = q.finish(db, jid, owner, "failed", "spawn failed: " + err.message);
+    if (event !== null) {
+      q.release(db, event);
+    }
+  });
+  if (proc.pid === undefined || proc.pid === null) {
+    // Spawn failed synchronously (bad cwd, permission): Python's Popen would have raised here.
+    q.finish(db, jid, owner, "failed", "spawn failed");
+    return proc;
+  }
+  q.setProc(db, jid, owner, proc.pid);
   return proc;
 }
 
@@ -367,7 +390,7 @@ export function run(): void {
     for (let i = running.length - 1; i >= 0; i--) {
       const r = running[i];
       // spawn errors: node emits "error"; a missing binary exits with code 127 via sh
-      if (r.proc.exitCode !== null || r.proc.signalCode !== null) {
+      if (r.proc.exitCode !== null || r.proc.signalCode !== null || r.spawnErrored === true) {
         exitProc(r, r.proc.exitCode);
         running.splice(i, 1);
         busy = true;
@@ -397,7 +420,8 @@ export function run(): void {
       }
       busy = true;
       try {
-        running.push({ jid: got.jid, proc: spawnJob(db, got.jid, owner, got.kind, got.payload) });
+        const proc = spawnJob(db, got.jid, owner, got.kind, got.payload, running);
+        running.push({ jid: got.jid, proc });
       } catch (e) {
         if (e instanceof Parked) {
           busy = true; // parked at the heavy-spawn boundary, no worker spawned
