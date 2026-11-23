@@ -53,7 +53,7 @@ if [ -z "$VERSION" ]; then
   VERSION="$LATEST"
 fi
 
-NAME="coordinate-${VERSION}-${TARGET}"
+NAME="coordinate-${VERSION#v}-${TARGET}"
 URL="$BASE_URL/$VERSION/$NAME"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
