@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from . import paths
+from .events import EVENTS_DDL, emit  # noqa: F401 (re-exported for callers)
 
 try:  # tomllib is stdlib from 3.11
     import tomllib
@@ -231,6 +232,7 @@ def connect() -> sqlite3.Connection:
     c.execute("PRAGMA synchronous=NORMAL")
     _migrate_jobs(c)
     c.executescript(SCHEMA)
+    c.executescript(EVENTS_DDL)
     have = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
     for col, typ in (("pgid", "INTEGER"), ("pidfile", "TEXT"), ("max_runtime_s", "REAL"),
                      ("runtime_used_s", "REAL DEFAULT 0"), ("deadline_at", "REAL"),
@@ -282,7 +284,9 @@ def enqueue(c, payload: dict, kind="cmd", priority=0, max_attempts=3, run_at=Non
         "INSERT INTO jobs(kind,payload,priority,run_at,max_attempts,created_at,max_runtime_s) "
         "VALUES(?,?,?,?,?,?,?)",
         (kind, json.dumps(payload), priority, run_at or now, max_attempts, now, max_runtime_s))
-    return cur.lastrowid
+    jid = cur.lastrowid
+    emit(c, jid, "enqueued", {"kind": kind})
+    return jid
 
 
 def q_used_cost(c, key: str) -> int:
@@ -321,6 +325,7 @@ def claim(c, owner: str):
                 if remaining <= 0:  # budget exhausted while parked/queued: never claim again
                     c.execute("UPDATE jobs SET status='timed_out', outcome='budget exhausted before claim', "
                               "lease_owner=NULL, lease_expires_at=NULL WHERE id=?", (jid,))
+                    emit(c, jid, "timed_out", {"outcome": "budget exhausted before claim"})
                     continue
             c.execute(
                 "UPDATE jobs SET status='running', attempts=attempts+1, lease_owner=?, "
@@ -328,6 +333,7 @@ def claim(c, owner: str):
                 (owner, exp, now, None if remaining is None else now + remaining, jid))
             c.executemany("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)",
                           [(k, exp, jid) for k in keys])
+            emit(c, jid, "claimed", {"owner": owner})
             c.execute("COMMIT")
             return jid, kind, payload
         c.execute("COMMIT")
@@ -440,6 +446,7 @@ def finish(c, jid: int, owner: str, status: str) -> str | None:
             event = key
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "
               "(SELECT 1 FROM jobs WHERE id=? AND status<>'running')", (jid, jid))
+    emit(c, jid, "done" if status == "done" else status, {"status": status})
     c.execute("COMMIT")
     return event
 
@@ -456,14 +463,20 @@ def reap(c) -> list[int]:
     for _, pgid, pidfile in c.execute("SELECT id, pgid, pidfile FROM jobs "
                                       "WHERE status='running' AND lease_expires_at<?", (time.time(),)).fetchall():
         kill_orphans(pgid, pidfile)
-    c.execute("UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', "
-              "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL "
-              "WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=?",
-              (time.time(), time.time()))
+    rows_deadline = c.execute("UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', "
+                              "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL "
+                              "WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=? "
+                              "RETURNING id", (time.time(), time.time())).fetchall()
+    for (jid,) in rows_deadline:
+        emit(c, jid, "timed_out", {"outcome": "lease expired after deadline"})
     rows = c.execute(
         "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, "
         "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL "
         "WHERE status='running' AND lease_expires_at<? RETURNING id", (time.time(),)).fetchall()
+    for (jid,) in rows:
+        st = c.execute("SELECT status FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+        emit(c, jid, "timed_out" if st == "timed_out" else "requeued" if st == "queued" else "dead",
+             {"reason": "lease expired"})
     c.execute("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')")
     c.execute("COMMIT")
     return [r[0] for r in rows]
@@ -484,6 +497,8 @@ def wait_on(c, jid: int, event: str) -> bool:
                     "lease_expires_at=NULL, claim_at=NULL, deadline_at=NULL "
                     "WHERE id=? AND status IN ('queued','running')", (event, jid))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=?", (jid,))
+    if cur.rowcount:
+        emit(c, jid, "parked", {"waiting_on": event})
     c.execute("COMMIT")
     return bool(cur.rowcount)
 
@@ -491,6 +506,8 @@ def wait_on(c, jid: int, event: str) -> bool:
 def release(c, event: str) -> list[int]:
     rows = c.execute("UPDATE jobs SET status='queued', waiting_on=NULL "
                      "WHERE status='waiting' AND waiting_on=? RETURNING id", (event,)).fetchall()
+    for (jid,) in rows:
+        emit(c, jid, "released", {"event": event})
     return [r[0] for r in rows]
 
 
@@ -504,6 +521,8 @@ def finalize_timed_out(c, jid: int, outcome="max runtime exceeded") -> bool:
     cur = c.execute("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, "
                     "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL "
                     "WHERE id=? AND status='running'", (outcome, jid))
+    if cur.rowcount:
+        emit(c, jid, "timed_out", {"outcome": outcome})
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "
               "(SELECT 1 FROM jobs WHERE id=? AND status<>'running')", (jid, jid))
     c.execute("COMMIT")
@@ -526,6 +545,8 @@ def cancel(c, jid: int) -> bool:
                     "claim_at=NULL "
                     "WHERE id=? AND status IN ('queued','running','waiting')", (jid,))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND cost>0", (jid,))
+    if cur.rowcount:
+        emit(c, jid, "cancelled", {"recorded_as": "failed"})
     c.execute("COMMIT")
     return bool(cur.rowcount)
 
@@ -533,7 +554,10 @@ def cancel(c, jid: int) -> bool:
 def retry_dead(c, jid: int | None = None) -> list[int]:
     q = ("UPDATE jobs SET status='queued', attempts=0 WHERE status IN ('dead','failed')"
          + (" AND id=?" if jid is not None else "") + " RETURNING id")
-    return [r[0] for r in c.execute(q, (jid,) if jid is not None else ())]
+    rows = c.execute(q, (jid,) if jid is not None else ()).fetchall()
+    for (rid,) in rows:
+        emit(c, rid, "requeued", {"reason": "dead retry"})
+    return [r[0] for r in rows]
 
 
 def stats(c) -> dict:
