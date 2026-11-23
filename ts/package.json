@@ -1,0 +1,20 @@
+{
+  "name": "coordinate-ts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@cutils/cli": "0.8.0",
+    "@cutils/sqlite": "0.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "koffi": "2.14.1",
+    "typescript": "~5.9.0"
+  }
+}
