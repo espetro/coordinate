@@ -75,3 +75,27 @@ M4 park/wake layer: reject as the standalone layer, adopt the pattern. If we eve
 - Would the engine's per-actor resident cost drop materially with more aggressive hibernation settings or an explicit eviction sweep? Untested.
 - Cross-device: multiple runners against one engine over Tailscale was not exercised (out of scope for M3/M4 here).
 - Engine idle CPU was 3.1-3.3% throughout; is that reducible via config (maintenance intervals)? Unchecked.
+# Queue scenarios: the M4 scheduler contract on Rivet
+
+Follow-up to this spike: the previous session's shim (`bench/adapters/rivet/src/queue.ts`, `qclient.ts`, committed as 5380c6a) never got a bench run through, because `qclient.ts stats` hung forever when no server was listening. Root causes found and fixed in this session (commit 8210c49):
+
+- The rivetkit client retries metadata lookups forever (`p-retry` with `forever: true`, 0.5 to 15 s backoff) when the engine is down. `stats` and `enqueue` are now raced against a hard deadline (default 5 s, `RIVET_FILL_DEADLINE_MS`) and exit non-zero with a clear error on timeout. Measured (M): `stats` returns in about 220 to 280 ms against a live engine and fails at the deadline against none; the previous 30-minute hangs cannot recur.
+- rivetkit does not honor `RIVET_ENDPOINT` for spawning the local engine, only for connecting to one: with the variable set, the runner never starts an engine and the node pool never becomes ready. The shim now spawns the engine per run on a free port (recorded in a port file inside the run's data dir), so parallel or stale daemons on the shared host cannot collide, and it kills only the engine it spawned (by exact pid, verified via `/proc/<pid>/cmdline`) on shutdown, including one left behind by a previous crashed run of the same data dir.
+- The enqueue spool was compacted after daemon start replay, which would have resubmitted jobs the engine had already journalled. Acknowledged records are now dropped from the spool at enqueue time.
+
+## Results (M, 2026-11-23, shared VPS, 11.7 GB RAM, MemAvailable 7.8 GB, load 0.7 to 0.8 at start; `bench/results-rivet-fill-vps.json`)
+
+| Metric | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (this shim) |
+|---|---|---|---|
+| Enqueue median, cold process | 160 ms | 169 ms via shim | 270.5 ms (p95 419.7; 215 to 270 ms across runs) |
+| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | 4.29 jobs/s (makespan 14.0 s) |
+| Cap 3, max concurrency | 3, holds | holds | 3, holds |
+| Repo cap 1 (4 jobs shared) | 1, holds | holds | 1, holds |
+| Global priority (cap 1, 0/5/1/9) | 9, 5, 1, 0 | fail | 9, 5, 1, 0 |
+| Tool park (2 cost-2 jobs, limit 2) | pass | pass | pass, and the trivial job ran while one was parked |
+| Idle RSS, whole stack | 18.5 MB | 532 MB | 124.7 MB (matches the 128.3 MB of the first spike) |
+| Peak RSS during throughput | about 26 MB | not recorded | 128.8 MB |
+
+Every check the contract tests passed, on every run: the machine cap, the repo cap, the weighted tool lease park (the trivial job ran while a cost-2 job was parked), and the global priority order (9, 5, 1, 0). The one-actor coordinator is the idiomatic replacement for rivetkit 3.x's deprecated queues (their docs say: store pending work in per-actor SQLite), and it holds all four constraints without the flow-control rules Restate needs (which is where Restate's priority failure comes from).
+
+What the numbers say: enqueue is 35 percent slower than our scheduler and about the same as Restate's shim path (a cold bun process plus a rivetkit client handshake, 170 ms of which is the import; the action call itself is single-digit milliseconds), throughput is the lowest of the three because each of the 60 jobs is one engine-journalled actor action, and idle RSS is the engine's fixed 128 MB floor from the first spike, six times ours but inside the G2 budget. This does not change the verdict: the queue layer works and is honest about it, but the storage and memory model (24 KB disk and about 120 KB resident per parked session, 1.5 GB at 10k) still fails G2 by five times, and "borrow the design only" stands for M4 exactly as for M3.
