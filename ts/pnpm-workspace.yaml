@@ -1,2 +1,5 @@
-onlyBuiltDependencies:
-  - koffi
+# pnpm 12 setting: package -> allow its install/build scripts. koffi ships a
+# prebuilt check; @cutils/sqlite is built by hand (its `build` script is not a
+# lifecycle hook pnpm runs).
+allowBuilds:
+  koffi: true
