@@ -1,0 +1,41 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/coordinate/ts-spike",
+  "host": {
+    "load_1m": 0.46,
+    "load_5m": 1.17,
+    "load_15m": 2.08,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 7983,
+    "timestamp": "2026-11-23T06:17:31+0000"
+  },
+  "enqueue_cli_median_ms": 112.3,
+  "enqueue_cli_p95_ms": 135.8,
+  "cap": 3,
+  "cap_jobs": 9,
+  "cap_all_done": true,
+  "cap_max_concurrency": 3,
+  "cap_holds": true,
+  "cap_makespan_s": 6.42,
+  "cap_ideal_s": 3.0,
+  "priority_order": [
+    "p9",
+    "p5",
+    "p1",
+    "p0"
+  ],
+  "priority_ok": true,
+  "repo_all_done": true,
+  "repo_shared_max_concurrency": 1,
+  "repo_cap_holds": true,
+  "tool_all_done": true,
+  "tool_vitest_max_concurrency": 1,
+  "tool_cap_holds": true,
+  "tool_trivial_ran_while_parked": true,
+  "throughput_jobs": 60,
+  "throughput_all_done": true,
+  "enqueue_total_s": 7.53,
+  "throughput_makespan_s": 7.81,
+  "throughput_jobs_per_s": 7.68,
+  "peak_rss_mb": 19.0
+}
