@@ -1,7 +1,7 @@
 # Tool search rubric for the agent orchestration layer
 
 Purpose: a reference spec and acceptance test. Hand section 1 to a web search agent so it looks for tools or stacks that satisfy it (the reverse prompt), then run sections 3 and 4 on the shortlist.
-The requirements and the reasoning behind them are in `.agents/docs/orchestrator-framing.md`. The scheduler gates come from measured failures in the DBOS spike (`.agents/docs/dbos-spike.md`).
+The requirements and the reasoning behind them are in `.agents/docs/orchestrator-framing.md`. The scheduler gates come from measured failures in the DBOS spike (`.agents/docs/archive/dbos-spike.md`).
 
 ## 1. Prompt for the search agent
 

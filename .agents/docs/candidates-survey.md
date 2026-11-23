@@ -78,7 +78,7 @@ So the question for each candidate is "how much of the queue and caps layer does
 
 #### DBOS (measured)
 
-See `.agents/docs/dbos-spike.md`. Wins crash recovery (2.7s vs 16.7s). Loses CLI latency (import 1.8s), memory, global priority, and parking holds a slot unless the paid Enterprise suspend mode is used.
+See `.agents/docs/archive/dbos-spike.md`. Wins crash recovery (2.7s vs 16.7s). Loses CLI latency (import 1.8s), memory, global priority, and parking holds a slot unless the paid Enterprise suspend mode is used.
 
 #### Absurd (Earendil, Armin Ronacher)
 

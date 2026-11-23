@@ -1,6 +1,6 @@
 # Orchestrator framing
 
-Date: 2026-11-22. Supersedes the "job queue for one machine" framing used in `.agents/docs/dbos-spike.md` and the first version of `.agents/docs/candidates-survey.md`.
+Date: 2026-11-22. Supersedes the "job queue for one machine" framing used in `.agents/docs/archive/dbos-spike.md` and the first version of `.agents/docs/candidates-survey.md`.
 Evidence tags: M = measured by us, R = read in the project's own docs, B = blog or marketing claim, K = from memory, unverified.
 
 ## What we are building

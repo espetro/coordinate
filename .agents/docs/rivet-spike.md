@@ -64,7 +64,7 @@ Spawning and tracking OS processes works mechanically: an action can `spawn(...,
 
 ## Verdict
 
-M3 session store: borrow the design only. The hibernate/wake primitive is excellent (single-digit-ms wake, no process while parked), but 24 KB disk and ~120 KB resident per parked session against a 1.2 GB engine at 10k sessions fails G2 by 5x, and durable session fields need our own SQLite schema anyway, at which point a plain row store gives the same thing for 25 MB total (the SQLite baseline in `.agents/docs/dbos-spike.md`).
+M3 session store: borrow the design only. The hibernate/wake primitive is excellent (single-digit-ms wake, no process while parked), but 24 KB disk and ~120 KB resident per parked session against a 1.2 GB engine at 10k sessions fails G2 by 5x, and durable session fields need our own SQLite schema anyway, at which point a plain row store gives the same thing for 25 MB total (the SQLite baseline in `.agents/docs/archive/dbos-spike.md`).
 
 M4 park/wake layer: reject as the standalone layer, adopt the pattern. If we ever need thousands of event-addressable parked sessions with sub-10 ms wake and cross-device placement, revisit with the Postgres or FoundationDB backend and a budget re-measure; on the local filesystem backend the engine's memory does not scale to our target.
 

@@ -1,6 +1,6 @@
 # Restate spike: results
 
-Candidate for the M4 scheduler and the M5 await module. Restate 1.8.1 (restate-server 1.8.1, CLI 1.8.1, restate-sdk Python 1.5.4), native binary under ~/.local/opt/restate, no docker. Measured 2026-11-22 on the shared VPS (6 cores, 11GB, load 0.2 to 0.9 during runs), worktree ~/.worktrees/fleet-spikes/restate, branch spike/restate. Adapter shim in bench/adapters/restate/ (shim.py 177 lines + worker.py 106 lines, 283 lines of glue). Results in .agents/docs/data/results-restate.json and benchmarks/results/results-sqlite-vps.json (same machine, same session).
+Candidate for the M4 scheduler and the M5 await module. Restate 1.8.1 (restate-server 1.8.1, CLI 1.8.1, restate-sdk Python 1.5.4), native binary under ~/.local/opt/restate, no docker. Measured 2026-11-22 on the shared VPS (6 cores, 11GB, load 0.2 to 0.9 during runs), worktree ~/.worktrees/fleet-spikes/restate, branch spike/restate. Adapter shim in bench/adapters/restate/ (shim.py 177 lines + worker.py 106 lines, 283 lines of glue). Results in .agents/docs/data/results-restate.json and benchmarks/legacy-python/results-sqlite-vps.json (same machine, same session).
 
 ## What was built (bench/adapters/restate/, 283 lines)
 

@@ -24,12 +24,12 @@ uv sync
 # noise floor (10 repeats of a chosen subset)
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only noise-floor --noise-scenarios cli,cap,chaos --repeats 10 \
-  --out benchmarks/results/results-noise-sqlite-vps.json
+  --out benchmarks/legacy-python/results-noise-sqlite-vps.json
 
 # the v2 scenario set
 .venv/bin/python bench/bench.py --tree . --backend sqlite \
   --only cli,idle,throughput,cap,repo,priority,chaos,toolpark,orchestrator-kill,live-density \
-  --out benchmarks/results/results-v2-sqlite-vps.json
+  --out benchmarks/legacy-python/results-v2-sqlite-vps.json
 ```
 
 Useful flags: `--repeats N` (default 10) and `--noise-scenarios a,b,c` (default `cli,cap,chaos`). Every result file records the host state (load average, memory available, timestamp) next to the measurements, because the VPS is shared with other spike sessions.
@@ -38,7 +38,7 @@ The stub agent is configured through the environment the daemon passes down: `ST
 
 ## Measured noise floor (M)
 
-`benchmarks/results/results-noise-sqlite-vps.json`, 10 repeats of `cli`, `cap` and `chaos` on the SQLite backend, VPS (Linux x86_64, 6 cores, 11GB, shared with three other spike sessions), 2026-11-22. Load average at the start of the run was 6.8 over 1 minute and 2.82 over 5 minutes, so the machine was busy and the numbers are upper bounds.
+`benchmarks/legacy-python/results-noise-sqlite-vps.json`, 10 repeats of `cli`, `cap` and `chaos` on the SQLite backend, VPS (Linux x86_64, 6 cores, 11GB, shared with three other spike sessions), 2026-11-22. Load average at the start of the run was 6.8 over 1 minute and 2.82 over 5 minutes, so the machine was busy and the numbers are upper bounds.
 
 | Scenario | Metric | Mean | Stdev | Min | Max | cv % |
 |---|---|---|---|---|---|---|
@@ -55,7 +55,7 @@ Consequence for the improvement loop: an enqueue latency change under 12ms and a
 
 ## Measured v2 results (M)
 
-`benchmarks/results/results-v2-sqlite-vps.json`, same machine and date. Baseline gates all passed: `cap_holds`, `repo_cap_holds`, `chaos_all_done`, `tool_cap_holds`, `priority_ok` and `tool_trivial_ran_while_parked` are true, `enqueue_cli_median_ms` is 106.3 (gate 300), idle RSS 18.6MB with 0% CPU, 60 trivial jobs in 7.2s at cap 6 (8.33 jobs per second).
+`benchmarks/legacy-python/results-v2-sqlite-vps.json`, same machine and date. Baseline gates all passed: `cap_holds`, `repo_cap_holds`, `chaos_all_done`, `tool_cap_holds`, `priority_ok` and `tool_trivial_ran_while_parked` are true, `enqueue_cli_median_ms` is 106.3 (gate 300), idle RSS 18.6MB with 0% CPU, 60 trivial jobs in 7.2s at cap 6 (8.33 jobs per second).
 
 `orchestrator-kill` with K = 3 stub ACP sessions and a 20s turn: all 3 jobs completed (`orchkill_all_done` true), the 3 agent processes were still alive right after the daemon group was killed with `kill -9` (`orchkill_agents_alive_after_kill` = 3), so the agents outlive the orchestrator as G4 requires, and recovery to all done took 28.2s. Every job ran twice (`attempts` = 2) and every retry resumed the same session id through ACP `session/load` (`orchkill_resumed_via_session_load` = 3, `orchkill_restarted` = 0). Each killed mid-turn attempt counted as one duplicate turn, so `orchkill_duplicate_turns` = 3. The orchestrator cannot re-adopt a running agent process, it resumes the session instead, which is the S3 path. `orchkill_orphan_agents_surviving` = 0 after the scenario's cleanup, which kills the agents the bench started by exact pid and process group.
 
