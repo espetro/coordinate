@@ -129,16 +129,16 @@ This requires every module to sit behind the interfaces below, so the loop swaps
 
 ## Assessment 9: spike results (2026-11-22, VPS)
 
-Four spikes ran on the VPS against the adapter contract and bench (`docs/restate-spike.md`, `docs/rivet-spike.md`, `docs/term-fallback-spike.md`, `docs/bench-v2.md`). All numbers are M on the shared VPS, load recorded in each result file.
+Four spikes ran on the VPS against the adapter contract and bench (`docs/restate-spike.md`, `docs/rivet-spike.md`, `docs/term-fallback-spike.md`, `docs/bench-v2.md`). All numbers are M on the shared VPS, load recorded in each result file. The Rivet queue-scenario numbers come from `bench/results-rivet-fill-vps.json` (the one-actor coordinator shim in `bench/adapters/rivet/`), added after the first Rivet spike, which covered only the session-store shape.
 
 | | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
 |---|---|---|---|
 | Idle RSS, whole stack | 18.5MB | 532MB | 128MB |
-| Enqueue median | 160ms (119ms in the noise run) | 169ms via shim, 22ms via curl | n/a |
-| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | n/a |
+| Enqueue median | 160ms (119ms in the noise run) | 169ms via shim, 22ms via curl | 215ms (one-actor coordinator shim) |
+| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | 4.2 jobs/s |
 | kill -9 recovery | 14.5s | 3.5s | 10-20s restart |
-| Caps, repo cap, tool park | pass | pass (park via sleep-poll, frees slot) | n/a |
-| Global priority | pass | fail (planned upstream) | n/a |
+| Caps, repo cap, tool park | pass | pass (park via sleep-poll, frees slot) | pass (cap 3, repo cap 1, tool lease park) |
+| Global priority | pass | fail (planned upstream) | pass (9, 5, 1, 0) |
 | 10,000 parked sessions | not yet measured | not measured | 1,489MB RSS, 24KB disk each |
 | Wake latency | not yet measured | not measured | p50 5-6ms, p99 10.6ms at 10k |
 | License | ours | BSL-1.1, internal use allowed | Apache-2.0 |
