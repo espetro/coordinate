@@ -1,0 +1,56 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+
+permissions:
+  contents: read
+
+env:
+  DOCMD_VERSION: "0.10.1"
+
+jobs:
+  build:
+    name: build and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+      - name: Build the site
+        working-directory: docs
+        run: pnpm dlx @docmd/core@${{ env.DOCMD_VERSION }} build
+      - name: Check internal links
+        working-directory: docs
+        run: pnpm dlx @docmd/core@${{ env.DOCMD_VERSION }} validate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site/
+          if-no-files-found: error
+
+  # Publishes only on main, and only once the repository has a Cloudflare Pages
+  # project name (variable CLOUDFLARE_PAGES_PROJECT) and the two secrets
+  # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+  deploy:
+    name: deploy to Cloudflare Pages
+    needs: build
+    if: github.event_name == 'push' && vars.CLOUDFLARE_PAGES_PROJECT != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name ${{ vars.CLOUDFLARE_PAGES_PROJECT }}

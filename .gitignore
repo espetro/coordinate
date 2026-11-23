@@ -4,3 +4,4 @@ dist/
 .scriptc/
 /coordinate-*
 .DS_Store
+site/

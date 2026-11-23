@@ -22,8 +22,12 @@ pnpm build:bin     # scriptc binaries into dist/ (Linux x64 on Linux, macOS on m
 | `benchmarks/` | Measured results and how to reproduce them |
 | `examples/` | Plugin examples |
 | `skills/` | The agent skill shipped with the repo |
-| `docs/` | User documentation |
+| `docs/` | User documentation, built into a site with [docmd](https://docmd.io) |
 | `.agents/docs/` | Design notes, research and spike reports for contributors |
+
+## Docs site
+
+`docs/` is plain Markdown. Build it with `cd docs && pnpm dlx @docmd/core@0.10.1 build`, which writes `site/` with the pages, `llms.txt` and `llms-full.txt`. The `docs` workflow builds and checks links on every change, and deploys to Cloudflare Pages once the repo has the `CLOUDFLARE_PAGES_PROJECT` variable and the two Cloudflare secrets set.
 
 ## Conventions
 
