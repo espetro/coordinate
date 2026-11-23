@@ -64,7 +64,8 @@ def test_cmd_job_sleeping_forever_is_timed_out(env):
         assert row["status"] == "timed_out"
         assert row["attempts"] == 1, "timed_out is terminal, never retried"
         assert row["outcome"] and "max runtime" in row["outcome"]
-        assert row["lease_owner"] is None and row["deadline_at"] is None
+        assert row["lease_owner"] is None
+        assert row["deadline_at"] is not None, "the deadline is kept for the post-mortem"
         # the slot is freed: a second job runs normally afterwards
         jid2 = q.enqueue(c, {"cmd": ["true"], "cwd": str(env)})
         assert wait_for(lambda: (job_row(env, jid2) or {}).get("status") == "done", 30)

@@ -384,6 +384,7 @@ def finish(c, jid: int, owner: str, status: str) -> str | None:
     Running time used is charged to the budget here."""
     c.execute("BEGIN IMMEDIATE")
     _charge_runtime(c, jid, "status='running'", ())
+    # deadline_at is kept after the transition: it documents when the attempt was due to end.
     c.execute("UPDATE jobs SET status=?, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, "
               "claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?",
               (status, jid, owner))
@@ -411,7 +412,7 @@ def reap(c) -> list[int]:
                                       "WHERE status='running' AND lease_expires_at<?", (time.time(),)).fetchall():
         kill_orphans(pgid, pidfile)
     c.execute("UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', "
-              "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL "
+              "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL "
               "WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=?",
               (time.time(), time.time()))
     rows = c.execute(
@@ -455,7 +456,7 @@ def finalize_timed_out(c, jid: int, outcome="max runtime exceeded") -> bool:
     """
     c.execute("BEGIN IMMEDIATE")
     _charge_runtime(c, jid, "status='running'", ())
-    cur = c.execute("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, deadline_at=NULL, "
+    cur = c.execute("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, "
                     "lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL "
                     "WHERE id=? AND status='running'", (outcome, jid))
     c.execute("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS "

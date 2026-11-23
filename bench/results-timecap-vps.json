@@ -2,12 +2,12 @@
   "backend": "sqlite",
   "tree": "/home/own-agents/.worktrees/fleet-spikes/timecap",
   "host": {
-    "load_1m": 0.84,
-    "load_5m": 0.87,
-    "load_15m": 0.63,
+    "load_1m": 1.08,
+    "load_5m": 0.97,
+    "load_15m": 0.7,
     "mem_total_mb": 11682,
-    "mem_available_mb": 8570,
-    "timestamp": "2026-11-23T01:00:51+0000"
+    "mem_available_mb": 8703,
+    "timestamp": "2026-11-23T01:03:44+0000"
   },
   "timecap_grace_s": 2.0,
   "timecap_cap_s": 3.0,
@@ -19,11 +19,11 @@
       "outcome": "max runtime exceeded (cap 3.0s)",
       "attempts": 1,
       "never_retried": true,
-      "seconds_from_enqueue_to_timed_out": 4.21,
+      "seconds_from_enqueue_to_timed_out": 4.19,
       "within_cap_plus_grace": true,
       "slot_reused_by_followup_job": true,
       "agent_pids_gone": true,
-      "seconds_until_pids_gone": 0.13
+      "seconds_until_pids_gone": 0.12
     },
     {
       "part": "cmd_sleep_forever",
@@ -32,11 +32,11 @@
       "outcome": "max runtime exceeded (cap 3.0s)",
       "attempts": 1,
       "never_retried": true,
-      "seconds_from_enqueue_to_timed_out": 4.17,
+      "seconds_from_enqueue_to_timed_out": 4.21,
       "within_cap_plus_grace": true,
       "slot_reused_by_followup_job": true,
       "child_pids_gone": true,
-      "seconds_until_pids_gone": 0.11
+      "seconds_until_pids_gone": 0.2
     },
     {
       "part": "daemon_kill9_mid_turn",
@@ -46,7 +46,7 @@
       "outcome": "max runtime exceeded (cap 3.0s)",
       "attempts": 1,
       "never_retried": true,
-      "seconds_from_kill_to_timed_out": 4.29,
+      "seconds_from_kill_to_timed_out": 4.39,
       "slot_reused_by_followup_job": true,
       "agent_pids_gone": true,
       "seconds_until_pids_gone": 0.09
