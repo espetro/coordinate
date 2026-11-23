@@ -172,3 +172,80 @@ PORTABLE tests that fail today are the regression reproducers: A1 (3), X1 (2), X
 - Nothing runs the CLI except the forwarder test, so `src/main.ts` parsing (X6, X9) and output (X8, D7) are untested.
 - The schema test compares names only (S1).
 - `reap requeues expired lease until max attempts` never exercises the requeue branch.
+
+## Port status
+
+Ported on branch `test/python-parity` (base `main` at 620a224). Every Python test keeps its original name inside the ported file, so a failing test name points straight at `legacy/python:tests/test_<file>.py`. The ported suites live in `test/parity/`, one file per Python file, and share the harness in `test/parity/helpers.mjs`.
+
+Statuses:
+
+- ENFORCED: ported and passing on `main` today.
+- TODO: ported but parked with `node:test` `{ todo: "<audit id>: <reason>" }`. The reason always names an audit ID from `ts-port-regressions.md` (A1, B8, X2 to X9, S1) or `missing feature: <what>`. No TODO was added without such an ID: the port found no regression outside the known list.
+- ALREADY COVERED: not ported because an equivalent assertion already exists in `test/`. The covering test is named.
+
+The rows below cover the 9 in-scope Python files: the 46 PORTABLE tests of the map above plus the 5 COVERED ones (51 rows). The 46 N/A tests (`test_compare`, `test_plugins`, `test_service`, the pilots, the legacy/migrate paths tests, the runtime and log folder paths tests and the ACP session orphan test) are out of scope and not listed.
+
+| Python test | Status | Ported file / covering test | Note |
+|---|---|---|---|
+| `test_acceptance::test_kill9_daemon_mid_job_retries` | ENFORCED | `test/parity/acceptance.test.mjs` | daemon killed with SIGKILL mid job, a second daemon finishes it, attempts 2, command ran twice |
+| `test_acceptance::test_cap_never_exceeded` | ENFORCED | `test/parity/acceptance.test.mjs` | 10 jobs at cap 3: DB peak 3 and real process overlap 3 |
+| `test_acceptance::test_enqueue_offline` | ENFORCED | `test/parity/acceptance.test.mjs` | CLI runs with sockets and name lookups disabled |
+| `test_acceptance::test_waiting_release_and_reaper_dead` | ENFORCED | `test/parity/acceptance.test.mjs` | also fully ported: it was only COVERED (partial) before, the `retryDead` assertion had no home |
+| `test_acceptance::test_shell_string_is_stored_and_run_verbatim` | ENFORCED | `test/parity/acceptance.test.mjs` | `--shell` stores one string verbatim, multi-token `--shell` is refused |
+| `test_caps::test_vps_machine_cap_6_with_14_jobs` | ENFORCED | `test/parity/caps.test.mjs` | `COORDINATE_MACHINE=vps` gives cap 6, 14 jobs peak at 6 with real overlap |
+| `test_caps::test_repo_cap_1_holds_while_other_jobs_run_in_parallel` | ALREADY COVERED | `test/queue.test.mjs` "repo cap: one repo at a time" | asserts the claim decision in the queue module, not real process overlap under the daemon |
+| `test_events::test_enqueue_claim_finish_emits` | ALREADY COVERED | `test/queue.test.mjs` "events: enqueue/claim/finish emit transitions" | |
+| `test_events::test_fail_and_cancel` | ALREADY COVERED | `test/queue.test.mjs` "cancel a queued job" and "finish records status and drops leases" | the `failed` kind and the `enqueued, cancelled` pair are asserted |
+| `test_events::test_park_release` | ENFORCED | `test/parity/events.test.mjs` | `enqueued, parked, released` |
+| `test_events::test_reap_requeue_and_dead` | ENFORCED | `test/parity/events.test.mjs` | `requeued` after the first lease expiry, `dead` after the last |
+| `test_events::test_follow_and_maxid` | ENFORCED | `test/parity/events.test.mjs` | `events --since N` returns ordered rows after an id, plus `max_id` |
+| `test_events::test_cli_events_jsonl` | ENFORCED | `test/parity/events.test.mjs` | JSONL with exactly `id, ts, job_id, kind, data` |
+| `test_orphans::test_reaper_kills_surviving_process_group_before_requeue` | TODO | `test/parity/orphans.test.mjs` | X3: `reap()` never signals the recorded pgid, so the old attempt keeps running beside the retry |
+| `test_paths::test_env_coordinate_wins` | ENFORCED | `test/parity/paths.test.mjs` | `COORDINATE_DB` beats `FLEET_DB` |
+| `test_paths::test_env_fleet_fallback` | ENFORCED | `test/parity/paths.test.mjs` | `FLEET_DB` is used when `COORDINATE_DB` is unset |
+| `test_paths::test_db_default_xdg_state` | ENFORCED | `test/parity/paths.test.mjs` | `$XDG_STATE_HOME/coordinate/queue.db` |
+| `test_paths::test_config_default_xdg_config` | ENFORCED | `test/parity/paths.test.mjs` | `$XDG_CONFIG_HOME/coordinate/config.toml` |
+| `test_paths::test_db_override` | ENFORCED | `test/parity/paths.test.mjs` | `COORDINATE_DB` returned as is |
+| `test_paths::test_config_override` | ENFORCED | `test/parity/paths.test.mjs` | `COORDINATE_CONFIG` returned as is |
+| `test_project_key::test_plain_repo_key` | ENFORCED | `test/parity/project_key.test.mjs` | observed through the `spawn_audit.project` column, `projectKey` is private |
+| `test_project_key::test_worktree_shares_main_repo_key` | ENFORCED | `test/parity/project_key.test.mjs` | the map says "fails today: X1"; X1 was fixed on `main` (4c36407) so the port passes |
+| `test_project_key::test_two_repos_do_not_share` | ENFORCED | `test/parity/project_key.test.mjs` | same X1 fix, exactly two keys |
+| `test_project_key::test_non_repo_falls_back_to_cwd` | ENFORCED | `test/parity/project_key.test.mjs` | |
+| `test_project_key::test_worktree_via_git_probe` | ENFORCED | `test/parity/project_key.test.mjs` | the map asks for an injectable probe; a fake `git` first on `PATH` is the equivalent seam, since the daemon resolves `git` through `PATH` |
+| `test_project_key::test_probe_gets_2s_timeout` | ENFORCED | `test/parity/project_key.test.mjs` | a hanging fake `git` makes the 2 s probe timeout observable |
+| `test_slots::test_slot_key_serializes_same_tool_parallel_to_other` | TODO | `test/parity/slots.test.mjs` | A1: `claim()` never compares an explicit `--slot` key against its `[slots]` limit |
+| `test_slots::test_slot_limit_from_config_allows_two` | TODO | `test/parity/slots.test.mjs` | A1, same cause |
+| `test_slots::test_unknown_slot_key_defaults_to_1` | TODO | `test/parity/slots.test.mjs` | A1, same cause |
+| `test_slots::test_missing_config_file_still_claims` | ENFORCED | `test/parity/slots.test.mjs` | |
+| `test_spawn_shim::test_heavy_parks_at_cap_and_resumes_on_release` | ENFORCED | `test/parity/spawn_shim.test.mjs` | third `vitest` job parks, all three finish, audit rows have class `vitest` |
+| `test_spawn_shim::test_unmatched_tool_audited_never_blocked` | ENFORCED | `test/parity/spawn_shim.test.mjs` | |
+| `test_spawn_shim::test_weighted_cost_excludes_cheaper_sibling` | TODO | `test/parity/spawn_shim.test.mjs` | B8: the `[tools]` overlay is dropped, so the custom `sqlload` class is never matched and never audited |
+| `test_spawn_shim::test_trivial_tools_pay_nothing` | ENFORCED | `test/parity/spawn_shim.test.mjs` | |
+| `test_timecap::test_cmd_job_sleeping_forever_is_timed_out` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_timed_out_job_leaves_no_orphan_process` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_budget_excludes_parked_time` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_deadline_survives_daemon_restart` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_env_vars_visible_to_the_child` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_deadline_at_env_is_epoch_seconds_of_the_cap` | TODO | `test/parity/timecap.test.mjs` | D3: `COORDINATE_DEADLINE_AT` is not exported to the child (`daemon.ts` `jobEnv`) |
+| `test_timecap::test_no_cap_means_empty_deadline` | TODO | `test/parity/timecap.test.mjs` | D3, same cause |
+| `test_timecap::test_cli_max_runtime_is_stored` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_status_prints_deadline_runtime_and_remaining` | TODO | `test/parity/timecap.test.mjs` | X8: `status` prints the raw row, `runtime_remaining_s` and `deadline_in_s` were dropped |
+| `test_timecap::test_status_self_uses_fleet_job_id` | ALREADY COVERED | `test/queue.test.mjs` "status --self reads COORDINATE_JOB_ID" | the map notes the `FLEET_JOB_ID` fallback and the CLI are not asserted; the port treats the env name as one behavior |
+| `test_timecap::test_config_default_max_runtime` | TODO | `test/parity/timecap.test.mjs` | X6: the CLI never reads `config.toml`, so `[defaults] max_runtime` is not applied |
+| `test_timecap::test_explicit_zero_disables_the_config_default` | TODO | `test/parity/timecap.test.mjs` | X6, plus `--max-runtime 0` is stored as NULL instead of 0 |
+| `test_timecap::test_old_database_is_migrated_and_keeps_rows` | TODO | `test/parity/timecap.test.mjs` | X5: `connect()` has no `_migrate_jobs` and no `ALTER TABLE ADD COLUMN` |
+| `test_timecap::test_parse_duration_units` | TODO | `test/parity/timecap.test.mjs` | X6: `--max-runtime 0` is stored as NULL, so the parsed value is not observable |
+| `test_timecap::test_timed_out_job_is_not_retried_by_reaper` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_expired_job_that_exhausted_its_budget_is_not_claimed` | ENFORCED | `test/parity/timecap.test.mjs` | |
+| `test_timecap::test_signals_only_reach_our_own_process_group` | ENFORCED | `test/parity/timecap.test.mjs` | |
+
+### Port status totals
+
+| Status | Count |
+|---|---|
+| ENFORCED | 35 |
+| TODO | 12 |
+| ALREADY COVERED | 4 |
+| Total rows | 51 |
+
+The 12 TODO tests map onto known audit IDs: A1 (3), B8 (1), X3 (1), X5 (1), X6 (3), X8 (1), D3 (2). The port surfaced no regression outside `ts-port-regressions.md`, so there is no `NEW:` finding.
