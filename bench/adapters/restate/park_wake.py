@@ -110,6 +110,57 @@ def enqueue(env: dict, cwd: Path, cmd: str) -> str:
     return r.stdout.strip()
 
 
+
+def _ancestors() -> set[int]:
+    out = {os.getpid()}
+    pid = os.getpid()
+    while True:
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                pid = int(f.read().split(") ", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return out
+        if pid <= 1:
+            return out
+        out.add(pid)
+
+
+def leftover_stack_pids(workdir: Path) -> list[int]:
+    """PIDs of leftover restate-server/worker processes started with OUR workdir flag.
+
+    Matches exact argv tokens read from /proc (never substring over ps output: this
+    script's own parent command line contains the literal strings "restate-server"
+    and the workdir path). Only processes whose argv contains the workdir path token
+    and "restate-server", or the worker argv "worker:app", are returned; our own
+    ancestor chain is always excluded.
+    """
+    skip = _ancestors()
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid in skip:
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            argv = [a.decode(errors="replace") for a in argv if a]
+        except OSError:
+            continue
+        is_server = any(Path(a).name == "restate-server" for a in argv)
+        is_worker = "worker:app" in argv and "-m" in argv and "restate" in argv
+        if not (is_server or is_worker):
+            continue
+        if "--config-file" in argv:
+            cfg = argv[argv.index("--config-file") + 1] if argv.index("--config-file") + 1 < len(argv) else ""
+            if str(workdir) not in cfg:
+                continue
+        elif not is_worker:
+            continue
+        found.append(pid)
+    return found
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -148,14 +199,12 @@ def main() -> int:
     log = open(workdir / "daemon.log", "wb")
     # a stack left behind by a previous failed run would hold ports 5500-5502; find it by its
     # config path (this workdir) and stop it by pid before starting a new one.
-    for line in subprocess.run(["ps", "-eo", "pid,cmd"], capture_output=True, text=True).stdout.splitlines():
-        if ("restate-server" in line and str(workdir) in line) or "restate serve worker:app" in line:
-            pid = int(line.split()[0])
-            print(f"stopping leftover restate process {pid}", file=sys.stderr)
-            try:
-                os.kill(pid, 15)
-            except ProcessLookupError:
-                pass
+    for pid in leftover_stack_pids(workdir):
+        print(f"stopping leftover restate process {pid}", file=sys.stderr)
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
     time.sleep(3)
     daemon = subprocess.Popen([sys.executable, str(HERE / "shim.py"), "daemon"],
                                env=env, stdout=log, stderr=log, cwd=str(HERE), start_new_session=True)
