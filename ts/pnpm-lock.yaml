@@ -173,6 +173,12 @@ importers:
         specifier: 0.8.0
         version: 0.8.0(koffi@2.14.1)
     devDependencies:
+      '@scriptc/runtime-darwin-arm64':
+        specifier: 0.4.16
+        version: 0.4.16
+      '@scriptc/runtime-darwin-x64':
+        specifier: 0.4.16
+        version: 0.4.16
       '@scriptc/runtime-win32-x64-msvc':
         specifier: 0.4.16
         version: 0.4.16
@@ -201,6 +207,12 @@ packages:
       koffi:
         optional: true
 
+  '@scriptc/runtime-darwin-arm64@0.4.16':
+    resolution: {integrity: sha512-NQCegw0wlcNMmyNioxirhIWTaNRGuI7pLd0qrbXcfVkHK5flypDJCmOIsmQkwXkpl9OvLx6A6l7AX1qjDdJoKw==}
+
+  '@scriptc/runtime-darwin-x64@0.4.16':
+    resolution: {integrity: sha512-zx7BE4XFD80BA6xDTOI/avx6SIkEImd1jvRtV2PoGqro4jkukgYivejrON8MtSB4Udc8v07YszXXwh8jLhNGyw==}
+
   '@scriptc/runtime-win32-x64-msvc@0.4.16':
     resolution: {integrity: sha512-hrRR+o6139wN4hc+a1MZJIl3BbF5Iau4R75rbsaoc9He7BZGVmbndtcCzE04rjXS1aVJPEqQYoU0NTcOxAJE/g==}
 
@@ -225,6 +237,10 @@ snapshots:
   '@cutils/sqlite@0.8.0(koffi@2.14.1)':
     optionalDependencies:
       koffi: 2.14.1
+
+  '@scriptc/runtime-darwin-arm64@0.4.16': {}
+
+  '@scriptc/runtime-darwin-x64@0.4.16': {}
 
   '@scriptc/runtime-win32-x64-msvc@0.4.16': {}
 

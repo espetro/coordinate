@@ -42,9 +42,7 @@ jobs:
 
       - name: Install ts dependencies
         working-directory: ts
-        run: |
-          pnpm add -D @scriptc/runtime-darwin-arm64@${{ env.SCRIPTC_VERSION }}
-          pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
 
       - name: Build Linux binaries
         working-directory: ts
@@ -102,7 +100,6 @@ jobs:
         working-directory: ts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          pnpm add -D @scriptc/runtime-win32-x64-msvc@${{ env.SCRIPTC_VERSION }}
           ./build-win-shim.sh
           OUT="../coordinate-${VERSION}-windows-x64.exe" ./build-win.sh
 

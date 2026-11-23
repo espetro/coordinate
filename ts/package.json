@@ -13,6 +13,8 @@
     "@cutils/sqlite": "0.8.0"
   },
   "devDependencies": {
+    "@scriptc/runtime-darwin-arm64": "0.4.16",
+    "@scriptc/runtime-darwin-x64": "0.4.16",
     "@scriptc/runtime-win32-x64-msvc": "0.4.16",
     "@types/node": "24.0.0",
     "koffi": "2.14.1",
