@@ -6,6 +6,10 @@
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
 
+function usage(): string {
+  return "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n";
+}
+
 function fail(msg: string): never {
   process.stderr.write(msg + "\n");
   process.exit(1);
@@ -45,7 +49,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
     process.stdout.write(
-      "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], dead retry [id], daemon\n",
+      usage(),
     );
     process.exit(argv.length === 0 ? 1 : 0);
   }
@@ -184,6 +188,23 @@ async function main(): Promise<void> {
       );
       await new Promise((res) => setTimeout(res, 500));
     }
+  } else if (verb === "forward") {
+    const { forward } = await import("./forwarder.ts");
+    const o: import("./forwarder.ts").ForwardOpts = { exec: "", since: null };
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--exec") o.exec = rest[++i];
+      else if (t === "--machine") o.machine = rest[++i];
+      else if (t === "--interval") o.interval = Number(rest[++i]);
+      else if (t === "--cursor") o.cursor = rest[++i];
+      else if (t === "--since") o.since = Number(rest[++i]);
+      else if (t === "--kinds") o.kinds = rest[++i];
+      else if (t === "--once") o.once = true;
+      else if (t === "-v" || t === "--verbose") o.verbose = true;
+      else fail("forward: unknown argument " + t);
+    }
+    if (!o.exec) fail("forward: --exec is required");
+    await forward(o);
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
   } else if (verb === "dead") {
