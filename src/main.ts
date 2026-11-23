@@ -5,7 +5,7 @@
 
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
-import { ConfigError, defaultMaxRuntimeS, parseDurationSecs } from "./config.ts";
+import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
   return "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n";
@@ -65,6 +65,8 @@ async function main(): Promise<void> {
   const db = q.connect();
 
   if (verb === "enqueue") {
+    // fail loudly on an unreadable or invalid config instead of silently defaulting
+    cfgValidate();
     const o = opts();
     let cmd: string[] = [];
     const dashed = rest.indexOf("--");

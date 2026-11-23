@@ -259,7 +259,7 @@ export function run(): void {
     validateConfig();
   } catch (e) {
     if (e instanceof ConfigError) {
-      process.stderr.write("coordinate: " + e.file + ":" + e.line + ": invalid config: " + e.message.split(": ").slice(2).join(": ") + "\n");
+      process.stderr.write("coordinate: invalid config: " + e.message + "\n");
     } else {
       process.stderr.write("coordinate: " + String(e instanceof Error ? e.message : e) + "\n");
     }
