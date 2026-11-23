@@ -24,7 +24,7 @@ A daemon never runs more than `COORDINATE_CAP` jobs at once, and never more than
 
 ## Park and wake
 
-`--wait-on <event>` parks a job, and `release <event>` queues it again. A parked job holds no process, so thousands of them cost only their rows.
+`--wait-on <event>` parks a job, and `release <event>` queues it again. A parked job holds no process, so thousands of them cost only their rows. A finishing job releases only the waiters on its `tool:` slot keys, so a job parked with `--wait-on` always needs an explicit `release`; it is never woken because another job finished.
 
 ```sh
 coordinate enqueue --wait-on deploy-ready -- ./smoke-test.sh
@@ -33,7 +33,7 @@ coordinate release deploy-ready
 
 ## Crashes and retries
 
-A running job keeps a lease alive while it works. If the daemon crashes or the machine reboots, the lease expires and the job runs again, up to `--max-attempts` starts. After that it is `dead`, and `dead retry` brings it back.
+A running job keeps a lease alive while it works. If the daemon crashes or the machine reboots, the lease expires and the job runs again, up to `--max-attempts` starts. After that it is `dead`, and `dead retry` brings it back. A job that exits non-zero is `failed` instead, and only an expired lease is retried automatically; `dead retry` revives `failed` and `dead` jobs alike.
 
 ## Events
 

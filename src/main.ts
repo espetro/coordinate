@@ -8,7 +8,20 @@ import * as q from "./queue.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
-  return "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n";
+  return (
+    "usage: coordinate <verb> [args]\n" +
+    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon\n" +
+    "enqueue options:\n" +
+    "  --cwd DIR           working directory for the job\n" +
+    "  --repo KEY          per-repo cap key (default: cwd; an empty value skips the key)\n" +
+    "  --priority N        higher numbers claim first (default 0)\n" +
+    "  --max-attempts N    starts allowed after lease expiries (default 3)\n" +
+    "  --max-runtime DUR   execution-time cap, e.g. 15m, 2h, 90s (0 = unbounded;\n" +
+    "                      default comes from [defaults] max_runtime in config.toml)\n" +
+    "  --wait-on EVENT     park the job immediately on this event id\n" +
+    "  --slot KEY          extra tool-level slot key (repeatable), e.g. --slot tool:vitest\n" +
+    "  --shell             cmd is ONE string, stored and run verbatim via sh -c\n"
+  );
 }
 
 function fail(msg: string): never {

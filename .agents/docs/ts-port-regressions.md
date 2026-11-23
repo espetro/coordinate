@@ -305,6 +305,7 @@ Sizes are rough (lines changed including tests; risk is the chance of breaking e
 | 11 | Docs: C9, C10, S2, A2 flag help, A4 comments; D7 decide a canonical output format | 20 | none | Python and TypeScript docs both wrong on C9, C10, S2 |
 | 12 | C12: stop counting park and release cycles against `max_attempts` (decrement on `waitOn`, or count only reaped leases) | 5-10 | medium | Behavior change shared with Python; decide intent first |
 | 13 | X14: advance the in-memory cursor only after a successful send | 3 | low | Bug exists in both |
+| 14 | C11: a `--run-at DUR\|ISO` flag so scheduled jobs are possible from the CLI (`run_at` is honored at claim in both implementations, only the flag is missing) | 20-30 | low | Open; no flag was invented in the docs commit, the audit only records the gap |
 
 Recommended order: 1, 2, 3 (data and process safety), then 5 with 4 (one config module, one PR), then 6, 7, 8, 9, 10, 11. Items 12 and 13 are cheap and can ride along. Total for 1 to 10 is about 350 to 550 lines.
 
