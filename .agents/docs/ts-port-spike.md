@@ -12,33 +12,37 @@ Tests run under `node --test` (`ts/test/queue.test.mjs`, 10 tests): schema shape
 
 The bench ran unchanged: `uv run python bench/bench.py --only cli,cap,priority,repo,toolpark,throughput --out ...`, once with the Python CLI (baseline, `bench/results-py-samehost.json`) and three minutes later through the gnu ELF (`bench/results-ts-linux-vps.json`). The toolpark scenario required porting the spawn-time tool-class interception (D2/D3/D7/D9: binary match, weighted lease, park-at-boundary, audit) into `src/daemon.ts`, which the first cut had left out; `[slots]` config is read with a line matcher that honors the bench's `'tool:vitest:*' = 2` form, not a TOML parser.
 
+scriptc 0.4.16 (released 2026-11-21) became available in the standard PATH after the spike was written. Everything in the results tables below was re-measured on 0.4.16 on 2026-11-23; the version delta is 0.4.12 to 0.4.16 with no dependency bumps needed (`@cutils/*` stayed at 0.8.0) and no source changes; the two ELFs rebuilt with the same commands plus `--static` for the musl one, `node --test` still 10/10. The 0.4.16 compiler reports the same SC6014 payload-key-order warning as 0.4.12 did, nothing refused, and both binaries passed the bench unchanged.
+
 ## Results (M unless noted; same host, Linux x64 VPS, shared with other sessions)
 
-Host state is recorded in both result JSONs: Python run at load 0.46/1.17/2.08, MemAvailable 7983 MB, 06:17:31 UTC; TypeScript run at load 1.04/0.99/1.83, MemAvailable 7900 MB, 06:20:31 UTC. Load was comparable; nothing suggests the ordering flattered either side beyond noise.
+Host state is recorded in the result JSONs: Python run at load 0.46/1.17/2.08, MemAvailable 7983 MB, 06:17:31 UTC; the 0.4.12 TypeScript run at load 1.04/0.99/1.83, MemAvailable 7900 MB, 06:20:31 UTC; the 0.4.16 re-run at load 0.97/0.64/0.33, MemAvailable 7774 MB, 16:47:35 UTC. Load was comparable in all three.
 
-| Metric | Python | TypeScript (scriptc ELF) |
-|---|---|---|
-| enqueue CLI median | 112.3 ms | 4.3 ms |
-| enqueue CLI p95 | 135.8 ms | 4.9 ms |
-| throughput (60 jobs, cap 6) | 7.68 jobs/s | 73.57 jobs/s |
-| throughput makespan | 7.81 s | 0.82 s |
-| daemon idle RSS | 57.4 MB | 5.5 MB |
-| startup (`stats` to exit), median of 10 | 128.3 ms | 3.3 ms (musl: 2.6 ms) |
-| binary size | n/a | gnu 3.66 MB, musl 4.58 MB |
+| Metric | Python | TypeScript 0.4.12 (M) | TypeScript 0.4.16 (M) |
+|---|---|---|---|
+| enqueue CLI median | 112.3 ms | 4.3 ms | 4.9 ms |
+| enqueue CLI p95 | 135.8 ms | 4.9 ms | 5.1 ms |
+| throughput (60 jobs, cap 6) | 7.68 jobs/s | 73.57 jobs/s | 69.15 jobs/s |
+| throughput makespan | 7.81 s | 0.82 s | 0.87 s |
+| daemon idle RSS | 57.4 MB | 5.5 MB | 5.9 MB |
+| startup (`stats` to exit), median of 10 | 128.3 ms | 3.3 ms (musl: 2.6 ms) | 7 ms (musl: 6 ms) |
+| binary size | n/a | gnu 3.66 MB, musl 4.58 MB | gnu 3.94 MB, musl 4.92 MB |
+
+The 0.4.16 measurements moved a few percent against 0.4.12 (enqueue median 4.3 to 4.9 ms, throughput 73.6 to 69.2 jobs/s, binaries about 9 percent larger) and the startup numbers this round were taken with a coarser wall-clock method, so 7 ms versus 3.3 ms is method noise, not a compiler regression. Every gate verdict is unchanged.
 
 ## Gates (from language-choice.md)
 
-| Gate | Result |
+| Gate | Result (0.4.12 (M); 0.4.16 (M) re-run) |
 |---|---|
-| Every boolean gate holds (cap, priority, repo, toolpark, throughput all-done) | pass: cap_max_concurrency 3 at cap 3, priority order p9,p5,p1,p0, repo shared concurrency 1, vitest concurrency 1 with trivial running while parked, throughput 60/60 done |
-| Enqueue median at most half of Python's on the same host | pass: 4.3 ms vs 112.3 ms (3.8 percent) |
-| Daemon idle RSS at most Python's | pass: 5.5 MB vs 57.4 MB (9.6 percent) |
-| cap, priority and repo results equal | pass: identical booleans and orders (see table above) |
+| Every boolean gate holds (cap, priority, repo, toolpark, throughput all-done) | pass both versions: cap_max_concurrency 3 at cap 3, priority order p9,p5,p1,p0, repo shared concurrency 1, vitest concurrency 1 with trivial running while parked, throughput 60/60 done; the 0.4.16 run reports the identical booleans and orders |
+| Enqueue median at most half of Python's on the same host | pass both: 0.4.12 4.3 ms vs 112.3 ms (3.8 percent); 0.4.16 4.9 ms vs 112.3 ms (4.4 percent) |
+| Daemon idle RSS at most Python's | pass both: 0.4.12 5.5 MB vs 57.4 MB (9.6 percent); 0.4.16 5.9 MB vs 57.4 MB (10.3 percent) |
+| cap, priority and repo results equal | pass both: identical booleans and orders across all three runs (see tables above) |
 | orchestrator-kill (`state-loss`) | not done: out of scope for this spike |
 | timecap | not done: out of scope for this spike (enqueue accepts `--max-runtime` and claim sets `deadline_at`, but expiry enforcement and the kill path are unported) |
 | macOS build of @cutils/sqlite | not done: explicitly out of scope (the orchestrator checks SQLite on macOS on the laptop itself) |
 
-Verdict against the language-choice bar: every spike gate holds, and the margins are not close. The port is 26x faster on enqueue median, 9.6x lower idle RSS, 10x faster throughput, 39x faster startup, at the cost of a 3.7 to 4.6 MB static binary.
+Verdict against the language-choice bar: every spike gate holds on both 0.4.12 and 0.4.16, and the margins are not close on either. On the 0.4.16 numbers the port is 23x faster on enqueue median, 9.7x lower idle RSS, 9x faster throughput, and starts in single-digit milliseconds, at the cost of a 3.9 to 4.9 MB static binary. The version delta from 0.4.12 does not change the verdict; nothing in the subset the port relied on broke or changed behavior between the two compilers, and the only compiler diagnostic is the same SC6014 payload-key-order warning as before.
 
 ## What the scriptc subset refused or warned
 
@@ -54,5 +58,5 @@ Also noted: `@cutils/cli` cannot express `nargs=REMAINDER` positional capture, s
 
 - macOS build (SQLite on macOS through `@cutils/sqlite` remains the open question from the research doc).
 - ACP lane of the daemon (cmd jobs only), telemetry, service install, orchestrator-kill/state-loss, timecap enforcement, chaos scenario.
-- scriptc 0.4.16: not available on this host's mise; measured on 0.4.12. Upgrades stay gated behind the bench as the research doc recommends.
+- scriptc 0.4.16 re-validation (2026-11-23, done): rebuilt both ELFs, tests and bench re-run, gates unchanged, recorded in `bench/results-ts-0.4.16-linux-vps.json` and above. Upgrades stay gated behind the bench as the research doc recommends.
 - Comparison against `bench/thresholds.toml` gates: the TS results share the Python result schema, so `bench/compare.py` applies unchanged; the boolean scenarios pass the same thresholds.
