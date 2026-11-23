@@ -154,7 +154,20 @@ function acquireToolLease(db: Database, jid: number, key: string, cost: number):
   return true;
 }
 
-function jobEnv(jid: number): Record<string, string> {
+interface DeadlineRow {
+  deadline_at: number | null;
+}
+
+// Absolute epoch-second deadline of this attempt, set at claim; empty when the job has no cap.
+function deadlineEnv(db: Database, jid: number): string {
+  const rows = db.prepareRaw("SELECT deadline_at FROM jobs WHERE id=?").all([jid]) as DeadlineRow[];
+  if (rows.length === 0 || rows[0].deadline_at === null) {
+    return "";
+  }
+  return String(rows[0].deadline_at);
+}
+
+function jobEnv(jid: number, deadlineAt: string): Record<string, string> {
   const e: Record<string, string> = {};
   for (const k of Object.keys(process.env)) {
     const v = process.env[k];
@@ -168,6 +181,8 @@ function jobEnv(jid: number): Record<string, string> {
   e["FLEET_MACHINE"] = q.MACHINE;
   e["COORDINATE_DB"] = dbPath();
   e["FLEET_DB"] = dbPath();
+  e["COORDINATE_DEADLINE_AT"] = deadlineAt;
+  e["FLEET_DEADLINE_AT"] = deadlineAt;
   return e;
 }
 
@@ -300,7 +315,7 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
   const stdio: ("ignore" | "inherit")[] = ["ignore", "inherit", "inherit"];
-  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio };
+  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid, deadlineEnv(db, jid)), stdio };
   const win = process.platform === "win32";
   const proc =
     typeof cmd === "string"

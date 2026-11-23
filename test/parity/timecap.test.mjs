@@ -187,7 +187,7 @@ test("test_env_vars_visible_to_the_child", { timeout: DAEMON_T }, async () => {
   }
 });
 
-test("test_deadline_at_env_is_epoch_seconds_of_the_cap", { todo: "D3: COORDINATE_DEADLINE_AT is not exported to the child (daemon.ts jobEnv)", timeout: DAEMON_T }, async () => {
+test("test_deadline_at_env_is_epoch_seconds_of_the_cap", { timeout: DAEMON_T }, async () => {
   const r = timecapRig();
   const restore = useProcessEnv(r);
   const out = path.join(r.dir, "env.txt");
@@ -208,7 +208,7 @@ test("test_deadline_at_env_is_epoch_seconds_of_the_cap", { todo: "D3: COORDINATE
   }
 });
 
-test("test_no_cap_means_empty_deadline", { todo: "D3: COORDINATE_DEADLINE_AT is not exported to the child (daemon.ts jobEnv)", timeout: DAEMON_T }, async () => {
+test("test_no_cap_means_empty_deadline", { timeout: DAEMON_T }, async () => {
   const r = timecapRig();
   const out = path.join(r.dir, "env.txt");
   try {
@@ -234,7 +234,7 @@ test("test_cli_max_runtime_is_stored", async () => {
   }
 });
 
-test("test_status_prints_deadline_runtime_and_remaining", { todo: "X8: status prints the raw row; runtime_remaining_s and deadline_in_s were dropped (cli.py:24-31)", timeout: DAEMON_T }, async () => {
+test("test_status_prints_deadline_runtime_and_remaining", { timeout: DAEMON_T }, async () => {
   const r = timecapRig();
   const restore = useProcessEnv(r);
   try {
@@ -282,7 +282,7 @@ test("test_explicit_zero_disables_the_config_default", { }, async () => {
   }
 });
 
-test("test_old_database_is_migrated_and_keeps_rows", { todo: "X5: connect() has no _migrate_jobs and no ALTER TABLE ADD COLUMN (queue.py:236-268)" }, async () => {
+test("test_old_database_is_migrated_and_keeps_rows", { }, async () => {
   const r = timecapRig();
   const restore = useProcessEnv(r);
   try {
@@ -309,7 +309,7 @@ test("test_old_database_is_migrated_and_keeps_rows", { todo: "X5: connect() has 
       pidfile TEXT)`);
     old.exec("INSERT INTO jobs(kind,payload,run_at,created_at,status) VALUES('cmd','{}',1,2,'done')");
     old.close();
-    const { q, c } = await freshQueue();
+    const { q, db: c } = await freshQueue();
     assert.equal(Number(rows(r, "SELECT COUNT(*) AS n FROM jobs")[0].n), 1, "the old row must survive");
     let jid = -1;
     try {
@@ -317,7 +317,7 @@ test("test_old_database_is_migrated_and_keeps_rows", { todo: "X5: connect() has 
     } catch (e) {
       throw new Error("enqueue on a pre-timecap database failed: " + String(e));
     }
-    assert.equal(Number(rows(r, "SELECT max_runtime_s AS m FROM jobs WHERE id=?")[0].m), 60);
+    assert.equal(Number(rows(r, `SELECT max_runtime_s AS m FROM jobs WHERE id=${jid}`)[0].m), 60);
     const claimed = q.claim(c, "o");
     assert.notEqual(claimed, null);
     assert.equal(claimed.jid, jid);
