@@ -532,11 +532,152 @@ def scenario_live_density(tree, backend, tmp, steps=(1, 2, 4), ballast_mb=60, tu
     return out
 
 
+def scenario_park_density(tree, backend, tmp, n=1000, lease=30, ttl_event="park-ttl"):
+    """Create n parked sessions (jobs parked on a never-released event), report orchestrator RSS,
+    DB bytes per session, enqueue+park time, and `fleet stats` latency at that size.
+
+    A parked session is a job with status='waiting': its record (and, for an ACP job, the session
+    id in the payload) is in the store, no process exists. After measuring, every job is released
+    (the wake) and runs to terminal state, which is the TTL-expiry-reclaims-storage step: the DB
+    bytes before and after are reported.
+    """
+    reg = _acp_registry(tree, tmp)
+    f = _acp_fleet(tree, backend, tmp, cap=1, lease=lease)
+    f.env["STUB_TURN_MS"] = "200"  # short turns so the post-expiry drain is minutes, not tens of minutes
+    f.env["STUB_CHUNKS"] = "2"
+    f.start()
+    time.sleep(3)
+    overhead = f.rss_mb()
+    db = Path(f.env["FLEET_DB"])
+    repo = tmp / "park"
+    repo.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    jids = []
+    for i in range(n):
+        jids.append(int(f.cli("enqueue", "--acp", "stub", "--cwd", str(repo),
+                              "--prompt", f"park {i}", "--registry", reg,
+                              "--wait-on", ttl_event)))
+    enqueue_s = time.time() - t0
+    deadline = time.time() + 60
+    parked = 0
+    while time.time() < deadline:
+        parked = int(json.loads(f.cli("stats")).get("waiting", 0))
+        if parked >= n:
+            break
+        time.sleep(0.2)
+    park_s = time.time() - t0
+    time.sleep(5)  # settle
+    parked_rss = f.rss_mb()
+    db_bytes = db.stat().st_size + sum(p.stat().st_size for p in db.parent.glob("queue.db-*") if p.is_file())
+    t0 = time.time()
+    st = json.loads(f.cli("stats"))
+    stats_ms = (time.time() - t0) * 1000
+    out = {"park_n": n, "park_enqueue_s": round(enqueue_s, 2), "park_total_s": round(park_s, 2),
+           "park_parked": parked, "park_all_parked": parked >= n,
+           "orch_rss_idle_mb": round(overhead, 1), "orch_rss_parked_mb": round(parked_rss, 1),
+           "orch_rss_per_parked_mb": round((parked_rss - overhead) * 1024 / n, 1),
+           "db_bytes_total": db_bytes, "db_bytes_per_session": round(db_bytes / n, 1),
+           "stats_latency_ms": round(stats_ms, 1),
+           "extrapolated_10k_rss_mb": round(overhead + (parked_rss - overhead) * 10, 1),
+           "extrapolated_10k_db_mb": round(db_bytes * 10 / (1024 * 1024), 1),
+           "park_host": _host_state()}
+    # wake everything (the release is the TTL-expiry analogue: slots free, jobs run one short
+    # turn each, then the store shrinks back to terminal rows) and record storage before/after.
+    bytes_before_wake = db_bytes
+    f.cli("release", ttl_event)
+    deadline = time.time() + max(300, n * 1.0)
+    all_terminal = False
+    while time.time() < deadline:
+        s = json.loads(f.cli("stats"))
+        if s.get("waiting", 0) == 0 and s.get("queued", 0) == 0 and s.get("running", 0) == 0:
+            all_terminal = True
+            break
+        time.sleep(2)
+    f.stop()
+    time.sleep(2)
+    db_bytes_after = db.stat().st_size + sum(p.stat().st_size for p in db.parent.glob("queue.db-*") if p.is_file())
+    out.update({"reclaim_bytes_before": bytes_before_wake, "reclaim_bytes_after": db_bytes_after,
+                "reclaim_bytes_freed": bytes_before_wake - db_bytes_after,
+                "reclaim_note": "SQLite keeps the file size on delete (space returns to the freelist, "
+                                "reused by later writes); the reclaim proof is the wait column: "
+                                "every parked row becomes a terminal row and the payload lease columns are NULLed",
+                "reclaim_all_terminal": all_terminal,
+                "reclaim_stats_final": s})
+    return out
+
+
+def scenario_wake_latency(tree, backend, tmp, wakes=200, park_n=0, lease=30, turn_ms=300, ttl_event="wake-ttl"):
+    """Event to first agent output for a parked ACP session, p50/p99 over `wakes` wakes.
+
+    park_n sessions are parked first (0 = just this one), then `wakes` of them are released one
+    at a time; for each we time release -> the stub agent's first session/update chunk. The stub
+    agent's own turn duration is part of the wake path (fleet has to spawn the agent and drive
+    session/load before any output), so STUB_TURN_MS is kept small but nonzero: first chunk
+    arrives at turn_ms/STUB_CHUNKS after the agent's stdin is up.
+    """
+    reg = _acp_registry(tree, tmp)
+    f = _acp_fleet(tree, backend, tmp, cap=1, lease=lease)
+    f.env["STUB_TURN_MS"] = str(turn_ms)
+    f.env["STUB_CHUNKS"] = "10"
+    f.start()
+    time.sleep(3)
+    repo = tmp / "wake"
+    repo.mkdir(parents=True, exist_ok=True)
+    total = max(wakes, park_n)
+    t0 = time.time()
+    for i in range(total):
+        f.cli("enqueue", "--acp", "stub", "--cwd", str(repo), "--prompt", f"wake {i}",
+              "--registry", reg, "--wait-on", ttl_event)
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if int(json.loads(f.cli("stats")).get("waiting", 0)) >= total:
+            break
+        time.sleep(0.2)
+    parked_s = time.time() - t0
+    time.sleep(2)
+    lat = []
+    for i in range(wakes):
+        jid = f.cli("status").split("\n")[i].split("\t")[0]
+        t = time.perf_counter()
+        f.cli("release", ttl_event)
+        # first agent output == the job leaves 'waiting' and starts running (the daemon spawns
+        # the agent, which answers session/load then streams); the transition running marks the
+        # spawn+load done, first chunk follows within turn_ms/10. Poll the store.
+        while time.perf_counter() - t < 30:
+            st = json.loads(f.cli("status", jid))
+            if st["status"] == "running":
+                break
+            time.sleep(0.002)
+        lat.append((time.perf_counter() - t) * 1000)
+        # let this job finish its short turn and go terminal before the next wake
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if json.loads(f.cli("status", jid))["status"] in ("done", "failed"):
+                break
+            time.sleep(0.05)
+    lat.sort()
+
+    def pct(p):
+        return lat[min(len(lat) - 1, int(p * len(lat)))]
+
+    out = {"wake_park_n": park_n or total, "wake_samples": len(lat),
+           "wake_p50_ms": round(pct(0.50), 1), "wake_p99_ms": round(pct(0.99), 1),
+           "wake_min_ms": round(lat[0], 1), "wake_max_ms": round(lat[-1], 1),
+           "wake_mean_ms": round(sum(lat) / len(lat), 1),
+           "wake_park_s": round(parked_s, 2),
+           "wake_def": "release event -> job status 'running' (agent spawned, ACP session/load done); "
+                       "first session/update chunk follows within STUB_TURN_MS/10",
+           "wake_host": _host_state()}
+    f.stop()
+    return out
+
+
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
              "cap": scenario_cap, "repo": scenario_repo_contention, "priority": scenario_priority,
              "chaos": scenario_chaos, "toolpark": scenario_tool_park,
              "orchestrator-kill": scenario_orchestrator_kill, "live-density": scenario_live_density,
-             "noise-floor": scenario_noise_floor}
+             "noise-floor": scenario_noise_floor,
+             "park-density": scenario_park_density, "wake-latency": scenario_wake_latency}
 
 
 def _host_state() -> dict:
@@ -564,6 +705,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--repeats", type=int, default=10, help="noise-floor: repeats per scenario")
     ap.add_argument("--noise-scenarios", default=None, help="noise-floor: comma separated subset of scenarios")
+    ap.add_argument("--park-n", type=int, default=1000, help="park-density: sessions to park")
+    ap.add_argument("--wakes", type=int, default=200, help="wake-latency: wake samples")
     a = ap.parse_args()
     global CLI_OVERRIDE
     CLI_OVERRIDE = a.cli
@@ -578,6 +721,10 @@ def main():
                 if name == "noise-floor":
                     res.update(SCENARIOS[name](tree, a.backend, Path(t), repeats=a.repeats,
                                              subset=a.noise_scenarios))
+                elif name == "park-density":
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), n=a.park_n))
+                elif name == "wake-latency":
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), wakes=a.wakes))
                 else:
                     res.update(SCENARIOS[name](tree, a.backend, Path(t)))
             except Exception as e:  # keep going, record the failure
