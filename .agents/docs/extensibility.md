@@ -158,11 +158,11 @@ Each rule is enforceable by construction (no interface exists that would violate
 
 ## 5. What gates v0.1.0 versus post-1.0
 
-Ships in v0.1.0 (M for what is built in this worktree's scaffold commit, C for the rest of the version's scope):
+Ships in v0.1.0 (M for what is built and passing tests in this worktree, C for the rest of the version's scope):
 
-- Plugin directory convention, discovery and the tiny loader, plus one example plugin and its test (M: built in this task, `src/coordinate/plugins.py`, `examples/plugins/`).
-- Plugin manifest schema with fail-closed unknown-key handling (M: built).
-- `coordinate plugins list` / `plugins run` (M: built, minimal).
+- Plugin directory convention, discovery and the tiny loader (`src/coordinate/plugins.py`, ~150 lines), plus the ntfy-push example plugin and 13 loader tests (M: built in this worktree, commit `feat(plugins)`; `uv run pytest tests/test_plugins.py` passes, full suite 89 passed, 2 skipped, M: `flock /tmp/tsc.lock uv run pytest -q`).
+- Plugin manifest schema with fail-closed unknown-key handling and bounded `timeout_s` (M: built).
+- `coordinate plugins list` / `coordinate plugins run [--interface X]` (M: built, minimal: stdin JSON-line fan-out, per-plugin timeout, failures to stderr, never fatal to the caller).
 - The documented sandbox and hard-rule contract of sections 1.4 and 4.3 (C: documentation is the deliverable).
 - `coordinate update` per section 3.2 (C: spec here; the release session decides the channel and the version-embedding, both flagged as dependencies of this command).
 - Config knob table with bounds (C: the bounds schema lands with the config work it governs; the doc fixes the bound values now so later code and this doc cannot drift silently).
@@ -175,6 +175,8 @@ Post-1.0, in rough order (C, ordering follows the survey's suggested order, surv
 - Tier 1 numeric tuning with TPE/CMA-ES over the section 2.1 knobs, gated on bench noise-floor runs first (C: survey 3.6 step 2 and its gating rule, stop where gains do not beat noise).
 - Release signing with a pinned key for update verification (C).
 - Anything resembling an autonomous improvement loop: rejected for v0.1.0 and 0.x entirely, per the survey (M: survey section 2 rejects whole-system self-rewrite; personal workload cannot feed the statistical budget, M: survey TL;DR, ~400 tasks per arm).
+
+Gating rationale in one paragraph: v0.1.0 gates exactly the surfaces that are usable with today's code (a frontend/hook/resume executable can be written and run now, M: the loader and fan-out exist) and the update path a binary-only user needs to stay current; everything gated post-1.0 requires an unbuilt prerequisite (P2 events for frontend wiring, protocol extraction for provider swap, noise-floor bench runs before any optimizer, M: `t3-integration.md` sections 2 and 6 for both dependency chains). The one thing that gates nothing and is excluded permanently: loop-driven mutation of the protected layer, which is not a version question (M: survey section 4.3 hard rules; this is the survey's protected-layer conclusion applied as policy, not a roadmap item).
 
 ## Claims summary
 
