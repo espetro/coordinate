@@ -354,7 +354,7 @@ test("X1: worktrees of one repo share the project key (queue.py:124-155)", { tim
   }
 });
 
-test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool class", { todo: "argv0Of splits on a single space, so the inner token keeps its quote (daemon.py:60 uses shlex)", timeout: DAEMON_T }, async () => {
+test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool class", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     fakeBin(r, "vitest", "sleep 2");
