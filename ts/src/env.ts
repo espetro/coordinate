@@ -14,6 +14,10 @@ export function dbPath(): string {
   if (override) {
     return override;
   }
+  if (process.platform === "win32") {
+    const state = process.env["LOCALAPPDATA"] || path.join(os.homedir(), "AppData", "Local");
+    return path.join(state, "coordinate", "queue.db");
+  }
   const state = process.env["XDG_STATE_HOME"] || path.join(os.homedir(), ".local", "state");
   return path.join(state, "coordinate", "queue.db");
 }
@@ -22,6 +26,10 @@ export function configPath(): string {
   const override = env("CONFIG");
   if (override) {
     return override;
+  }
+  if (process.platform === "win32") {
+    const cfg = process.env["APPDATA"] || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(cfg, "coordinate", "config.toml");
   }
   const cfg = process.env["XDG_CONFIG_HOME"] || path.join(os.homedir(), ".config");
   return path.join(cfg, "coordinate", "config.toml");

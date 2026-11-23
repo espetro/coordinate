@@ -12,7 +12,7 @@ import * as q from "./queue.ts";
 
 const BACKOFF_MAX = 2.0;
 const BACKOFF_MIN = 0.05;
-const SH = "/bin/sh";
+const SH = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
 
 interface Running {
   jid: number;
@@ -280,8 +280,13 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload): cp.ChildProcess {
   const cmd = payload.cmd;
   const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid), stdio: "ignore" as const };
+  const win = process.platform === "win32";
   const proc =
-    typeof cmd === "string" ? cp.spawn(SH, ["-c", cmd], opts) : cp.spawn(cmd[0], cmd.slice(1), opts);
+    typeof cmd === "string"
+      ? win
+        ? cp.spawn(SH, ["/c", cmd], opts)
+        : cp.spawn(SH, ["-c", cmd], opts)
+      : cp.spawn(cmd[0], cmd.slice(1), opts);
   q.setProc(db, jid, owner, proc.pid === undefined || proc.pid === null ? 0 : proc.pid);
   return proc;
 }
@@ -289,6 +294,17 @@ function spawnRaw(db: Database, jid: number, owner: string, kind: string, payloa
 function killGroup(proc: cp.ChildProcess): void {
   const pid = proc.pid;
   if (pid === undefined || pid === null || pid <= 1) {
+    return;
+  }
+  if (process.platform === "win32") {
+    // Windows has no process groups: the detached child is its own leader, so
+    // the direct pid is the best available kill target. Sibling leaks in a
+    // shell pipeline are accepted for v0.1.0 (the shim runs one command).
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
     return;
   }
   try {
@@ -337,7 +353,9 @@ export function run(): void {
       // cmd lane: no recorded process to kill in this spike beyond best-effort pgid
       if (row.pgid !== null && row.pgid > 1) {
         try {
-          process.kill(-row.pgid, "SIGTERM");
+          // Windows has no process groups; kill the recorded pid directly.
+          const target = process.platform === "win32" ? row.pgid : -row.pgid;
+          process.kill(target, "SIGTERM");
         } catch {
           // gone
         }
