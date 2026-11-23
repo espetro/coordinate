@@ -6,6 +6,7 @@ write themselves, so the same script runs against the SQLite backend and FLEET_B
   python bench/bench.py --tree PATH_TO_CHECKOUT [--backend sqlite|dbos] --out results.json
 """
 import argparse
+import atexit
 import json
 import os
 import shlex
@@ -23,6 +24,10 @@ STAMP = "perl -MTime::HiRes=time -e 'printf \"%.3f\\n\", time'"
 
 
 class Fleet:
+    # daemons this bench started and has not stopped yet; the atexit hook kills them by exact
+    # pid, so a scenario that raises never leaves a daemon behind on a shared host.
+    _live: list["Fleet"] = []
+
     def __init__(self, tree: Path, backend: str, workdir: Path, cap: int, lease: float = 5):
         self.tree, self.dir = tree, workdir
         self.py = str(tree / ".venv" / "bin" / "python")
@@ -44,6 +49,7 @@ class Fleet:
         log = open(self.dir / "daemon.log", "ab")
         self.daemon = subprocess.Popen([*self.cmd, "daemon"], env=self.env, cwd=self.dir,
                                        stdout=log, stderr=log, start_new_session=True)
+        Fleet._live.append(self)
         return self.daemon
 
     def stop(self, sig=signal.SIGTERM):
@@ -53,6 +59,11 @@ class Fleet:
             except ProcessLookupError:
                 pass
             self.daemon.wait()
+        if self in Fleet._live:
+            Fleet._live.remove(self)
+
+    def kill9(self):
+        self.stop(signal.SIGKILL)
 
     def kill9(self):
         self.stop(signal.SIGKILL)
@@ -83,6 +94,23 @@ class Fleet:
         if priority:
             args += ["--priority", str(priority)]
         return self.cli(*args, "--", shell)
+
+
+def _kill_leftover_daemons() -> None:
+    """Kill every daemon this bench started and has not stopped, by exact pid.
+
+    The bench runs on a shared host, so a daemon left behind by a scenario that raised would
+    keep running. Only pids this process recorded are touched, never a pattern.
+    """
+    for f in list(Fleet._live):
+        try:
+            f.stop(signal.SIGKILL)
+        except Exception:
+            pass
+    Fleet._live.clear()
+
+
+atexit.register(_kill_leftover_daemons)
 
 
 def span_cmd(log: Path, tag: str, sleep: float) -> str:
@@ -774,40 +802,41 @@ def scenario_park_density(tree, backend, tmp, steps=(1000, 10000)):
     """
     f = Fleet(tree, backend, tmp, cap=2, lease=120)
     db = Path(f.env["FLEET_DB"])
-    f.start()
-    time.sleep(4)
-    baseline_rss = f.rss_mb()
-    out = {"parkdensity_steps": [], "parkdensity_baseline_rss_mb": round(baseline_rss, 1),
+    out = {"parkdensity_steps": [], "parkdensity_baseline_rss_mb": 0.0,
            "parkdensity_host": _host_state()}
-    total = 0
-    for n in steps:
-        t0 = time.time()
-        r = subprocess.run([str(tree / ".venv" / "bin" / "python"),
-                            str(Path(__file__).parent / "park_filler.py"),
-                            "--db", str(db), "--count", str(n), "--event", "park-evt"],
-                           capture_output=True, text=True, cwd=str(tmp))
-        if r.returncode:
-            raise RuntimeError(f"park_filler failed: {r.stderr[-400:]}")
-        elapsed = time.time() - t0
-        time.sleep(1.5)  # let the daemon notice the new rows
-        rss = f.rss_mb()
-        total += n
-        db_bytes = db.stat().st_size if db.exists() else 0
-        rows = _job_rows(db)
-        parked = sum(1 for r2 in rows.values() if r2["status"] == "waiting")
-        out["parkdensity_steps"].append({
-            "step_parked_sessions": n,
-            "total_parked_sessions": parked,
-            "enqueue_s": round(elapsed, 2),
-            "enqueue_per_session_ms": round(elapsed / n * 1000, 3),
-            "orchestrator_rss_mb": round(rss, 1),
-            "orchestrator_rss_delta_mb": round(rss - baseline_rss, 2),
-            "db_bytes": db_bytes,
-            "db_bytes_per_parked_session": round(db_bytes / parked, 1) if parked else None,
-            "rss_kb_per_parked_session": round((rss - baseline_rss) * 1024 / parked, 3) if parked else None,
-            "host": _host_state(),
-        })
-    f.stop()
+    try:
+        f.start()
+        time.sleep(4)
+        baseline_rss = f.rss_mb()
+        out["parkdensity_baseline_rss_mb"] = round(baseline_rss, 1)
+        for n in steps:
+            t0 = time.time()
+            r = subprocess.run([str(tree / ".venv" / "bin" / "python"),
+                                str(Path(__file__).parent / "park_filler.py"),
+                                "--db", str(db), "--count", str(n), "--event", "park-evt"],
+                               capture_output=True, text=True, cwd=str(tmp))
+            if r.returncode:
+                raise RuntimeError(f"park_filler failed: {r.stderr[-400:]}")
+            elapsed = time.time() - t0
+            time.sleep(1.5)  # let the daemon notice the new rows
+            rss = f.rss_mb()
+            db_bytes = db.stat().st_size if db.exists() else 0
+            rows = _job_rows(db)
+            parked = sum(1 for r2 in rows.values() if r2["status"] == "waiting")
+            out["parkdensity_steps"].append({
+                "step_parked_sessions": n,
+                "total_parked_sessions": parked,
+                "enqueue_s": round(elapsed, 2),
+                "enqueue_per_session_ms": round(elapsed / n * 1000, 3),
+                "orchestrator_rss_mb": round(rss, 1),
+                "orchestrator_rss_delta_mb": round(rss - baseline_rss, 2),
+                "db_bytes": db_bytes,
+                "db_bytes_per_parked_session": round(db_bytes / parked, 1) if parked else None,
+                "rss_kb_per_parked_session": round((rss - baseline_rss) * 1024 / parked, 3) if parked else None,
+                "host": _host_state(),
+            })
+    finally:
+        f.stop()  # never leave the daemon behind, even when the scenario raises
     # top level summaries, so the comparison can gate on them (the steps stay as detail)
     last = out["parkdensity_steps"][-1]
     out["parkdensity_total_parked"] = last["total_parked_sessions"]
