@@ -130,6 +130,23 @@ def load_registry(path):
         return json.load(f)
 
 
+def _stdin_cancel_forwarder(client: "Client", sid_getter) -> None:
+    """Forward an incoming session/cancel notification (from the dispatcher) to the agent.
+
+    The daemon writes ACP JSON-RPC to this process's stdin; without this thread the
+    notification would sit unread while `prompt` blocks on the agent's reply."""
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get("method") == "session/cancel":
+            client.cancel(sid_getter())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("verb")
@@ -163,6 +180,8 @@ def main() -> int:
 
     client = Client(proc)
     sid = a.session
+    threading.Thread(target=_stdin_cancel_forwarder, args=(client, lambda: sid),
+                     daemon=True).start()
     try:
         client.initialize()
         if sid:

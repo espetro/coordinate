@@ -1,0 +1,53 @@
+{
+  "backend": "sqlite",
+  "tree": "/home/own-agents/.worktrees/fleet-spikes/timecap",
+  "host": {
+    "load_1m": 1.24,
+    "load_5m": 0.83,
+    "load_15m": 0.57,
+    "mem_total_mb": 11682,
+    "mem_available_mb": 8535,
+    "timestamp": "2026-11-23T00:58:44+0000"
+  },
+  "timecap_grace_s": 2.0,
+  "timecap_cap_s": 3.0,
+  "timecap_results": [
+    {
+      "part": "acp_forever_agent",
+      "status": "timed_out",
+      "status_is_timed_out": true,
+      "outcome": "max runtime exceeded (cap 3.0s)",
+      "attempts": 1,
+      "never_retried": true,
+      "seconds_from_enqueue_to_timed_out": 4.24,
+      "within_cap_plus_grace": true,
+      "slot_reused_by_followup_job": true,
+      "agent_pids_gone": true
+    },
+    {
+      "part": "cmd_sleep_forever",
+      "status": "timed_out",
+      "status_is_timed_out": true,
+      "outcome": "max runtime exceeded (cap 3.0s)",
+      "attempts": 1,
+      "never_retried": true,
+      "seconds_from_enqueue_to_timed_out": 4.14,
+      "within_cap_plus_grace": true,
+      "slot_reused_by_followup_job": true,
+      "child_pids_gone": true
+    },
+    {
+      "part": "daemon_kill9_mid_turn",
+      "was_running_before_kill": true,
+      "status": "timed_out",
+      "status_is_timed_out": true,
+      "outcome": "max runtime exceeded (cap 3.0s)",
+      "attempts": 1,
+      "never_retried": true,
+      "seconds_from_kill_to_timed_out": 4.36,
+      "slot_reused_by_followup_job": true,
+      "agent_pids_gone": true
+    }
+  ],
+  "timecap_all_ok": true
+}

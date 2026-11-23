@@ -532,10 +532,154 @@ def scenario_live_density(tree, backend, tmp, steps=(1, 2, 4), ballast_mb=60, tu
     return out
 
 
+def scenario_timecap(tree, backend, tmp):
+    """Timecap scenarios: an agent that never answers is cancelled within cap + grace.
+
+    Part 1 (acp): a stub ACP job whose agent never answers the prompt, cap 3s. The daemon
+    must send session/cancel, then TERM/KILL the agent group; final status timed_out, the
+    slot freed and reused by a follow-up job, and no orphan agent process left.
+    Part 2 (cmd): a `sleep forever` cmd job with the same 3s cap ends timed_out too.
+    Part 3 (kill -9): the daemon is SIGKILLed while the forever-agent runs; the restarted
+    daemon still enforces the deadline recorded in SQLite.
+
+    FLEET_TIMECAP_GRACE_S is set to 2s so the whole scenario stays under cap + grace.
+    """
+    reg = _acp_registry(tree, tmp)
+    grace_s = 2.0
+    cap_s = 3.0
+    out: dict = {"timecap_grace_s": grace_s, "timecap_cap_s": cap_s}
+    results = []
+
+    def fleet(cap=2):
+        f = _acp_fleet(tree, backend, tmp, cap=cap, lease=30)
+        f.env["FLEET_TIMECAP_GRACE_S"] = str(grace_s)
+        f.env["STUB_FOREVER"] = "1"
+        return f
+
+    def enqueue_forever_acp(f, i):
+        repo = tmp / f"tc{i}"
+        repo.mkdir(parents=True, exist_ok=True)
+        return int(f.cli("enqueue", "--acp", "stub", "--cwd", str(repo), "--prompt", "never answer",
+                         "--registry", reg, "--max-runtime", f"{int(cap_s)}s"))
+
+    def wait_status(f, jid, statuses, timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            st = json.loads(f.cli("status", str(jid)))
+            if st["status"] in statuses:
+                return st
+            time.sleep(0.1)
+        return json.loads(f.cli("status", str(jid)))
+
+    def no_orphans(f, jids, timeout=30):
+        """Every recorded pid of these jobs (child group and agent pid file) must be gone."""
+        end = time.time() + timeout
+        while time.time() < end:
+            pids = []
+            for jid in jids:
+                st = json.loads(f.cli("status", str(jid)))
+                if st.get("pgid"):
+                    pids.append(st["pgid"])
+            pids += [p for j, p in _agent_pids(Path(f.env["FLEET_DB"])).items() if j in jids]
+            if not any(_alive(p) for p in pids):
+                return True
+            time.sleep(0.2)
+        return False
+
+    # ---- part 1: acp forever agent ----------------------------------------
+    f = fleet(cap=2)
+    log = tmp / "acp.log"
+    f.start()
+    time.sleep(3)
+    jid = enqueue_forever_acp(f, 1)
+    t0 = time.time()
+    st = wait_status(f, jid, {"timed_out"}, cap_s + grace_s + 30)
+    t_timed_out = time.time() - t0
+    slot_freed = None
+    jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
+    reuse = wait_status(f, jid2, {"done"}, 30)
+    agents_gone = no_orphans(f, [jid])
+    f.stop()
+    results.append({
+        "part": "acp_forever_agent",
+        "status": st["status"],
+        "status_is_timed_out": st["status"] == "timed_out",
+        "outcome": st.get("outcome"),
+        "attempts": st["attempts"],
+        "never_retried": st["attempts"] == 1,
+        "seconds_from_enqueue_to_timed_out": round(t_timed_out, 2),
+        "within_cap_plus_grace": t_timed_out <= cap_s + grace_s + 1.0,
+        "slot_reused_by_followup_job": reuse["status"] == "done",
+        "agent_pids_gone": agents_gone,
+    })
+
+    # ---- part 2: cmd sleep-forever -----------------------------------------
+    f = fleet(cap=2)
+    f.start()
+    time.sleep(3)
+    jid = int(f.cli("enqueue", "--cwd", str(tmp), "--max-runtime", f"{int(cap_s)}s", "--", "sleep", "100000"))
+    t0 = time.time()
+    st = wait_status(f, jid, {"timed_out"}, cap_s + 30)
+    t_timed_out = time.time() - t0
+    jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
+    reuse = wait_status(f, jid2, {"done"}, 30)
+    gone = no_orphans(f, [jid])
+    f.stop()
+    results.append({
+        "part": "cmd_sleep_forever",
+        "status": st["status"],
+        "status_is_timed_out": st["status"] == "timed_out",
+        "outcome": st.get("outcome"),
+        "attempts": st["attempts"],
+        "never_retried": st["attempts"] == 1,
+        "seconds_from_enqueue_to_timed_out": round(t_timed_out, 2),
+        "within_cap_plus_grace": t_timed_out <= cap_s + 5.0,
+        "slot_reused_by_followup_job": reuse["status"] == "done",
+        "child_pids_gone": gone,
+    })
+
+    # ---- part 3: kill -9 the daemon mid-turn --------------------------------
+    f = fleet(cap=2)
+    f.start()
+    time.sleep(3)
+    jid = enqueue_forever_acp(f, 3)
+    st_run = wait_status(f, jid, {"running"}, 30)
+    t0 = time.time()
+    f.kill9()
+    time.sleep(1.0)  # simulate the outage: the deadline is already recorded in SQLite
+    f.start()
+    st = wait_status(f, jid, {"timed_out"}, cap_s + grace_s + 60)
+    t_timed_out = time.time() - t0
+    jid2 = int(f.cli("enqueue", "--cwd", str(tmp), "--", "true"))
+    reuse = wait_status(f, jid2, {"done"}, 30)
+    gone = no_orphans(f, [jid])
+    f.stop()
+    results.append({
+        "part": "daemon_kill9_mid_turn",
+        "was_running_before_kill": st_run["status"] == "running",
+        "status": st["status"],
+        "status_is_timed_out": st["status"] == "timed_out",
+        "outcome": st.get("outcome"),
+        "attempts": st["attempts"],
+        "never_retried": st["attempts"] == 1,
+        "seconds_from_kill_to_timed_out": round(t_timed_out, 2),
+        "slot_reused_by_followup_job": reuse["status"] == "done",
+        "agent_pids_gone": gone,
+    })
+
+    out["timecap_results"] = results
+    out["timecap_all_ok"] = all(
+        r.get("status_is_timed_out") and r.get("never_retried") and r.get("slot_reused_by_followup_job")
+        and r.get("agent_pids_gone", r.get("child_pids_gone", False))
+        and r.get("within_cap_plus_grace", True) for r in results)
+    return out
+
+
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
              "cap": scenario_cap, "repo": scenario_repo_contention, "priority": scenario_priority,
              "chaos": scenario_chaos, "toolpark": scenario_tool_park,
              "orchestrator-kill": scenario_orchestrator_kill, "live-density": scenario_live_density,
+             "timecap": scenario_timecap,
              "noise-floor": scenario_noise_floor}
 
 
