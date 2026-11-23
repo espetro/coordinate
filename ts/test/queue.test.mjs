@@ -140,3 +140,19 @@ test("schema matches the Python queue.py tables", async () => {
     "priority", "run_at", "runtime_used_s", "status", "waiting_on",
   ]);
 });
+
+test("events: enqueue/claim/finish emit transitions", async () => {
+  const q = await freshDb();
+  const db = q.connect();
+  const jid = q.enqueue(db, { cmd: ["true"], cwd: null });
+  const c1 = q.claim(db, "o:1");
+  q.finish(db, c1.jid, "o:1", "done");
+  const rows = db.prepareRaw("SELECT id,ts,job_id,kind,data FROM events ORDER BY id").all([]);
+  const kinds = rows.map((r) => r.kind);
+  assert.deepEqual(kinds, ["enqueued", "claimed", "done"]);
+  assert.equal(Number(rows[0].job_id), jid);
+  assert.deepEqual(JSON.parse(rows[0].data), { kind: "cmd" });
+  q.cancel(db, q.enqueue(db, { cmd: ["true"], cwd: null }));
+  const all = db.prepareRaw("SELECT kind FROM events ORDER BY id").all([]);
+  assert.equal(all[all.length - 1].kind, "cancelled");
+});

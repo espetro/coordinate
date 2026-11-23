@@ -41,11 +41,11 @@ function opts(): Opts {
   return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, waitOn: null, shell: false, selfFlag: false, slots: [] };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
     process.stdout.write(
-      "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, dead retry [id], daemon\n",
+      "usage: coordinate <verb> [args]\nverbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], dead retry [id], daemon\n",
     );
     process.exit(argv.length === 0 ? 1 : 0);
   }
@@ -153,6 +153,36 @@ function main(): void {
     const ok = q.cancel(db, Number(rest[0]));
     if (!ok) {
       fail("job " + rest[0] + " not cancellable");
+    }
+  } else if (verb === "events") {
+    // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
+    let follow = false;
+    let since = 0;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--follow") {
+        follow = true;
+      } else if (rest[i] === "--since") {
+        since = Number(rest[++i]);
+      } else {
+        fail("events: unknown argument " + rest[i]);
+      }
+    }
+    let last = since;
+    const printRows = (rows: { id: number; ts: number; job_id: number | null; kind: string; data: string }[]) => {
+      for (const r of rows) {
+        last = r.id;
+        const line = { id: r.id, ts: r.ts, job_id: r.job_id, kind: r.kind, data: r.data ? JSON.parse(r.data) : {} };
+        process.stdout.write(JSON.stringify(line) + "\n");
+      }
+    };
+    printRows(
+      db.prepareRaw("SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id").all([last]) as never,
+    );
+    while (follow) {
+      printRows(
+        db.prepareRaw("SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id").all([last]) as never,
+      );
+      await new Promise((res) => setTimeout(res, 500));
     }
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
