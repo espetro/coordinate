@@ -3,5 +3,8 @@
   "url": "https://coordinated.pages.dev",
   "src": ".",
   "out": "../site",
-  "exclude": ["README.md"]
+  "exclude": ["README.md"],
+  "plugins": {
+    "ai": false
+  }
 }
