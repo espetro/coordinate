@@ -68,6 +68,26 @@ function opts(): Opts {
   return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, waitOn: null, shell: false, selfFlag: false, slots: [] };
 }
 
+function isEnqueueOption(name: string): boolean {
+  return (
+    name === "--cwd" || name === "--repo" || name === "--priority" || name === "--max-attempts" ||
+    name === "--max-runtime" || name === "--wait-on" || name === "--shell" || name === "--slot"
+  );
+}
+
+function optionTakesValue(name: string): boolean {
+  return name !== "--shell";
+}
+
+// argparse type=int parity: a non-integer exits with a clear message, not a stack trace.
+function parseIntArg(raw: string, flag: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n)) {
+    fail("enqueue " + flag + ": invalid int value: " + JSON.stringify(raw));
+  }
+  return n;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -92,30 +112,72 @@ async function main(): Promise<void> {
     cfgValidate();
     const o = opts();
     let cmd: string[] = [];
+    // argparse REMAINDER parity (cli.py:56): everything from the first non-option token on,
+    // or from the first `--`, is the command. `--opt=value` is accepted like argparse.
+    let flagPart: string[];
+    let valuePart: string[];
     const dashed = rest.indexOf("--");
-    const flagPart = dashed >= 0 ? rest.slice(0, dashed) : rest;
-    let valuePart = dashed >= 0 ? rest.slice(dashed + 1) : [];
+    if (dashed >= 0) {
+      flagPart = rest.slice(0, dashed);
+      valuePart = rest.slice(dashed + 1);
+    } else {
+      let first = rest.length;
+      for (let i = 0; i < rest.length; i++) {
+        if (!rest[i].startsWith("--")) {
+          first = i;
+          break;
+        }
+        if (rest[i] === "--shell") {
+          // --shell is a store_true flag; REMAINDER stops at the first positional anyway
+          continue;
+        }
+        const eq = rest[i].indexOf("=");
+        const name = eq === -1 ? rest[i] : rest[i].slice(0, eq);
+        if (!isEnqueueOption(name)) {
+          first = i;
+          break;
+        }
+        if (eq === -1 && optionTakesValue(name)) {
+          i = i + 1;
+        }
+      }
+      flagPart = rest.slice(0, first);
+      valuePart = rest.slice(first);
+    }
     if (valuePart.length > 0 && valuePart[0] === "--") {
       valuePart = valuePart.slice(1);
     }
     for (let i = 0; i < flagPart.length; i++) {
       const t = flagPart[i];
-      if (t === "--cwd") {
-        o.cwd = flagPart[++i];
-      } else if (t === "--repo") {
-        o.repo = flagPart[++i];
-      } else if (t === "--priority") {
-        o.priority = Number(flagPart[++i]);
-      } else if (t === "--max-attempts") {
-        o.maxAttempts = Number(flagPart[++i]);
-      } else if (t === "--max-runtime") {
-        o.maxRuntime = flagPart[++i];
-      } else if (t === "--wait-on") {
-        o.waitOn = flagPart[++i];
-      } else if (t === "--shell") {
+      const eq = t.indexOf("=");
+      const name = eq === -1 ? t : t.slice(0, eq);
+      const inline = eq === -1 ? null : t.slice(eq + 1);
+      const need = () => {
+        if (inline !== null) {
+          return inline;
+        }
+        i = i + 1;
+        if (i >= flagPart.length) {
+          fail("enqueue: argument " + name + ": expected one value");
+        }
+        return flagPart[i];
+      };
+      if (name === "--cwd") {
+        o.cwd = need();
+      } else if (name === "--repo") {
+        o.repo = need();
+      } else if (name === "--priority") {
+        o.priority = parseIntArg(need(), "--priority");
+      } else if (name === "--max-attempts") {
+        o.maxAttempts = parseIntArg(need(), "--max-attempts");
+      } else if (name === "--max-runtime") {
+        o.maxRuntime = need();
+      } else if (name === "--wait-on") {
+        o.waitOn = need();
+      } else if (name === "--shell") {
         o.shell = true;
-      } else if (t === "--slot") {
-        o.slots.push(flagPart[++i]);
+      } else if (name === "--slot") {
+        o.slots.push(need());
       } else {
         fail("enqueue: unknown option " + t);
       }

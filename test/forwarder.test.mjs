@@ -88,3 +88,27 @@ test("CLI forward: filtering, {message} substitution, cursor resume", async () =
   assert.ok(!lines2[1].includes("{message}"));
   assert.equal(f.loadCursor(cursor), 4);
 });
+
+test("X14: a failed send does not advance the in-memory cursor; the event is retried", async () => {
+  const f = await forwarder();
+  const q = await import("../src/queue.ts");
+  const d = tmpdir();
+  const dbPath = path.join(d, "queue.db");
+  process.env["COORDINATE_DB"] = dbPath;
+  const db = q.connect();
+  q.emit(db, null, "done", { outcome: "ok" });
+  q.emit(db, null, "done", { outcome: "ok2" });
+  db.close();
+
+  let calls = 0;
+  const sink = (message, ev) => {
+    calls = calls + 1;
+    if (calls === 1) {
+      return false; // first send fails
+    }
+    return true;
+  };
+  await f.forward({ exec: "", sinkFn: sink, cursor: path.join(d, "cursor"), since: 0, interval: 0.01, maxPolls: 2 });
+  assert.equal(calls, 3, `expected the failed event to be retried within the same poll (calls=${calls})`);
+  assert.equal(f.loadCursor(path.join(d, "cursor")), 2);
+});

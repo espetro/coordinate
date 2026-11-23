@@ -309,7 +309,7 @@ test("X8: status prints runtime_remaining_s and deadline_in_s", async () => {
   }
 });
 
-test("X9: enqueue accepts --opt=value like argparse", { todo: "hand-rolled parser: 'unknown option --cwd=/tmp'" }, async () => {
+test("X9: enqueue accepts --opt=value like argparse", async () => {
   const r = rig();
   try {
     const out = cli(r, "enqueue", `--cwd=${r.dir}`, "--", "true");
@@ -319,7 +319,7 @@ test("X9: enqueue accepts --opt=value like argparse", { todo: "hand-rolled parse
   }
 });
 
-test("X9: enqueue accepts the command without a -- separator (argparse REMAINDER)", { todo: "hand-rolled parser: 'unknown option echo'" }, async () => {
+test("X9: enqueue accepts the command without a -- separator (argparse REMAINDER)", async () => {
   const r = rig();
   try {
     const out = cli(r, "enqueue", "--priority", "1", "echo", "hi");

@@ -79,12 +79,14 @@ function makeSink(cmd: string): Sink {
 
 export interface ForwardOpts {
   exec: string;
+  sinkFn?: ((message: string, ev: EventRow) => boolean) | null;
   machine?: string;
   interval?: number;
   cursor?: string;
   since?: number | null;
   kinds?: string;
   once?: boolean;
+  maxPolls?: number | null;
   verbose?: boolean;
 }
 
@@ -93,7 +95,7 @@ export async function forward(o: ForwardOpts): Promise<void> {
   const kinds = new Set((o.kinds ?? DEFAULT_KINDS).split(",").map((k) => k.trim()).filter(Boolean));
   const cursorPath = o.cursor || defaultCursorPath();
   let cur = o.since !== null && o.since !== undefined ? o.since : loadCursor(cursorPath);
-  const sink = makeSink(o.exec);
+  const sink: Sink = o.sinkFn !== null && o.sinkFn !== undefined ? { cmd: o.exec ?? "", run: o.sinkFn } : makeSink(o.exec);
   const interval = (o.interval ?? 2) * 1000;
   const db = q.connect();
 
@@ -106,8 +108,9 @@ export async function forward(o: ForwardOpts): Promise<void> {
       "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id",
     ).all([cur]) as { id: number; ts: number; job_id: number | null; kind: string; data: string }[];
     for (const r of rows) {
-      cur = r.id;
       if (kinds.size && !kinds.has(r.kind)) {
+        // Filtered events need no send, so the cursor may advance past them (D16).
+        cur = r.id;
         saveCursor(cursorPath, cur);
         continue;
       }
@@ -120,6 +123,8 @@ export async function forward(o: ForwardOpts): Promise<void> {
       };
       const message = `[${machine}] ${render(ev)}`;
       if (sink.run(message, ev)) {
+        // Advance only after a successful send, so a failed event is retried on the next poll.
+        cur = r.id;
         saveCursor(cursorPath, cur);
         if (o.verbose) process.stderr.write(`sent: ${message}\n`);
       } else {
@@ -129,9 +134,11 @@ export async function forward(o: ForwardOpts): Promise<void> {
     }
   };
 
+  let polls = 1;
   poll();
-  while (!o.once) {
+  while (!o.once && (o.maxPolls === null || o.maxPolls === undefined || polls < o.maxPolls)) {
     await new Promise((res) => setTimeout(res, interval));
+    polls = polls + 1;
     poll();
   }
 }
