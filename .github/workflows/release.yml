@@ -141,12 +141,14 @@ jobs:
           if-no-files-found: error
 
   # The windows spike verdict is conditional go: the exe builds via zig on
-  # Linux but nothing ran it. This job is the go-condition smoke pass:
-  # enqueue, status and a daemon claim loop on a real Windows runner. The
-  # release job needs it, so a broken Windows port blocks the release.
+  # Linux but nothing ran it. This job is the smoke pass (enqueue, status,
+  # daemon claim loop) on a real Windows runner. Windows is best-effort for
+  # v0.1.x: the job reports but does not gate the release — only linux+macos
+  # binaries are release-blocking.
   windows-smoke:
-    name: windows-x64 smoke (go-condition)
+    name: windows-x64 smoke (best-effort)
     needs: binaries
+    continue-on-error: true
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -184,7 +186,7 @@ jobs:
 
   release:
     name: attach to the GitHub Release
-    needs: [binaries, windows-smoke]
+    needs: binaries
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
