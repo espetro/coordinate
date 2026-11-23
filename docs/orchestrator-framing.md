@@ -134,8 +134,8 @@ Four spikes ran on the VPS against the adapter contract and bench (`docs/restate
 | | Our SQLite scheduler | Restate 1.8.1 | Rivet 3.1.1 (local fs) |
 |---|---|---|---|
 | Idle RSS, whole stack | 18.5MB | 532MB | 128MB |
-| Enqueue median | 160ms (119ms in the noise run) | 169ms via shim, 22ms via curl | 215ms (one-actor coordinator shim) |
-| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | 4.2 jobs/s |
+| Enqueue median | 160ms (119ms in the noise run) | 169ms via shim, 22ms via curl | 270ms (215-270ms across runs, one-actor coordinator shim) |
+| Throughput, 60 jobs | 8.6 jobs/s | 5.8 jobs/s | 4.3 jobs/s |
 | kill -9 recovery | 14.5s | 3.5s | 10-20s restart |
 | Caps, repo cap, tool park | pass | pass (park via sleep-poll, frees slot) | pass (cap 3, repo cap 1, tool lease park) |
 | Global priority | pass | fail (planned upstream) | pass (9, 5, 1, 0) |
