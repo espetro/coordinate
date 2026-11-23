@@ -27,6 +27,24 @@ import time
 PROTOCOL_VERSION = 1
 
 
+def _trace(event: str, t_ms: float) -> None:
+    """Append one wake-stage timestamp to <cwd>/.acp-trace.jsonl when ACP_TRACE=1.
+
+    bench/bench.py wake-latency (breakdown=True) reads these after each wake, so the
+    claim / spawn / initialize / session/load stages can be timed without instrumenting
+    the daemon or adding any latency to the wake path itself. The file lands in the
+    job's cwd, so every wake with its own cwd gets its own trace."""
+    if os.environ.get("ACP_TRACE") != "1":
+        return
+    try:
+        with open(".acp-trace.jsonl", "a") as f:
+            f.write(json.dumps({"job": os.environ.get("COORDINATE_JOB_ID"),
+                                "event": event, "t_ms": round(t_ms, 1),
+                                "epoch": time.time()}) + "\n")
+    except OSError:
+        pass
+
+
 class Client:
     def __init__(self, proc: subprocess.Popen):
         self.proc = proc
@@ -183,12 +201,18 @@ def main() -> int:
     threading.Thread(target=_stdin_cancel_forwarder, args=(client, lambda: sid),
                      daemon=True).start()
     try:
+        t0 = time.perf_counter()
+        _trace("client_start", 0.0)
         client.initialize()
+        _trace("initialize_done", (time.perf_counter() - t0) * 1000)
         if sid:
             client.load_session(sid, a.cwd)
+            _trace("session_load_done", (time.perf_counter() - t0) * 1000)
         else:
             r = client.new_session(a.cwd)
             sid = r.get("sessionId")
+            _trace("session_new_done", (time.perf_counter() - t0) * 1000)
+        _trace("session_ready", (time.perf_counter() - t0) * 1000)
         sys.stdout.write(json.dumps({"sessionId": sid}) + "\n")
         sys.stdout.flush()
         res = client.prompt(sid, a.prompt)

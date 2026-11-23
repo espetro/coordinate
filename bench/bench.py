@@ -1065,28 +1065,67 @@ def scenario_park_density_cli(tree, backend, tmp, n=1000, lease=30, ttl_event="p
     return out
 
 
-def scenario_wake_latency(tree, backend, tmp, wakes=200, park_n=0, lease=30, turn_ms=300, ttl_event="wake-ttl"):
-    """Event to first agent output for a parked ACP session, p50/p99 over `wakes` wakes.
+def scenario_wake_latency(tree, backend, tmp, wakes=200, park_n=0, lease=30, turn_ms=300,
+                          ttl_event="wake-ttl"):
+    """Event to a running agent for a parked ACP session, p50/p99 over `wakes` wakes.
 
-    park_n sessions are parked first (0 = just this one), then `wakes` of them are released one
-    at a time; for each we time release -> the stub agent's first session/update chunk. The stub
-    agent's own turn duration is part of the wake path (fleet has to spawn the agent and drive
-    session/load before any output), so STUB_TURN_MS is kept small but nonzero: first chunk
-    arrives at turn_ms/STUB_CHUNKS after the agent's stdin is up.
+    The store starts with `park_n` parked sessions; the last `wakes` of them are woken one at a
+    time and each wake is timed from the release call to the job row reaching status 'running'
+    (the agent is spawned and ACP session/load has answered by then; the first session/update
+    chunk follows within turn_ms/STUB_CHUNKS).
+
+    The bulk fill uses bench/park_filler.py (one transaction for all rows, ACP payloads with a
+    seeded stub session id): 10,000 enqueues through the CLI take 18 minutes (M), which no bench
+    run can afford. The filler parks every row on its own event (prefix-i) so a wake can release
+    exactly one session; the shared-event path (the CLI's `release`) would wake all of them.
+
+    The wake stages are traced without instrumenting the wake path: each wake job gets its own
+    cwd, and the bench's ACP client appends stage epochs (client_start, initialize_done,
+    session_load_done, session_ready) to <cwd>/.acp-trace.jsonl when ACP_TRACE=1. The store's
+    claim_at gives the claim epoch. Stages reported (ms, p50): release_to_claim (claim_at minus
+    the release epoch, i.e. the daemon's poll latency), claim_to_spawn (the acp client process
+    starts), spawn_to_initialize (the ACP initialize round trip), initialize_to_session_ready
+    (session/load, or session/new when the row has no durable session id).
     """
     reg = _acp_registry(tree, tmp)
     f = _acp_fleet(tree, backend, tmp, cap=1, lease=lease)
     f.env["STUB_TURN_MS"] = str(turn_ms)
     f.env["STUB_CHUNKS"] = "10"
+    f.env["ACP_TRACE"] = "1"  # the daemon passes the environment down to the agent
+    # a tight poll loop, so the measured wake is the spawn path and not the daemon's idle poll
+    f.env["COORDINATE_BACKOFF_MIN"] = "0.01"
+    f.env["COORDINATE_BACKOFF_MAX"] = "0.05"
     f.start()
     time.sleep(3)
-    repo = tmp / "wake"
-    repo.mkdir(parents=True, exist_ok=True)
+    db = Path(f.env["COORDINATE_DB"])
+    fill_dir = tmp / "parkfill"
+    fill_dir.mkdir(parents=True, exist_ok=True)
     total = max(wakes, park_n)
+    n_fill = total - wakes
     t0 = time.time()
-    for i in range(total):
-        f.cli("enqueue", "--acp", "stub", "--cwd", str(repo), "--prompt", f"wake {i}",
-              "--registry", reg, "--wait-on", ttl_event)
+    if n_fill > 0:
+        r = subprocess.run([str(tree / ".venv" / "bin" / "python"),
+                            str(Path(__file__).parent / "park_filler.py"),
+                            "--db", str(db), "--count", str(n_fill),
+                            "--event-per-row", f"{ttl_event}-fill", "--kind", "acp", "--batch",
+                            "--seed-sessions", "--cwd", str(fill_dir)],
+                           capture_output=True, text=True, cwd=str(tmp))
+        if r.returncode:
+            raise RuntimeError(f"park_filler failed: {r.stderr[-400:]}")
+    fill_s = time.time() - t0
+    # the wake jobs are enqueued after the fill, so their ids are the highest ones
+    wake_ids = []
+    for i in range(wakes):
+        d = tmp / f"wake{i}"
+        d.mkdir(parents=True, exist_ok=True)
+        jid = int(f.cli("enqueue", "--acp", "stub", "--cwd", str(d), "--prompt", f"wake {i}",
+                        "--registry", reg, "--wait-on", ttl_event))
+        # a parked session carries a durable ACP session id, so the wake resumes it through
+        # session/load (the resume path), not session/new. The stub agent is told about the id.
+        sid = f"stub-wake-{i:08d}"
+        _set_session_id(db, jid, sid)
+        _seed_stub_session(d, sid)
+        wake_ids.append(jid)
     deadline = time.time() + 60
     while time.time() < deadline:
         if int(json.loads(f.cli("stats")).get("waiting", 0)) >= total:
@@ -1095,40 +1134,161 @@ def scenario_wake_latency(tree, backend, tmp, wakes=200, park_n=0, lease=30, tur
     parked_s = time.time() - t0
     time.sleep(2)
     lat = []
-    for i in range(wakes):
-        jid = f.cli("status").split("\n")[i].split("\t")[0]
+    stage_rows = []
+    for i, jid in enumerate(wake_ids):
+        # every wake job waits on its own event, so releasing one wakes exactly one session
+        event = f"{ttl_event}-{jid}"
+        _park_on_event(db, jid, event)
         t = time.perf_counter()
-        f.cli("release", ttl_event)
-        # first agent output == the job leaves 'waiting' and starts running (the daemon spawns
-        # the agent, which answers session/load then streams); the transition running marks the
-        # spawn+load done, first chunk follows within turn_ms/10. Poll the store.
-        while time.perf_counter() - t < 30:
-            st = json.loads(f.cli("status", jid))
-            if st["status"] == "running":
+        release_epoch = time.time()  # before the call: the CLI's own startup is overhead, not wake
+        f.cli("release", event)
+        release_done_epoch = time.time()  # the row is queued and visible to the daemon now
+        release_cli_ms = (release_done_epoch - release_epoch) * 1000
+        # the job leaves 'waiting' and starts running: the agent is spawned and ACP session/load
+        # has answered by then. Poll the store.
+        while time.perf_counter() - t < 60:
+            st = _job_status(db, jid)
+            if st == "running":
                 break
             time.sleep(0.002)
         lat.append((time.perf_counter() - t) * 1000)
+        row = _job_row(db, jid)
+        trace = {"job": jid, "release_epoch": release_epoch, "claim_epoch": row.get("claim_at"),
+                 "release_done_epoch": release_done_epoch, "release_cli_ms": release_cli_ms}
+        # the agent process starts after the row turns running, so the trace file is read once
+        # the ACP client has written its session/load stage (bounded wait).
+        tf = tmp / f"wake{i}" / ".acp-trace.jsonl"
+        trace_deadline = time.time() + 30
+        while time.time() < trace_deadline:
+            if tf.exists() and "session_ready" in (tf.read_text() or ""):
+                break
+            time.sleep(0.005)
+        if tf.exists():
+            for line in tf.read_text().splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                trace[rec["event"]] = rec.get("epoch")
+        stage_rows.append(_wake_stages(trace))
         # let this job finish its short turn and go terminal before the next wake
         deadline = time.time() + 30
         while time.time() < deadline:
-            if json.loads(f.cli("status", jid))["status"] in ("done", "failed"):
+            if _job_status(db, jid) in ("done", "failed"):
                 break
-            time.sleep(0.05)
+            time.sleep(0.02)
     lat.sort()
 
     def pct(p):
         return lat[min(len(lat) - 1, int(p * len(lat)))]
 
-    out = {"wake_park_n": park_n or total, "wake_samples": len(lat),
+    def _delta_pct(key, p=0.5):
+        vals = sorted(r[key] for r in stage_rows if r.get(key) is not None)
+        return round(vals[min(len(vals) - 1, int(p * len(vals)))], 1) if vals else None
+
+    out = {"wake_park_n": total, "wake_samples": len(lat),
            "wake_p50_ms": round(pct(0.50), 1), "wake_p99_ms": round(pct(0.99), 1),
            "wake_min_ms": round(lat[0], 1), "wake_max_ms": round(lat[-1], 1),
            "wake_mean_ms": round(sum(lat) / len(lat), 1),
-           "wake_park_s": round(parked_s, 2),
+           "wake_park_s": round(parked_s, 2), "wake_fill_s": round(fill_s, 2),
            "wake_def": "release event -> job status 'running' (agent spawned, ACP session/load done); "
                        "first session/update chunk follows within STUB_TURN_MS/10",
+           "wake_stages_p50_ms": {
+               "release_cli_ms": _delta_pct("release_cli_ms"),
+               "release_to_claim": _delta_pct("release_to_claim"),
+               "daemon_release_to_claim": _delta_pct("daemon_release_to_claim"),
+               "claim_to_spawn": _delta_pct("claim_to_spawn"),
+               "spawn_to_initialize": _delta_pct("spawn_to_initialize"),
+               "initialize_to_session_ready": _delta_pct("initialize_to_session_ready"),
+           },
+           "wake_stage_def": "release_cli_ms is the python startup of the release command; "
+                             "release_to_claim is measured from before the release CLI ran; "
+                             "daemon_release_to_claim is measured from the moment the release CLI "
+                             "returned (the row is queued and the daemon can see it); "
+                             "returned (the daemon side); claim_to_spawn is the gap from the "
+                             "daemon's claim to the ACP client process starting; spawn_to_initialize "
+                             "is the ACP initialize round trip; initialize_to_session_ready is "
+                             "session/load answering",
+           "wake_stages_detail_n": len(stage_rows), "wake_stages": stage_rows,
            "wake_host": _host_state()}
     f.stop()
     return out
+
+
+def _set_session_id(db: Path, jid: int, sid: str) -> None:
+    """Put a durable ACP session id into a job payload, as a resumed session would carry."""
+    c = sqlite3.connect(str(db), timeout=10)
+    try:
+        c.execute("UPDATE jobs SET payload=json_set(payload,'$.session',?) WHERE id=?", (sid, jid))
+        c.commit()
+    finally:
+        c.close()
+
+
+def _seed_stub_session(cwd: Path, sid: str) -> None:
+    """Tell the stub agent about a session id, so ACP session/load for it succeeds."""
+    path = cwd / ".stub-acp-sessions.json"
+    state = {"sessions": {}}
+    if path.exists():
+        try:
+            state = json.loads(path.read_text())
+        except (OSError, ValueError):
+            state = {"sessions": {}}
+    state.setdefault("sessions", {})[sid] = {"turns_done": 0, "turns_started": 0, "loads": 0}
+    path.write_text(json.dumps(state))
+
+
+def _park_on_event(db: Path, jid: int, event: str) -> None:
+    """Park one row on its own event (the bench's equivalent of `coordinate wait-on`)."""
+    c = sqlite3.connect(str(db), timeout=10)
+    try:
+        c.execute("UPDATE jobs SET status='waiting', waiting_on=? WHERE id=?", (event, jid))
+        c.commit()
+    finally:
+        c.close()
+
+
+def _job_row(db: Path, jid: int) -> dict:
+    c = sqlite3.connect(str(db), timeout=10)
+    try:
+        c.row_factory = sqlite3.Row
+        row = c.execute("SELECT id,status,claim_at,payload FROM jobs WHERE id=?", (jid,)).fetchone()
+        return dict(row) if row else {}
+    finally:
+        c.close()
+
+
+def _job_status(db: Path, jid: int) -> str | None:
+    c = sqlite3.connect(str(db), timeout=10)
+    try:
+        row = c.execute("SELECT status FROM jobs WHERE id=?", (jid,)).fetchone()
+        return row[0] if row else None
+    finally:
+        c.close()
+
+
+def _wake_stages(trace: dict) -> dict:
+    """Stage deltas in ms, all relative to the release epoch (wall clock)."""
+    rel = trace.get("release_epoch")
+    def d(a, b):
+        if rel is None or trace.get(a) is None or trace.get(b) is None:
+            return None
+        return round((trace[b] - trace[a]) * 1000, 1)
+    def clamp(x):
+        return None if x is None else max(x, 0.0)
+
+    return {
+        "job": trace.get("job"),
+        # clock skew between processes can make a delta slightly negative; clamp, not hide
+        "release_to_claim": clamp(d("release_epoch", "claim_epoch")),
+        "release_cli_ms": round(trace.get("release_cli_ms") or 0.0, 1),
+        "daemon_release_to_claim": clamp(d("release_done_epoch", "claim_epoch")),
+        "claim_to_spawn": clamp(d("claim_epoch", "client_start")),
+        "spawn_to_initialize": clamp(d("client_start", "initialize_done")),
+        "initialize_to_session_ready": clamp(d("initialize_done", "session_ready")),
+        "session_load": trace.get("session_load_done") is not None,
+        "session_new": trace.get("session_new_done") is not None,
+    }
 
 
 SCENARIOS = {"cli": scenario_cli_latency, "idle": scenario_idle, "throughput": scenario_throughput,
@@ -1170,6 +1330,10 @@ def main():
                     help="park-density: comma separated step sizes (default 1000,10000)")
     ap.add_argument("--park-n", type=int, default=1000, help="park-density-cli: sessions to park")
     ap.add_argument("--wakes", type=int, default=200, help="wake-latency: wake samples")
+    ap.add_argument("--wake-park-n", type=int, default=0,
+                    help="wake-latency: parked sessions in the store while waking (0 = only the "
+                         "wakes themselves); the extra sessions are bulk filled with "
+                         "bench/park_filler.py, never through the CLI")
     a = ap.parse_args()
     global CLI_OVERRIDE
     CLI_OVERRIDE = a.cli
@@ -1190,7 +1354,8 @@ def main():
                 elif name == "park-density-cli":
                     res.update(SCENARIOS[name](tree, a.backend, Path(t), n=a.park_n))
                 elif name == "wake-latency":
-                    res.update(SCENARIOS[name](tree, a.backend, Path(t), wakes=a.wakes))
+                    res.update(SCENARIOS[name](tree, a.backend, Path(t), wakes=a.wakes,
+                                                park_n=a.wake_park_n))
                 else:
                     res.update(SCENARIOS[name](tree, a.backend, Path(t)))
             except Exception as e:  # keep going, record the failure

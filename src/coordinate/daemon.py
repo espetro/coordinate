@@ -15,6 +15,28 @@ from . import queue as q
 BACKOFF_MAX = 2.0
 BACKOFF_MIN = 0.05
 
+
+def _backoff_min() -> float:
+    """Base poll interval of the claim loop, in seconds (COORDINATE_BACKOFF_MIN overrides).
+
+    The default keeps the idle daemon near 0 CPU; a bench that measures wake latency drives the
+    interval down so the measurement is the spawn path, not the poll timer."""
+    try:
+        return max(float(q.paths.env("BACKOFF_MIN", "") or BACKOFF_MIN), 0.001)
+    except ValueError:
+        return BACKOFF_MIN
+
+
+def _backoff_max() -> float:
+    """Largest poll interval of the claim loop, in seconds (COORDINATE_BACKOFF_MAX overrides).
+
+    This is the daemon's idle poll ceiling, so it bounds how long a released job waits before the
+    daemon notices it: the wake latency is at least the poll interval the daemon was sitting on."""
+    try:
+        return max(float(q.paths.env("BACKOFF_MAX", "") or BACKOFF_MAX), _backoff_min())
+    except ValueError:
+        return BACKOFF_MAX
+
 # sh -c "..." wraps the user's argv0 so shell jobs can still be matched by their binary name.
 SH = "/bin/sh"  # never the user's shell: zshrc PATH reordering would break tool-class matching
 
@@ -243,7 +265,7 @@ def run(stop=lambda: False) -> None:
     c = q.connect()
     owner = f"{os.uname().nodename}:{os.getpid()}"
     running: dict[int, subprocess.Popen] = {}
-    delay, last_hb, last_reap = BACKOFF_MIN, 0.0, 0.0
+    delay, last_hb, last_reap = _backoff_min(), 0.0, 0.0
     try:
         while not stop():
             busy = False
@@ -285,7 +307,7 @@ def run(stop=lambda: False) -> None:
                 except (OSError, KeyError):
                     q.finish(c, jid, owner, "failed")
                     busy = True
-            delay = BACKOFF_MIN if busy else min(delay * 2, BACKOFF_MAX)
+            delay = _backoff_min() if busy else min(delay * 2, _backoff_max())
             time.sleep(delay)
     finally:
         for proc in running.values():
