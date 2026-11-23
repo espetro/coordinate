@@ -61,6 +61,23 @@ export function cli(r, ...args) {
   return { status: p.status, stdout: p.stdout || "", stderr: p.stderr || "" };
 }
 
+// Apply the rig's environment to this process, so the queue module (which reads
+// process.env) works on the same private database as the CLI and the daemon.
+// Returns a restore function.
+export function useProcessEnv(r) {
+  const saved = {};
+  for (const [k, v] of Object.entries(r.env)) {
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
+  return () => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+}
+
 export function startDaemon(r, env = {}) {
   const logPath = path.join(r.dir, `daemon-${r.daemons.length}.log`);
   const fd = fs.openSync(logPath, "w");
