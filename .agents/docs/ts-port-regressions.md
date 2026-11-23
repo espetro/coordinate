@@ -173,7 +173,7 @@ Classes: REGRESSION (worse than Python, not chosen), DRIFT (different but neutra
 
 - The worktree gets a garbage key, so each worktree has its own `tool:<class>:<key>` slots. `ARCHITECTURE.md` ("every worktree of one repo shares the repo key") describes the Python behavior. The plain-repo and non-repo cases work. Python's six `test_project_key.py` tests have no TypeScript counterpart.
 
-#### X2: spawn errors crash the daemon (REGRESSION)
+#### X2: spawn errors crash the daemon (REGRESSION, FIXED in 6e88a4d)
 
 - `spawnRaw` (`src/daemon.ts:280-292`) uses `cp.spawn`, which reports ENOENT asynchronously as an `error` event. No listener is attached, so Node throws. The comment at `:369` ("a missing binary exits with code 127 via sh") is true only for the string form. Python's `Popen` raised `OSError` synchronously and the loop recorded `failed` (`daemon.py:307-309`).
 - Reproduction (array form is the default for `enqueue -- cmd args`):
@@ -187,7 +187,7 @@ TS log: Error: spawn /nonexistent/binary-xyz ENOENT ... Unhandled 'error' event
 
 - The job row is left `running` with no heartbeat, so after the lease it is requeued, crashes the next daemon, and so on until `attempts` reaches `max_attempts`. Every other running job loses its supervisor each time.
 
-#### X3: `reap()` leaves orphans (REGRESSION)
+#### X3: `reap()` leaves orphans (REGRESSION, FIXED in 42f9df5)
 
 - Python kills the old process group and any agent pid-file group before requeueing (`queue.py:386-408` `kill_orphans`, called at `:463-465`). `src/queue.ts:282-311` never signals anything, and `setProc` no longer records a pid file. Python's `test_orphans.py` and `test_acceptance.py::test_kill9_daemon_mid_job_retries` cover it.
 - Reproduction (`LEASE_S=2`, job `sleep 311`, `kill -9` the daemon, wait for lease expiry, start a second daemon):
@@ -197,7 +197,7 @@ TS log: Error: spawn /nonexistent/binary-xyz ENOENT ... Unhandled 'error' event
 == py   first attempt pid 78253 -> after reap: 80019 sleep 311 only (old group killed), same events
 ```
 
-#### X4: SIGTERM freezes the daemon (REGRESSION)
+#### X4: SIGTERM freezes the daemon (REGRESSION, FIXED in 265f362)
 
 - `src/daemon.ts:325-331` sets `stopping`, but `stopping` is only acted on at the top of `loop()` (`:340-345`), and the idle pump (`:416-425`) returns without rescheduling `loop` when `stopping` is set. The kill-children and `db.close()` branch is therefore unreachable in practice. The process stays alive while a child handle is open, never heartbeats again, and never finishes the job.
 - Reproduction (`LEASE_S=3`, job `sleep 313`, `kill <daemon pid>`, 4s later):
@@ -319,3 +319,7 @@ Recommended order: 1, 2, 3 (data and process safety), then 5 with 4 (one config 
 - C9, C10, C12 are real but are bugs in both implementations (docs and counting), not port regressions. They should be filed separately from the port audit.
 - The reviewer's list omitted the four most damaging items: X1 (worktree project key), X2 (daemon crash on spawn error), X3 (orphan reap), X4 (SIGTERM freeze). All four were found by walking the Python modules against the TypeScript ones, and all four have Python tests with no TypeScript counterpart.
 - The reviewer implied heavy-tool matching is the main hole. In fact A1 plus X1 together mean the TypeScript port enforces tool caps in fewer situations than any of the reviewer's findings suggest.
+
+## Fixes on fix/daemon-process-safety (2026-11-23)
+
+X2, X3 and X4 are fixed and enforced on this branch. X2 (6e88a4d) attaches the child `error` handler in `spawnRaw` before the pid check (Linux reports ENOENT with pid already undefined and the event arrives on the next tick), treats `proc.pid === undefined` as a failed spawn, finishes the job as `failed` with an outcome naming the error, releases its tool slot event, and keeps the claim loop running. X3 (42f9df5) ports Python's `kill_orphans`: `reap()` now SIGKILLs the recorded process group before the requeue UPDATE commits, guarding pid <= 1, signalling the group (negative pgid), and ignoring ESRCH, with the PID-reuse caveat in a comment. X4 (265f362) makes SIGTERM and SIGINT unref the running child handles, close the database and exit without killing children, per the stop contract ARCHITECTURE.md already stated (agents keep working when the orchestrator stops); the durability paragraph now describes this exactly. The three todo reproducers in `test/regressions.test.mjs` are enforced; `pnpm test` is 31 tests, 19 pass, 0 fail, 12 todo (M, Node 24.22.1, Linux x64). The fixes were also exercised on the scriptc binary (dist/coordinate-0.1.0-linux-x64-gnu): the daemon survives a missing-binary spawn with the job `failed` / `spawn failed`, SIGTERM exits the daemon while the sleeper survives, and a kill -9 of the daemon mid-job leaves the old process group dead after the retry is claimed (M).

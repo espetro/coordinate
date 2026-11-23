@@ -317,7 +317,7 @@ test("A3: a shell-string 'sh -c \\'vitest run\\'' is matched to the vitest tool 
   }
 });
 
-test("X2: a missing binary fails the job and the daemon stays up", { todo: "cp.spawn reports ENOENT as an unhandled 'error' event; the daemon dies and the row stays running", timeout: DAEMON_T }, async () => {
+test("X2: a missing binary fails the job and the daemon stays up", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--", "/nonexistent/regress-binary-xyz", "arg");
@@ -330,7 +330,7 @@ test("X2: a missing binary fails the job and the daemon stays up", { todo: "cp.s
   }
 });
 
-test("X2: a nonexistent cwd fails the job and the daemon stays up", { todo: "same unhandled 'error' event as the missing binary", timeout: DAEMON_T }, async () => {
+test("X2: a nonexistent cwd fails the job and the daemon stays up", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--cwd", path.join(r.dir, "does-not-exist"), "--", "true");
@@ -343,7 +343,7 @@ test("X2: a nonexistent cwd fails the job and the daemon stays up", { todo: "sam
   }
 });
 
-test("X3: reap kills the surviving process group before the job is requeued (queue.py:386-465)", { todo: "reap() only updates rows; the old attempt keeps running beside the retry", timeout: DAEMON_T }, async () => {
+test("X3: reap kills the surviving process group before the job is requeued (queue.py:386-465)", { timeout: DAEMON_T }, async () => {
   const r = rig({ COORDINATE_LEASE_S: "2" });
   r.extraPgids = [];
   try {
@@ -372,6 +372,8 @@ test("X4: SIGTERM stops the daemon even while a job is running", { todo: "stoppi
     await new Promise((res) => setTimeout(res, 500)); // let the loop settle into its idle pump
     d.child.kill("SIGTERM");
     assert.ok(await waitFor(() => d.exited, 6000), "daemon is still alive 6s after SIGTERM (Python exited immediately)");
+    const sleeper = rows(r, "SELECT pgid FROM jobs WHERE id=1")[0]?.pgid;
+    assert.ok(sleeper && groupAlive(Number(sleeper)), "the running job must survive the daemon stop (agents keep working)");
   } finally {
     await cleanup(r);
   }
