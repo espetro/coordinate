@@ -20,6 +20,9 @@ function usage(): string {
     "  --max-attempts N    starts allowed after lease expiries (default 3)\n" +
     "  --max-runtime DUR   execution-time cap, e.g. 15m, 2h, 90s (0 = unbounded;\n" +
     "                      default comes from [defaults] max_runtime in config.toml)\n" +
+    "  --run-at WHEN       earliest start, as a delay (30s, 15m, 2h) or an ISO\n" +
+    "                      timestamp (2026-11-23T18:00:00Z); the job stays queued\n" +
+    "                      until then\n" +
     "  --wait-on EVENT     park the job immediately on this event id\n" +
     "  --slot KEY          extra tool-level slot key (repeatable), e.g. --slot tool:vitest\n" +
     "  --shell             cmd is ONE string, stored and run verbatim via sh -c\n"
@@ -67,12 +70,38 @@ function maxRuntimeS(flagValue: string | null): number {
   return secs;
 }
 
+// --run-at: a delay such as 90s, 15m, 2h, or an absolute ISO timestamp
+// (with or without the Z). Returns epoch seconds, or null when absent.
+function runAtSecs(flagValue: string | null): number | null {
+  if (flagValue === null) {
+    return null;
+  }
+  const t = flagValue.trim();
+  if (t === "") {
+    fail("enqueue --run-at: empty value");
+  }
+  if (/^[0-9]+(\.[0-9]+)?[smh]?$/.test(t)) {
+    // a bare number is seconds, like --max-runtime; a suffix picks the unit
+    const secs = parseDurationSecs(t);
+    if (secs === null) {
+      fail("enqueue --run-at: bad duration " + JSON.stringify(t) + " (use e.g. 90s, 15m, 2h)");
+    }
+    return Date.now() / 1000 + secs;
+  }
+  const ms = Date.parse(t);
+  if (Number.isNaN(ms)) {
+    fail("enqueue --run-at: bad timestamp " + JSON.stringify(t) + " (use a delay like 15m or an ISO timestamp like 2026-11-23T18:00:00Z)");
+  }
+  return ms / 1000;
+}
+
 interface Opts {
   cwd: string | null;
   repo: string | null;
   priority: number;
   maxAttempts: number;
   maxRuntime: string | null;
+  runAt: string | null;
   waitOn: string | null;
   shell: boolean;
   selfFlag: boolean;
@@ -83,13 +112,13 @@ interface Opts {
 }
 
 function opts(): Opts {
-  return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, waitOn: null, shell: false, selfFlag: false, slots: [], acp: null, prompt: null, registry: null };
+  return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, runAt: null, waitOn: null, shell: false, selfFlag: false, slots: [], acp: null, prompt: null, registry: null };
 }
 
 function isEnqueueOption(name: string): boolean {
   return (
     name === "--cwd" || name === "--repo" || name === "--priority" || name === "--max-attempts" ||
-    name === "--max-runtime" || name === "--wait-on" || name === "--shell" || name === "--slot" ||
+    name === "--max-runtime" || name === "--run-at" || name === "--wait-on" || name === "--shell" || name === "--slot" ||
     name === "--acp" || name === "--prompt" || name === "--registry"
   );
 }
@@ -196,6 +225,8 @@ async function main(): Promise<void> {
         o.maxAttempts = parseIntArg(need(), "--max-attempts");
       } else if (name === "--max-runtime") {
         o.maxRuntime = need();
+      } else if (name === "--run-at") {
+        o.runAt = need();
       } else if (name === "--wait-on") {
         o.waitOn = need();
       } else if (name === "--shell") {
@@ -229,7 +260,7 @@ async function main(): Promise<void> {
         r["registry"] = o.registry;
       }
       const cap = maxRuntimeS(o.maxRuntime);
-      const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, null, cap > 0 ? cap : null, "acp");
+      const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, runAtSecs(o.runAt), cap > 0 ? cap : null, "acp");
       if (o.waitOn !== null) {
         q.waitOn(db, jid, o.waitOn);
       }
@@ -250,7 +281,7 @@ async function main(): Promise<void> {
       payload.slots = o.slots;
     }
     const cap = maxRuntimeS(o.maxRuntime);
-    const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, null, cap > 0 ? cap : null);
+    const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, runAtSecs(o.runAt), cap > 0 ? cap : null);
     if (o.waitOn !== null) {
       q.waitOn(db, jid, o.waitOn);
     }

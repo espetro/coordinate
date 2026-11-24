@@ -41,6 +41,7 @@ A job outlives the turn that enqueued it, so pair every dispatch with a wake-up:
 | `--priority <n>` | Higher numbers run first. Default 0 |
 | `--max-attempts <n>` | How many times a job may be started. Default 3 |
 | `--max-runtime <duration>` | A deadline such as `90s`, `15m` or `2h` |
+| `--run-at <when>` | Earliest start: a delay such as `30s`, `15m`, `2h`, or an absolute ISO timestamp such as `2026-11-23T18:00:00Z`. The job stays `queued` until then |
 | `--wait-on <event>` | Park the job immediately until `release <event>`. Finishing a job releases only its `tool:` slot waiters, so a `--wait-on` job needs an explicit release |
 | `--acp <agent>` | Enqueue an ACP job for this agent instead of a command (needs `--cwd` and `--prompt`) |
 | `--prompt <text>` | Prompt text for `--acp` jobs |
