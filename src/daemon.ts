@@ -16,10 +16,29 @@ import * as q from "./queue.ts";
 import type { AcpHandle } from "./acp.ts";
 import { acpPayloadOf, startAcpJob } from "./acp.ts";
 import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, toolClasses, validateConfig } from "./config.ts";
+// Effect v4 for the daemon's async machinery: the claim loop, the backoff
+// sleep, the stop contract and the singleton-takeover probe. Deep module paths
+// keep the static build small (each Effect module compiles on its own) and the
+// import style is function-style, which is what Effect v4's tree-shaking
+// expects.
+import { gen, runPromise, race, sleep, succeed, sync } from "effect/Effect";
+import type { Effect } from "effect/Effect";
+import { makeUnsafe as makeDeferredUnsafe, await as awaitDeferred, doneUnsafe as completeDeferred } from "effect/Deferred";
+import { millis as durationMillis } from "effect/Duration";
 
 const BACKOFF_MAX = 2.0;
 const BACKOFF_MIN = 0.05;
 const SH = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+
+// Completing a Deferred from outside the Effect world (a signal handler)
+// needs the completion effect, not the value: doneUnsafe takes an Effect.
+function syncStop(): Effect<"stop"> {
+  return succeed("stop" as const);
+}
+
+function syncInterrupt(): Effect<"interrupt"> {
+  return succeed("interrupt" as const);
+}
 
 interface Running {
   jid: number;
@@ -426,21 +445,31 @@ export async function run(): Promise<void> {
   if (!q.claimDaemon(db, process.pid, conflict)) {
     const ts0 = q.daemonHeartbeatTs(db);
     let takenOver = false;
-    for (let i = 0; i < 8; i++) {
-      await new Promise<void>((res) => {
-        const t = setTimeout(res, 1000);
-        process.once("SIGINT", () => {
-          clearTimeout(t);
-          res();
-        });
-      });
-      if (q.claimDaemon(db, process.pid, conflict)) {
-        takenOver = true;
-        break;
+    // The takeover probe waits a second per attempt and gives up early when
+    // SIGINT arrives, so an interrupted start does not linger.
+    const interrupt = makeDeferredUnsafe<"interrupt">();
+    const onSigint = (): void => {
+      completeDeferred(interrupt, syncInterrupt());
+    };
+    process.once("SIGINT", onSigint);
+    try {
+      for (let i = 0; i < 8; i++) {
+        const signal = await runPromise(
+          race(sleep(durationMillis(1000)), awaitDeferred(interrupt)),
+        );
+        if (signal === "interrupt") {
+          break;
+        }
+        if (q.claimDaemon(db, process.pid, conflict)) {
+          takenOver = true;
+          break;
+        }
+        if (q.daemonHeartbeatTs(db) !== ts0) {
+          break; // row refreshed: the other daemon is alive
+        }
       }
-      if (q.daemonHeartbeatTs(db) !== ts0) {
-        break; // row refreshed: the other daemon is alive
-      }
+    } finally {
+      process.removeListener("SIGINT", onSigint);
     }
     if (!takenOver) {
       process.stderr.write("daemon already running (pid " + conflict.v + ")\n");
@@ -453,24 +482,23 @@ export async function run(): Promise<void> {
   let delay = BACKOFF_MIN;
   let lastHb = 0.0;
   let lastReap = 0.0;
-  let stopping = false;
-  let sleepTimer: ReturnType<typeof setTimeout> | null = null;
   // Stop contract (ARCHITECTURE.md, durability): agents keep working when the orchestrator
   // stops. SIGTERM/SIGINT stop the claim loop and exit cleanly; running children are detached
   // (handles unref'd) and left alive. The next daemon start reaps their expired leases (X3).
+  // Effect models the stop signal as a Deferred the loop races against its sleep:
+  // the signal handler completes the Deferred, which wakes the sleep at once.
+  const stopSignal = makeDeferredUnsafe<"stop">();
+  let stopping = false;
   const stop = (): void => {
     if (stopping) {
       return;
     }
     stopping = true;
-    if (sleepTimer !== null) {
-      clearTimeout(sleepTimer);
-      sleepTimer = null;
-    }
     for (const r of running) {
       r.proc.unref();
       // Detached children keep their own process group; no kill: the job outlives the daemon.
     }
+    completeDeferred(stopSignal, syncStop());
     try {
       db.close();
     } catch {
@@ -487,10 +515,9 @@ export async function run(): Promise<void> {
     }
   };
 
-  const loop = (): void => {
-    if (stopping) {
-      return;
-    }
+  // One turn of the claim loop: reap the timed out, settle the finished jobs,
+  // heartbeat the leases, then claim and spawn up to the machine cap.
+  const turn = (): boolean => {
     let busy = false;
     const now = Date.now() / 1000;
 
@@ -594,19 +621,23 @@ export async function run(): Promise<void> {
       }
     }
 
-    delay = busy ? BACKOFF_MIN : Math.min(delay * 2, BACKOFF_MAX);
-    // Idle sleep via a real timer: setImmediate pumping spins one core at ~100%
-    // (issue #5). setTimeout parks the thread in the kernel and still delivers
-    // signals between macrotasks, so the stop contract (SIGTERM/SIGINT) holds.
-    const t = setTimeout(() => {
-      sleepTimer = null;
-      if (!stopping) {
-        loop();
-      }
-    }, delay * 1000);
-    // The timer stays referenced: it is the daemon's only reason to stay alive
-    // while idle, so unref'ing it would let the process exit.
-    sleepTimer = t;
+    return busy;
   };
-  loop();
+
+  // The claim loop: a turn, then a backoff sleep that a stop signal cuts
+  // short. The sleep is a real timer (issue #5: a setImmediate pump spins one
+  // core at ~100%), so the daemon parks in the kernel while idle and still
+  // delivers SIGTERM/SIGINT between macrotasks.
+  const program = gen(function* () {
+    while (true) {
+      const busy = yield* sync(() => turn());
+      delay = busy ? BACKOFF_MIN : Math.min(delay * 2, BACKOFF_MAX);
+      const signal = yield* race(sleep(durationMillis(delay * 1000)), awaitDeferred(stopSignal));
+      if (signal === "stop") {
+        return;
+      }
+    }
+  });
+
+  await runPromise(program);
 }
