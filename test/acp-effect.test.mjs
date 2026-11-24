@@ -34,12 +34,15 @@ function spawnStub(dir) {
 test("acp request seam: the response resumes the request effect without a poll loop", async () => {
   const { acp, dir } = await freshAcp();
   const proc = spawnStub(dir);
-  const client = new acp.AcpClient(proc, () => {});
-  const started = Date.now();
-  await client.initialize();
-  const elapsed = Date.now() - started;
-  assert.ok(elapsed < 5000, "initialize should answer at once (took " + String(elapsed) + "ms)");
-  proc.kill("SIGKILL");
+  try {
+    const client = new acp.AcpClient(proc, () => {});
+    const started = Date.now();
+    await client.initialize();
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 5000, "initialize should answer at once (took " + String(elapsed) + "ms)");
+  } finally {
+    proc.kill("SIGKILL");
+  }
 });
 
 test("acp request seam: a request against a closed agent fails instead of hanging", async () => {
@@ -62,22 +65,30 @@ test("acp request seam: a request that never gets an answer times out", async ()
   });
   const client = new acp.AcpClient(silent, () => {});
   const started = Date.now();
-  await assert.rejects(() => client.request("initialize", {}, 300), /initialize timed out/);
-  assert.ok(Date.now() - started < 5000, "the timeout must fire, not the default 30s");
-  silent.kill("SIGKILL");
+  try {
+    await assert.rejects(() => client.request("initialize", {}, 300), /initialize timed out/);
+    assert.ok(Date.now() - started < 5000, "the timeout must fire, not the default 30s");
+  } finally {
+    silent.kill("SIGKILL");
+  }
 });
 
 test("acp request seam: the pending map is a Map, so a resolved request is dropped", async () => {
   const { acp, dir } = await freshAcp();
   const proc = spawnStub(dir);
-  const client = new acp.AcpClient(proc, () => {});
-  await client.initialize();
-  const sid = await client.newSession(dir);
-  assert.ok(sid.startsWith("stub-"));
-  // The pending map is private, so the observable proof is that a second
-  // request still works after the first resolved: a leaked slot would make
-  // the client answer the second request with the first response.
-  const sid2 = await client.newSession(dir);
-  assert.notEqual(sid2, sid, "the second session/new must not be answered with the first response");
-  proc.kill("SIGKILL");
+  try {
+    const client = new acp.AcpClient(proc, () => {});
+    await client.initialize();
+    // Two requests, two distinct JSON-RPC ids: the second answer must carry
+    // the second id, so the first resolved slot was dropped from the map
+    // rather than reused. (The stub's session id is pid + Date.now(), so the
+    // ids, not the session ids, are what carry the signal.)
+    const first = await client.request("session/new", { cwd: dir, mcpServers: [] }, 10000);
+    const second = await client.request("session/new", { cwd: dir, mcpServers: [] }, 10000);
+    assert.equal(first.error, null);
+    assert.equal(second.error, null);
+    assert.notEqual(second.id, first.id, "the second request must not be answered with the first response");
+  } finally {
+    proc.kill("SIGKILL");
+  }
 });
