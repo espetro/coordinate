@@ -444,3 +444,13 @@ test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { ti
     await cleanup(r);
   }
 });
+
+// Issue #2: `coordinate --version` used to answer "unknown verb: --version".
+test("C-version: --version, -V and the version verb print the CLI version", async () => {
+  const r = rig();
+  for (const flag of ["--version", "-V", "version"]) {
+    const out = cli(r, flag);
+    assert.equal(out.status, 0, flag + " exited " + out.status + " " + out.stderr);
+    assert.match(out.stdout, /^coordinate \d+\.\d+\.\d+/, flag + " printed " + JSON.stringify(out.stdout));
+  }
+});
