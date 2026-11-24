@@ -8,6 +8,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
+// Effect v4 for the follow loop: gen + sleep as the polling driver, replacing
+// the hand-rolled `await new Promise(setTimeout)` chain. Deep function-style
+// imports, like daemon.ts and acp.ts.
+import { gen, runPromise, sleep } from "effect/Effect";
+import { millis as durationMillis } from "effect/Duration";
 
 export const DEFAULT_KINDS = "done,failed,timed_out,cancelled,dead,requeued";
 
@@ -140,11 +145,17 @@ export async function forward(o: ForwardOpts): Promise<void> {
     }
   };
 
-  let polls = 1;
-  poll();
-  while (!o.once && (o.maxPolls === null || o.maxPolls === undefined || polls < o.maxPolls)) {
-    await new Promise((res) => setTimeout(res, interval));
-    polls = polls + 1;
+  // The follow loop as one Effect program: poll, sleep the interval, repeat
+  // until --once or maxPolls. Effect.sleep replaces the awaited setTimeout
+  // promise; the loop shape reads like the poll loop it is.
+  const follow = gen(function* () {
+    let polls = 1;
     poll();
-  }
+    while (!o.once && (o.maxPolls === null || o.maxPolls === undefined || polls < o.maxPolls)) {
+      yield* sleep(durationMillis(interval));
+      polls = polls + 1;
+      poll();
+    }
+  });
+  await runPromise(follow);
 }
