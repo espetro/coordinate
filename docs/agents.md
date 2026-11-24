@@ -23,3 +23,5 @@ A job can read its own row with `coordinate status --self` and the queue with `c
 ## Following the queue from outside
 
 `coordinate forward --exec '<command>'` runs a command for each event. Use it to send a notification, post to a chat or update a dashboard. A cursor file under `$XDG_STATE_HOME/coordinate/` lets it resume after a restart without replaying events.
+
+For stateful consumers (aggregation, dedup, auto-release), tail `coordinate events --follow` instead — it emits one JSON event per line and polls for new rows. `skills/coordinate-extensions/SKILL.md` documents both patterns.

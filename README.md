@@ -18,6 +18,8 @@ coordinate status
 coordinate events --follow
 ```
 
+macOS and Linux use `install.sh`; mise users can `mise use -g github:espetro/coordinate`. Windows (best-effort): `irm https://raw.githubusercontent.com/espetro/coordinate/main/install.ps1 | iex`.
+
 ## Why
 
 - Enqueue in 5 ms and drain 69 jobs per second on a 6-core VPS.
@@ -38,7 +40,19 @@ Every number comes from a result file in [`benchmarks/`](benchmarks/).
 - [Architecture](ARCHITECTURE.md)
 - [Benchmarks](benchmarks/)
 - [Agent skill](skills/coordinate/SKILL.md): copy it into your agent's skills directory
+- [Extension skill](skills/coordinate-extensions/SKILL.md): building on the event stream (`forward --exec`, `events --follow`)
 - [Contributing](CONTRIBUTING.md)
+
+## Make your agents use it
+
+coordinate only bounds work that goes through the queue. To get agents to enqueue instead of spawning processes ad hoc:
+
+1. **Give them the skill** — copy [`skills/coordinate/SKILL.md`](skills/coordinate/SKILL.md) into your agent's skills directory (e.g. `~/.agents/skills/coordinate/`). It teaches when to queue vs. stay interactive, plus every verb.
+2. **Add one rule** to your agent's global instructions (e.g. `~/.claude/CLAUDE.md`, `AGENTS.md`):
+
+   > All background/headless agent sessions and batch jobs on this machine MUST be enqueued as `coordinate` queue jobs (`coordinate enqueue`), never spawned ad hoc — queue caps are the device OOM control. Only interactive, user-watched work may run outside the queue.
+
+3. **Hard enforcement** — for agent CLIs with hooks (Claude Code, devin), [`scripts/coordinate-guard`](scripts/coordinate-guard) is a PreToolUse hook that blocks spawning agent CLIs outside a queue job (jobs export `COORDINATE_JOB_ID`; the hook allows the spawn only when it is set). See `.agents/docs/enforcement.md` for the full spectrum from instruction-level to OS-level.
 
 ## Ecosystem
 

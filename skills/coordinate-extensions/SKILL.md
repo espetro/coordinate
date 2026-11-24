@@ -1,0 +1,102 @@
+---
+name: coordinate-extensions
+description: "Extend coordinate without forking it: pipe job events into external tools. Use when building notifications, dashboards, aggregators, auto-release rules or any reaction to queue events (done, failed, parked, released, dead). Two shapes: stateless per-event commands via `forward --exec`, or a stateful consumer tailing `events --follow`."
+---
+
+# Extending coordinate
+
+Coordinate has exactly two extension points, both event-driven. There is no plugin API, no hooks config and no in-process loading — every extension is an ordinary external program that reads the event stream. Pick the shape by whether your consumer needs memory between events.
+
+## The event stream
+
+Every state transition writes one row to the `events` table. Kinds emitted today:
+
+`enqueued`, `claimed`, `done`, `failed`, `timed_out`, `cancelled`, `dead`, `requeued`, `parked`, `released`
+
+Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSON object (e.g. `parked` carries `waiting_on`, `claimed`/`requeued` carry `attempt`, `timed_out` carries `outcome`). Event `id` is a monotonic integer — it is the resume cursor.
+
+## Shape 1: stateless — `forward --exec`
+
+Use when each event can be handled independently: notifications, webhooks, logging, chat posts.
+
+```
+coordinate forward --exec '<cmd>' [--kinds k1,k2] [--interval S] [--once] [--cursor PATH] [--since ID] [-v]
+```
+
+Contract:
+
+- The command runs once per matching event via `sh -c`.
+- The full event JSON is on **stdin**.
+- `{message}` inside the command is replaced by a one-line summary like `[laptop] coordinate[done] job 42 — ok`.
+- Cursor file (`$XDG_STATE_HOME/coordinate/forward-cursor` by default) advances only after a successful send; a failed event is retried on the next poll. Filtered-out kinds advance the cursor without sending.
+- Default kinds: `done,failed,timed_out,cancelled,dead,requeued`. Pass `--kinds` to change; an empty set means all.
+
+Example — ntfy push (see `examples/ntfy-forward.sh`):
+
+```
+coordinate forward --exec 'curl -s -m 3 -d "{message}" "https://ntfy.sh/$NTFY_TOPIC"'
+```
+
+Example — append every event to an audit log:
+
+```
+coordinate forward --kinds enqueued,claimed,done,failed,dead --exec 'cat >> ~/coord-audit.jsonl'
+```
+
+Limitation: the command is spawned fresh per event. No state survives between events — no dedup, no "3 failures in 10 min", no counters. If you need that, use shape 2.
+
+## Shape 2: stateful — tail `events --follow`
+
+Use when the consumer must remember things: rate limiting, aggregation, correlation across jobs, dashboards, auto-`release` on patterns.
+
+```
+coordinate events --follow [--since ID]
+```
+
+Contract:
+
+- Emits one JSON object per line (`{id, ts, job_id, kind, data}`), then polls the DB every 500 ms for new rows.
+- `--since ID` replays from a point; without it, starts at the oldest event.
+- The consumer owns its own cursor (usually the last `id` it processed) and persists it wherever it likes.
+- Read-only with respect to the queue. To act back on the queue (`release`, `cancel`, `dead retry`), call the normal verbs from your program.
+
+Skeleton (any language):
+
+```
+coordinate events --follow --since <last_id> | while read -r ev; do
+  # parse $ev, update state, act
+  last_id=$(echo "$ev" | jq -r .id)
+done
+```
+
+Example — auto-release a parked job when its dependency finishes:
+
+```
+coordinate events --follow | jq -c 'select(.kind=="done")' |
+while read -r ev; do
+  jid=$(echo "$ev" | jq -r .job_id)
+  coordinate status "$jid"   # inspect, then: coordinate release <event>
+done
+```
+
+Example — failure alerter with dedup (what `forward` cannot do): keep a small state file, count `failed`/`dead` per repo in a sliding window, notify only past a threshold.
+
+## Choosing
+
+| Need | Shape |
+| --- | --- |
+| Notify/log/webhook per event | `forward --exec` |
+| Anything needing memory across events | `events --follow` consumer |
+| Act on the queue from an event | `events --follow` + normal verbs |
+| Long-lived dashboard | `events --follow` + `stats` polling |
+
+## Operational notes
+
+- One DB per device; a forwarder or consumer sees only its local queue. To watch several machines, run one consumer per device (or point each at its own `COORDINATE_DB`).
+- `forward` polls every `--interval` seconds (default 2); `events --follow` polls every 500 ms. Neither is a push API — expect seconds-scale latency.
+- Run long-lived consumers under your own supervisor (tmux, launchd, systemd). Coordinate does not manage them.
+- A `forward` command that exits non-zero stalls that event's cursor until it succeeds; make sink commands idempotent or tolerant of retries.
+
+## What does not exist
+
+The old Python plugin runner (manifest + `~/.config/coordinate/plugins/`, `frontend`/`resume`/`hook` interfaces) was retired before the TypeScript port. `forward --exec` and `events --follow` cover its use cases; the design rationale is in `.agents/docs/archive/extensibility.md`. If a real second consumer appears (e.g. non-ACP resume providers), revisit then — do not rebuild the loader speculatively.
