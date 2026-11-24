@@ -368,7 +368,7 @@ function killGroup(proc: cp.ChildProcess): void {
   }
 }
 
-export function run(): void {
+export async function run(): Promise<void> {
   try {
     validateConfig();
   } catch (e) {
@@ -381,6 +381,38 @@ export function run(): void {
   }
   const db = q.connect();
   const owner = os.hostname() + ":" + process.pid;
+  // Singleton: only one dispatcher per DB. The claim is atomic against the
+  // daemon table row (SQLite-only, no flock/pgrep); a stale heartbeat from a
+  // crashed daemon is claimable, a fresh one refuses this start. A SIGKILLed
+  // daemon can leave a "fresh" heartbeat behind for up to one lease interval,
+  // so on conflict this start briefly probes the row: a heartbeat that stops
+  // advancing belongs to a dead daemon and is taken over instead.
+  const conflict: { v: number | null } = { v: null };
+  if (!q.claimDaemon(db, process.pid, conflict)) {
+    const ts0 = q.daemonHeartbeatTs(db);
+    let takenOver = false;
+    for (let i = 0; i < 8; i++) {
+      await new Promise<void>((res) => {
+        const t = setTimeout(res, 1000);
+        process.once("SIGINT", () => {
+          clearTimeout(t);
+          res();
+        });
+      });
+      if (q.claimDaemon(db, process.pid, conflict)) {
+        takenOver = true;
+        break;
+      }
+      if (q.daemonHeartbeatTs(db) !== ts0) {
+        break; // row refreshed: the other daemon is alive
+      }
+    }
+    if (!takenOver) {
+      process.stderr.write("daemon already running (pid " + conflict.v + ")\n");
+      db.close();
+      process.exit(1);
+    }
+  }
   const running: Running[] = [];
   let delay = BACKOFF_MIN;
   let lastHb = 0.0;
@@ -463,6 +495,10 @@ export function run(): void {
       q.reap(db);
       lastReap = now;
     }
+
+    // Singleton heartbeat: refresh the daemon row every tick so doctor can
+    // tell an idle dispatcher from a dead one (fresh ts = alive).
+    q.daemonHeartbeat(db, process.pid);
 
     while (running.length < q.machineCap()) {
       const got = q.claim(db, owner);

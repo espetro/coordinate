@@ -8,8 +8,7 @@ import { Database } from "@cutils/sqlite";
 import { ConfigError, validateConfig } from "./config.ts";
 import { configPath, dbPath, env } from "./env.ts";
 import * as q from "./queue.ts";
-
-export const CLI_VERSION = "0.1.0";
+import { CLI_VERSION } from "./version.ts";
 
 export interface CheckRow {
   name: string;
@@ -36,18 +35,23 @@ function dbSource(): string {
   return "XDG_STATE_HOME";
 }
 
-// Daemon liveness without pgrep: a running daemon refreshes job leases every
-// loop tick, so a lease expiring in the future proves a live dispatcher. Stale
-// or absent leases are informational (no daemon started is a valid state).
+// Daemon liveness without pgrep: the dispatcher refreshes the daemon-table
+// heartbeat row every loop tick, so a fresh heartbeat_ts (< 2x tick interval)
+// proves a live daemon even when it is idle (zero running jobs). Stale or
+// absent rows mean no daemon is running (a valid state, informational).
 function checkDaemon(db: Database): CheckRow {
+  const pid = q.liveDaemonPid(db);
+  if (pid !== null) {
+    return row("daemon", true, "heartbeat fresh (pid " + pid + "); dispatcher is alive");
+  }
   const fresh = db
     .prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running' AND lease_expires_at > ?")
     .all([Date.now() / 1000]) as { c: number }[];
   const n = fresh.length > 0 ? fresh[0].c : 0;
   if (n > 0) {
-    return row("daemon", true, n + " fresh job lease(s); a dispatcher is alive");
+    return row("daemon", true, n + " fresh job lease(s) but a stale daemon heartbeat; a dispatcher may be alive");
   }
-  return row("daemon", true, "no live job leases; no daemon appears to be running (informational)");
+  return row("daemon", true, "no fresh daemon heartbeat; no daemon appears to be running (informational)");
 }
 
 export function doctor(): Report {

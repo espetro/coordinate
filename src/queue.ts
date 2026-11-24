@@ -57,6 +57,14 @@ export const SCHEMA = [
 )`,
   `CREATE INDEX IF NOT EXISTS idx_slots_key ON concurrency_slots(key)`,
   `CREATE INDEX IF NOT EXISTS idx_slots_job ON concurrency_slots(job_id)`,
+  // Single-row daemon registry: pid + heartbeat_ts. The daemon claims this row
+  // atomically at start (singleton) and refreshes heartbeat_ts every loop tick;
+  // doctor reads freshness (< 2x tick interval) to tell idle from dead.
+  `CREATE TABLE IF NOT EXISTS daemon(
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  pid INTEGER NOT NULL,
+  heartbeat_ts REAL NOT NULL
+)`,
   `CREATE TABLE IF NOT EXISTS spawn_audit(
   ts REAL NOT NULL,
   job_id INTEGER,
@@ -185,8 +193,7 @@ function backupDbFile(p: string): void {
   }
 }
 
-export function connect(): Database {
-  const p = dbPath();
+export function connect(): Database {  const p = dbPath();
   ensureParentDir(p);
   if (fs.existsSync(p)) {
     const db0 = Database.open(p);
@@ -226,6 +233,64 @@ export function connect(): Database {
     }
   }
   return db;
+}
+
+// --- daemon singleton + heartbeat (single row id=1 in the daemon table) ---
+
+interface DaemonRow {
+  pid: number;
+  heartbeat_ts: number;
+}
+
+// Heartbeat freshness window for doctor: the daemon refreshes at least once
+// per loop tick; BACKOFF_MAX in daemon.ts is 2s, so anything fresher than 2x
+// that is proof of a live dispatcher.
+export const DAEMON_HB_STALE_S = 4.0;
+
+// A killed daemon leaves a heartbeat no fresher than LEASE_S behind; restarts
+// (e.g. regression test X3 with LEASE_S=2) must be able to reclaim it by then.
+function claimStaleS(): number {
+  return Math.min(DAEMON_HB_STALE_S, LEASE_S);
+}
+
+export function daemonHeartbeatTs(db: Database): number | null {
+  const row = db.prepareRaw("SELECT heartbeat_ts FROM daemon WHERE id=1").getOrNull([]) as { heartbeat_ts: number } | null;
+  return row === null ? null : row.heartbeat_ts;
+}
+
+export function daemonHeartbeat(db: Database, pid: number): void {
+  const now = Date.now() / 1000;
+  db.prepareRaw(
+    "INSERT INTO daemon(id,pid,heartbeat_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid, heartbeat_ts=excluded.heartbeat_ts",
+  ).run([pid, now]);
+}
+
+// claimable: any heartbeat older than LEASE_S is from a daemon whose job
+// leases have already expired, so it cannot be making progress. Returns the
+// pid of the running daemon when a fresh-enough heartbeat exists, else null.
+export function liveDaemonPid(db: Database): number | null {
+  const row = db.prepareRaw("SELECT pid, heartbeat_ts FROM daemon WHERE id=1").getOrNull([]) as DaemonRow | null;
+  if (row === null) {
+    return null;
+  }
+  if (Date.now() / 1000 - row.heartbeat_ts < claimStaleS()) {
+    return row.pid;
+  }
+  return null;
+}
+
+// Atomically claim the singleton daemon slot. Returns true when this process
+// now owns row id=1; returns false when a fresh heartbeat from another daemon
+// is present (that daemon's pid is written to *conflictPid).
+export function claimDaemon(db: Database, pid: number, conflictPid: { v: number | null }): boolean {
+  using _tx = db.transaction();
+  const other = liveDaemonPid(db);
+  if (other !== null) {
+    conflictPid.v = other;
+    return false;
+  }
+  daemonHeartbeat(db, pid);
+  return true;
 }
 
 export function slotKeys(payload: Payload): string[] {

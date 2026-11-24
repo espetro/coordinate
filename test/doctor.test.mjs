@@ -59,8 +59,9 @@ test("fresh lease marks the daemon check as alive", async () => {
   const db = q.connect();
   q.enqueue(db, { cmd: ["true"], cwd: null });
   assert.notEqual(q.claim(db, "o:doctor"), null);
+  q.daemonHeartbeat(db, 9999);
   const rep = d.doctor();
-  assert.match(byName(rep, "daemon").detail, /a dispatcher is alive/);
+  assert.match(byName(rep, "daemon").detail, /dispatcher is alive/);
   db.close();
 });
 
