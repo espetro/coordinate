@@ -1,0 +1,10 @@
+{
+  "model": "bifrost/minimax-coding-plan/MiniMax-M2",
+  "permission": { "*": "allow" },
+  "mcp": {
+    "shadcn": { "enabled": false },
+    "browseros-neo": { "enabled": false },
+    "pencil": { "enabled": false }
+  },
+  "plugin": []
+}

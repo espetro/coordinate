@@ -1,0 +1,10 @@
+{
+  "model": "bifrost/codex-free",
+  "permission": { "*": "allow" },
+  "mcp": {
+    "shadcn": { "enabled": false },
+    "browseros-neo": { "enabled": false },
+    "pencil": { "enabled": false }
+  },
+  "plugin": []
+}

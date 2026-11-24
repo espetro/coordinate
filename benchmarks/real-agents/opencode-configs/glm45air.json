@@ -1,0 +1,10 @@
+{
+  "model": "bifrost/zai-coding-plan/glm-4.5-air",
+  "permission": { "*": "allow" },
+  "mcp": {
+    "shadcn": { "enabled": false },
+    "browseros-neo": { "enabled": false },
+    "pencil": { "enabled": false }
+  },
+  "plugin": []
+}

@@ -1,5 +1,7 @@
 node_modules/
 dist/
+benchmarks/real-agents/runs/
+benchmarks/real-agents/sessions/
 *.ll
 .scriptc/
 /coordinate-*

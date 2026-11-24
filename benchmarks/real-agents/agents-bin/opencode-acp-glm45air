@@ -1,0 +1,6 @@
+#!/bin/sh
+# opencode ACP server pinned to a bench model. Model and permissions come from
+# OPENCODE_CONFIG since `opencode acp` takes no -m flag; --standalone keeps each
+# bench session on a private server instead of the shared background one.
+export OPENCODE_CONFIG="$(cd "$(dirname "$0")/../opencode-configs" && pwd)/glm45air.json"
+exec opencode acp --standalone

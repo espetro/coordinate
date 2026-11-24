@@ -1,0 +1,3 @@
+#!/bin/sh
+export OPENCODE_CONFIG="$(cd "$(dirname "$0")/../opencode-configs" && pwd)/codexfree.json"
+exec opencode acp --standalone

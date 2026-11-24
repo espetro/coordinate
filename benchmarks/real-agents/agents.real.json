@@ -1,0 +1,38 @@
+{
+  "maki-glm45air": {
+    "command": "maki",
+    "args": ["acp", "-m", "bifrost/zai-coding-plan/glm-4.5-air", "--yolo"],
+    "class": "plan",
+    "cap": 3
+  },
+  "maki-m2": {
+    "command": "maki",
+    "args": ["acp", "-m", "bifrost/minimax-coding-plan/MiniMax-M2", "--yolo"],
+    "class": "plan",
+    "cap": 3
+  },
+  "maki-codexfree": {
+    "command": "maki",
+    "args": ["acp", "-m", "bifrost/codex-free", "--yolo"],
+    "class": "free",
+    "cap": 1
+  },
+  "opencode-glm45air": {
+    "command": "opencode-acp-glm45air",
+    "args": [],
+    "class": "plan",
+    "cap": 3
+  },
+  "opencode-m2": {
+    "command": "opencode-acp-m2",
+    "args": [],
+    "class": "plan",
+    "cap": 3
+  },
+  "opencode-codexfree": {
+    "command": "opencode-acp-codexfree",
+    "args": [],
+    "class": "free",
+    "cap": 1
+  }
+}
