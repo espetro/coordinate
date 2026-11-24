@@ -22,6 +22,10 @@ A job is one row in SQLite. It moves through these states.
 
 A daemon never runs more than `COORDINATE_CAP` jobs at once, and never more than `COORDINATE_REPO_CAP` jobs for the same repo key. Jobs beyond the cap wait in the queue, and nothing is dropped. Among queued jobs, a higher `--priority` goes first, then the older job.
 
+## Ordering
+
+The daemon claims jobs in `priority DESC, run_at, id` order. Within one priority class, jobs run FIFO in submission order. `--run-at` holds a job back until its time; it does not raise the job ahead of others once it is due. There is no priority aging: a priority-9 job submitted later still claims before a priority-0 job that has waited for hours, so a busy queue can starve low priorities. A job whose repo key or tool slot is at cap is skipped, not blocking: the daemon moves on to the next eligible job in priority order.
+
 ## Park and wake
 
 `--wait-on <event>` parks a job, and `release <event>` queues it again. A parked job holds no process, so thousands of them cost only their rows. A finishing job releases only the waiters on its `tool:` slot keys, so a job parked with `--wait-on` always needs an explicit `release`; it is never woken because another job finished.

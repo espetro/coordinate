@@ -37,6 +37,33 @@ test("enqueue + claim respects priority and run_at order", async () => {
   assert.equal(got4, null);
 });
 
+test("equal priorities run FIFO in submission order", async () => {
+  const q = await freshDb();
+  const db = q.connect();
+  const a = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const b = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const c = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const order = [];
+  for (;;) {
+    const got = q.claim(db, "o:1");
+    if (got === null) break;
+    order.push(got.jid);
+  }
+  assert.deepEqual(order, [a, b, c]);
+});
+
+test("a future run_at holds the job back, a due run_at is claimable", async () => {
+  const q = await freshDb();
+  const db = q.connect();
+  const now = Date.now() / 1000;
+  const future = q.enqueue(db, { cmd: ["true"], cwd: null }, 0, 3, now + 3600);
+  const due = q.enqueue(db, { cmd: ["true"], cwd: null }, 0, 3, now - 1);
+  const got = q.claim(db, "o:1");
+  assert.equal(got === null ? -1 : got.jid, due, "the due job claims, the future one waits");
+  assert.equal(q.claim(db, "o:2"), null, "the future job is not claimable yet");
+  assert.equal(future > 0, true);
+});
+
 test("machine cap blocks claims", async () => {
   const q = await freshDb();
   process.env["COORDINATE_CAP"] = "1";

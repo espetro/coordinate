@@ -296,6 +296,57 @@ test("X6: a malformed --max-runtime is rejected, not stored as NULL", async () =
   }
 });
 
+test("C11: --run-at stores a future epoch second (duration form)", async () => {
+  if (ORACLE) return; // Python has no --run-at; this gates the TypeScript flag
+  const r = rig();
+  try {
+    assert.equal(cli(r, "enqueue", "--run-at", "15m", "--", "true").status, 0);
+    const runAt = Number(rows(r, "SELECT run_at AS m FROM jobs")[0].m);
+    const now = Date.now() / 1000;
+    assert.ok(runAt > now + 14 * 60 && runAt <= now + 16 * 60, "run_at should be about now+900s, got " + runAt);
+  } finally {
+    await cleanup(r);
+  }
+});
+
+test("C11: --run-at accepts an ISO timestamp", async () => {
+  if (ORACLE) return;
+  const r = rig();
+  try {
+    const target = new Date(Date.now() + 3600 * 1000).toISOString();
+    assert.equal(cli(r, "enqueue", "--run-at", target, "--", "true").status, 0);
+    const runAt = Number(rows(r, "SELECT run_at AS m FROM jobs")[0].m);
+    assert.ok(Math.abs(runAt - Date.parse(target) / 1000) < 5, "run_at should match the timestamp, got " + runAt);
+  } finally {
+    await cleanup(r);
+  }
+});
+
+test("C11: a malformed --run-at fails loudly", async () => {
+  if (ORACLE) return;
+  const r = rig();
+  try {
+    const out = cli(r, "enqueue", "--run-at", "not-a-time", "--", "true");
+    assert.notEqual(out.status, 0);
+    assert.ok(/--run-at/.test(out.stderr), out.stderr);
+  } finally {
+    await cleanup(r);
+  }
+});
+
+test("S2: docs and skill say higher priority claims first", async () => {
+  const sources = [
+    ["docs/concepts.md", /higher `--priority` goes first/i],
+    ["docs/cli.md", /Higher numbers run first/i],
+    ["skills/coordinate/SKILL.md", /Higher `--priority` claims first/i],
+  ];
+  for (const [file, re] of sources) {
+    const text = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.ok(re.test(text), file + " must state the real claim order (priority DESC)");
+    assert.ok(!/lower `?--priority/i.test(text), file + " must not say lower priority first (S2)");
+  }
+});
+
 test("X8: status prints runtime_remaining_s and deadline_in_s", async () => {
   const r = rig();
   try {

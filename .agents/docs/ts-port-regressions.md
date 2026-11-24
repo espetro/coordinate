@@ -23,10 +23,10 @@ Date: 2026-11-23. Branch `audit/ts-port-regressions`, cut from local `main` (184
 | B8 | FIXED (3a60c42) | REGRESSION (silent failure mode), parser limits INTENTIONAL | Hand-rolled TOML handles 4 of the 10 spellings tried (single-quoted keys only); a miss turns heavy jobs into `failed` |
 | C9 | CONFIRMED | doc bug in both | Only lease expiry retries; exit != 0 goes straight to `failed` |
 | C10 | CONFIRMED | doc bug in both | Only `tool:` slot keys are released by a finishing job |
-| C11 | CONFIRMED | feature gap in both | `run_at` has no CLI flag in either implementation |
+| C11 | FIXED (TS) | feature gap in both, closed in TypeScript | `run_at` had no CLI flag in either implementation; the TypeScript CLI now takes `--run-at DUR\|ISO` |
 | C12 | CONFIRMED | latent bug in both | `attempts` counts claims, so park and release cycles burn the retry budget |
 | S1 | FIXED (4aee3c8) | DRIFT | Schema default `attempts DEFAULT 3` vs Python `DEFAULT 0`; the schema test compares names only |
-| S2 | CONFIRMED | doc bug in both | `SKILL.md` says lower priority first; both implementations claim `priority DESC` (higher first) |
+| S2 | FIXED (d7fbf80) | doc bug in both | `SKILL.md` said lower priority first; both implementations claim `priority DESC` (higher first) |
 
 Disagreements with the reviewer are collected in the last section of this file.
 
@@ -115,9 +115,9 @@ slots.'tool:vitest:*' = 2                1    2
 - `README.md:33` says `--wait-on <event>` holds a job "until `release <event>` or until a dependency finishes". `finish()` returns only a `tool:` key and the daemon releases only that (`src/queue.ts:271-279`, `src/daemon.ts:332-337`; `queue.py:443-451`, `daemon.py:282-288`). There is no dependency edge.
 - Reproduction: job 1 fails, jobs parked on `1` and `done:1` stay `waiting` with no `released` event, in both implementations.
 
-### C11: `run_at` has no flag (CONFIRMED, gap in both)
+### C11: `run_at` has no flag (FIXED in TypeScript, gap in Python)
 
-- Honored at claim (`src/queue.ts:197`, `queue.py:309`) and accepted by `enqueue()` (`src/queue.ts:158`, `queue.py:280`), but neither CLI exposes it (`coordinate --help` in Python lists no such flag; `src/main.ts:70-97` has none). Scheduled jobs are impossible from the CLI in both.
+- Honored at claim (`src/queue.ts:197`, `queue.py:309`) and accepted by `enqueue()` (`src/queue.ts:158`, `queue.py:280`), but neither CLI exposed it when the audit was written (`coordinate --help` in Python lists no such flag; `src/main.ts:70-97` had none). The TypeScript CLI now takes `--run-at <delay|ISO timestamp>`, e.g. `--run-at 15m` or `--run-at 2026-11-23T18:00:00Z`, and stores it in `run_at`; the value is rejected loudly when malformed. Python keeps the gap, since it is retired. Tests: "C11: --run-at stores a future epoch second (duration form)", "C11: --run-at accepts an ISO timestamp", "C11: a malformed --run-at fails loudly" in `test/regressions.test.mjs`.
 
 ### C12: `attempts` inflates on park and release (CONFIRMED, latent bug in both)
 
@@ -136,9 +136,9 @@ PY attempts after 3 park/release cycles: (3, 2)          -> status after lease e
 - `src/queue.ts:38` has `attempts INTEGER NOT NULL DEFAULT 3`; `queue.py:195` has `DEFAULT 0`. `enqueue()` writes `attempts` explicitly (`src/queue.ts:163`), so the TypeScript CLI is unaffected. A row inserted without `attempts` (an older script, a bench fixture, a test that INSERTs directly) would start at 3 and be `dead` after its first lease expiry in TypeScript. `CREATE TABLE IF NOT EXISTS` means an existing database keeps whichever default it was created with, so two databases created by the two implementations now disagree silently.
 - The test "schema matches the Python queue.py tables" (`test/queue.test.mjs:132-142`) selects `name` from `pragma_table_info('jobs')` and compares a sorted list of names. It cannot see types, NOT NULL, defaults or the status CHECK. Fix: select `name, type, "notnull", dflt_value` and compare to a literal table, and assert `sqlite_master.sql` for `jobs` contains `'timed_out'`. A tightened version is part of the fix list. It is a one-test change, and it would fail today on `attempts`.
 
-### S2: priority direction (CONFIRMED, doc bug in both)
+### S2: priority direction (FIXED, doc bug in both)
 
-- `skills/coordinate/SKILL.md:44` says "Lower `--priority` claims first". Both implementations claim `ORDER BY priority DESC, run_at, id` (`src/queue.ts:197`, `queue.py:309`; Python's README said "FIFO by priority desc, run_at, id"). Higher numbers run first. The Python skill file carries the same wrong sentence, so this is a documentation bug that predates the port. The existing test "enqueue + claim respects priority" asserts 9, 5, 0 order.
+- `skills/coordinate/SKILL.md:44` used to say "Lower `--priority` claims first". Both implementations claim `ORDER BY priority DESC, run_at, id` (`src/queue.ts:197`, `queue.py:309`; Python's README said "FIFO by priority desc, run_at, id"). Higher numbers run first. The Python skill file carried the same wrong sentence, so this was a documentation bug that predated the port. Fixed in d7fbf80 for `skills/coordinate/SKILL.md`, `docs/cli.md` and `docs/concepts.md`. The test "enqueue + claim respects priority" asserts 9, 5, 0 order, and "S2: docs and skill say higher priority claims first" in `test/regressions.test.mjs` now fails if the wording flips back. The claim order itself is unchanged in every implementation.
 
 ## Differences found by walking the Python modules
 
@@ -305,7 +305,7 @@ Sizes are rough (lines changed including tests; risk is the chance of breaking e
 | 11 | Docs: C9, C10, S2, A2 flag help, A4 comments; D7 decide a canonical output format | 20 | none | Python and TypeScript docs both wrong on C9, C10, S2 |
 | 12 | C12: stop counting park and release cycles against `max_attempts` (decrement on `waitOn`, or count only reaped leases) | 5-10 | medium | Behavior change shared with Python; decide intent first |
 | 13 | X14: advance the in-memory cursor only after a successful send | 3 | low | Bug exists in both |
-| 14 | C11: a `--run-at DUR\|ISO` flag so scheduled jobs are possible from the CLI (`run_at` is honored at claim in both implementations, only the flag is missing) | 20-30 | low | Open; no flag was invented in the docs commit, the audit only records the gap |
+| 14 | C11: a `--run-at DUR\|ISO` flag so scheduled jobs are possible from the CLI (`run_at` is honored at claim in both implementations, only the flag is missing) | 20-30 | low | DONE in TypeScript: `--run-at` accepts a delay or an ISO timestamp (`src/main.ts`), tests in `test/regressions.test.mjs` |
 
 Recommended order: 1, 2, 3 (data and process safety), then 5 with 4 (one config module, one PR), then 6, 7, 8, 9, 10, 11. Items 12 and 13 are cheap and can ride along. Total for 1 to 10 is about 350 to 550 lines.
 
