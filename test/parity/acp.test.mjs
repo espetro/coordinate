@@ -24,7 +24,7 @@ async function waitFor(fn, ms = 30000, step = 100) {
   }
 }
 
-const STUB = path.resolve(import.meta.dirname, "..", "..", "fixtures", "stub_acp_agent.mjs");
+const STUB = path.resolve(import.meta.dirname, "..", "fixtures", "stub_acp_agent.mjs");
 
 function stubRig(turnMs) {
   const r = rig({ COORDINATE_LEASE_S: "2", STUB_TURN_MS: String(turnMs), STUB_CHUNKS: "5" });

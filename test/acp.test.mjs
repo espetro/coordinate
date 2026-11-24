@@ -38,7 +38,7 @@ async function freshQueue() {
   return await import("../src/queue.ts");
 }
 
-const STUB = path.resolve(import.meta.dirname, "..", "fixtures", "stub_acp_agent.mjs");
+const STUB = path.resolve(import.meta.dirname, "fixtures", "stub_acp_agent.mjs");
 
 function stubRegistry(dir) {
   const file = path.join(dir, "agents.json");
