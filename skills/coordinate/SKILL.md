@@ -45,6 +45,14 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
 - Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.
 
+## Watching dispatched jobs
+
+Queue jobs outlive your turn. After enqueueing work you must follow up on, arm a wake-up mechanism **before ending the turn** — never leave running jobs unwatched:
+
+- **Same device**: `forward --exec` can page a sink you control (chat webhook, `t3 thread send` to a thread on the same T3 environment, a status file your monitor tails).
+- **Remote device**: you cannot push events across environments (`t3 thread send` only reaches threads on its own T3 environment). The reliable pattern is **pull**: arm a scheduled task/interval watchdog that ssh-checks `coordinate stats`/`status` on the remote, acts on terminal transitions (merge the worktree branch, `dead retry`, re-dispatch), and disables itself when the queue is clear.
+- Ending a turn with queued/running jobs and no armed watchdog is a process bug — the workstream's completion will go unnoticed.
+
 ## ACP agent sessions
 
 The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally enqueued `--acp AGENT --cwd DIR --prompt TEXT` jobs (daemon-hosted ACP session with resume support). The TS binary is cmd-only; the ACP lane TS port is pending, so agent-session enqueue is currently unavailable.

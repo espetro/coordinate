@@ -23,6 +23,10 @@ coordinate <verb> [args]
 | `events [--follow] [--since ID]` | Prints the event log, or follows it |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
 
+## Watching dispatched jobs
+
+A job outlives the turn that enqueued it, so pair every dispatch with a wake-up: `forward --exec` reaches sinks on the same machine (a failed `--exec` stalls the cursor at that event — verify the sink works once), and for remote machines pull `stats`/`status` over ssh from a local watchdog rather than pushing (event sinks are not routable across environments). See `skills/coordinate/SKILL.md` for the full pattern.
+
 ## enqueue options
 
 | Option | Meaning |

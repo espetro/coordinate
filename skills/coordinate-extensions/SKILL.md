@@ -95,7 +95,7 @@ Example — failure alerter with dedup (what `forward` cannot do): keep a small 
 - One DB per device; a forwarder or consumer sees only its local queue. To watch several machines, run one consumer per device (or point each at its own `COORDINATE_DB`).
 - `forward` polls every `--interval` seconds (default 2); `events --follow` polls every 500 ms. Neither is a push API — expect seconds-scale latency.
 - Run long-lived consumers under your own supervisor (tmux, launchd, systemd). Coordinate does not manage them.
-- A `forward` command that exits non-zero stalls that event's cursor until it succeeds; make sink commands idempotent or tolerant of retries.
+- A `forward` command that exits non-zero stalls that event's cursor until it succeeds; make sink commands idempotent or tolerant of retries. A sink that can *never* succeed freezes the forwarder at that event forever — verify reachability once before leaving it running (e.g. `t3 thread send` only reaches threads on its own T3 environment; a forwarder on a remote VPS cannot page threads elsewhere — use a pull-side watchdog there instead).
 
 ## What does not exist
 
