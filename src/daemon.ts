@@ -167,7 +167,22 @@ function deadlineEnv(db: Database, jid: number): string {
   return String(rows[0].deadline_at);
 }
 
-function jobEnv(jid: number, deadlineAt: string): Record<string, string> {
+interface AttemptRow {
+  attempts: number;
+  max_attempts: number;
+}
+
+// Attempt numbers let a retried job detect replay and stay idempotent (D17:
+// at-least-once execution means a killed attempt can replay side effects).
+function attemptEnv(db: Database, jid: number): { attempt: string; maxAttempts: string } {
+  const rows = db.prepareRaw("SELECT attempts, max_attempts FROM jobs WHERE id=?").all([jid]) as AttemptRow[];
+  if (rows.length === 0) {
+    return { attempt: "", maxAttempts: "" };
+  }
+  return { attempt: String(rows[0].attempts), maxAttempts: String(rows[0].max_attempts) };
+}
+
+function jobEnv(jid: number, deadlineAt: string, attempt: string, maxAttempts: string): Record<string, string> {
   const e: Record<string, string> = {};
   for (const k of Object.keys(process.env)) {
     const v = process.env[k];
@@ -183,6 +198,8 @@ function jobEnv(jid: number, deadlineAt: string): Record<string, string> {
   e["FLEET_DB"] = dbPath();
   e["COORDINATE_DEADLINE_AT"] = deadlineAt;
   e["FLEET_DEADLINE_AT"] = deadlineAt;
+  e["COORDINATE_ATTEMPT"] = attempt;
+  e["COORDINATE_MAX_ATTEMPTS"] = maxAttempts;
   return e;
 }
 
@@ -315,7 +332,8 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
   const stdio: ("ignore" | "inherit")[] = ["ignore", "inherit", "inherit"];
-  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid, deadlineEnv(db, jid)), stdio };
+  const att = attemptEnv(db, jid);
+  const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid, deadlineEnv(db, jid), att.attempt, att.maxAttempts), stdio };
   const win = process.platform === "win32";
   const proc =
     typeof cmd === "string"

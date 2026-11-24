@@ -101,7 +101,7 @@ These results come from the Python version (`legacy/python`) and have not been r
 
 ## Agent contract
 
-At spawn the daemon sets `COORDINATE_JOB_ID`, `COORDINATE_MACHINE` and `COORDINATE_DB`, and the old `FLEET_*` spellings as well. `COORDINATE_DEADLINE_AT` existed in the Python version and is not ported yet. An agent can read its own row with `coordinate status --self` and the queue with `coordinate stats`, and both are read-only. (D) The CLI should refuse commands that change the queue when the job id variable is set, unless the job has an explicit fan-out allowance.
+At spawn the daemon sets `COORDINATE_JOB_ID`, `COORDINATE_MACHINE`, `COORDINATE_DB`, `COORDINATE_DEADLINE_AT`, `COORDINATE_ATTEMPT` and `COORDINATE_MAX_ATTEMPTS`, and the old `FLEET_*` spellings where they exist. Attempt numbers let a job detect replay (D17 at-least-once) and stay idempotent. An agent can read its own row with `coordinate status --self` and the queue with `coordinate stats`, and both are read-only. (D) The CLI should refuse commands that change the queue when the job id variable is set, unless the job has an explicit fan-out allowance.
 
 ## Measured footprint (VPS, Linux x86_64, 6 cores)
 

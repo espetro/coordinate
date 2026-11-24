@@ -17,8 +17,15 @@ The daemon sets these variables for every job it starts.
 | `COORDINATE_JOB_ID` | The id of this job |
 | `COORDINATE_MACHINE` | The machine name |
 | `COORDINATE_DB` | The database file |
+| `COORDINATE_DEADLINE_AT` | Epoch-second deadline of this attempt, empty when uncapped |
+| `COORDINATE_ATTEMPT` | 1-based attempt number of this run |
+| `COORDINATE_MAX_ATTEMPTS` | Maximum attempts before the job goes dead |
+
+The `FLEET_*` names are accepted spellings for the first four.
 
 A job can read its own row with `coordinate status --self` and the queue with `coordinate stats`.
+
+Execution is at-least-once: a retried or resumed job can replay side effects from a killed attempt. Jobs that write files, send messages or call paid APIs should check `COORDINATE_ATTEMPT` (greater than 1 means replay is possible) and use a marker file or idempotency key.
 
 ## Following the queue from outside
 
