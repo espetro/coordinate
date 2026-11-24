@@ -12,6 +12,11 @@ mkdir -p "$OUT"
 COMMON="--npm-static @cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json --no-keep-llvm"
 SQLITE=node_modules/@cutils/sqlite
 
+# Stamp the real release version into src/version.ts so the binary's doctor
+# report and version strings match the artifact name.
+sed -i.bak -E "s/^export const CLI_VERSION = .*$/export const CLI_VERSION = \"$VERSION\";/" src/version.ts
+rm -f src/version.ts.bak
+
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
     scriptc build src/main-elf.ts $COMMON -o "$OUT/coordinate-$VERSION-linux-x64-gnu"
