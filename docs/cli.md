@@ -24,6 +24,8 @@ coordinate <verb> [args]
 | `release <event>` | Queues every job parked on the event |
 | `cancel <id>` | Cancels a job |
 | `dead retry [id]` | Puts failed and dead jobs back in the queue |
+| `cap show` | Prints the effective machine cap, repo cap, running-job count and machine name as JSON |
+| `cap set --machine-cap N --repo-cap N [--force]` | Writes the runtime cap into the queue DB; the daemon re-reads it each claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count |
 | `events [--follow] [--since ID]` | Prints the event log, or follows it |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
 

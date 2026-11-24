@@ -90,6 +90,8 @@ stateDiagram-v2
 
 The `jobs` row carries everything needed after a kill -9: `status`, `priority`, `run_at`, `lease_owner`, `lease_expires_at`, `waiting_on`, `attempts`, `max_attempts`, `max_runtime_s`, `runtime_used_s`, `deadline_at`, `claim_at`, `outcome`, `pgid`, `pidfile`, and the payload (including the durable ACP session id). `concurrency_slots` holds leases with a cost (machine, repo, `tool:<class>`). Parked time does not consume a job's runtime budget.
 
+A `settings` table (`key TEXT PRIMARY KEY, value TEXT NOT NULL`) holds the runtime-adjustable knobs. The machine and repo caps live there, written by `coordinate cap set` and read at claim time, so a cap change takes effect on the daemon's next claim with no daemon restart. Precedence at claim time is the stored setting, then `COORDINATE_CAP` / `COORDINATE_REPO_CAP`, then the built-in default.
+
 Jobs are claimed in `priority DESC, run_at, id` order: higher priority first, then the older job inside a priority class, and `run_at` holds a job back until its scheduled time. Without aging, a steady stream of high-priority jobs can starve the low ones; `[scheduler] aging = "linear"` in `config.toml` (off by default) boosts a waiting job by up to `aging_ceiling`, one per `aging_period` of age, evaluated in the claim query itself. A job whose repo key or tool slot is saturated is skipped rather than blocking the queue, so the next eligible job in priority order runs.
 
 ## Durability model
