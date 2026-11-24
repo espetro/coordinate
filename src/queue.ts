@@ -264,7 +264,19 @@ export function connect(): Database {  const p = dbPath();
   }
   const db = Database.open(p);
   db.exec("PRAGMA busy_timeout=5000");
-  db.exec("PRAGMA journal_mode=WAL");
+  // Switching the journal to WAL needs a brief exclusive lock. If another
+  // process holds it (a concurrent reader, another daemon starting up), the
+  // pragma fails with SQLITE_BUSY and the caller dies before it can retry.
+  // The database is already in WAL mode in practice, so a busy pragma means
+  // "someone else did it": keep going and let busy_timeout handle the rest.
+  try {
+    db.exec("PRAGMA journal_mode=WAL");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/locked|busy/i.test(msg)) {
+      throw e;
+    }
+  }
   db.exec("PRAGMA synchronous=NORMAL");
   migrateJobs(db);
   for (const ddl of SCHEMA) {

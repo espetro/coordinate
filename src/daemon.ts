@@ -631,9 +631,26 @@ export async function run(): Promise<void> {
   // short. The sleep is a real timer (issue #5: a setImmediate pump spins one
   // core at ~100%), so the daemon parks in the kernel while idle and still
   // delivers SIGTERM/SIGINT between macrotasks.
+  //
+  // A turn can lose a race for the SQLite write lock (another process holds
+  // it, or WAL setup needs an exclusive lock). That is transient, so the turn
+  // is retried on the next tick instead of killing the daemon: an unhandled
+  // SQLITE_BUSY here used to exit the process and lose the queue with it.
   const program = gen(function* () {
     while (true) {
-      const busy = yield* sync(() => turn());
+      let busy = false;
+      try {
+        busy = yield* sync(() => turn());
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/locked|busy/i.test(msg)) {
+          // Transient lock contention: back off a little and try again.
+          process.stderr.write("coordinate: database busy, retrying: " + msg + "\n");
+          delay = Math.max(delay, 0.1);
+        } else {
+          throw e;
+        }
+      }
       delay = busy ? BACKOFF_MIN : Math.min(delay * 2, BACKOFF_MAX);
       const signal = yield* race(sleep(durationMillis(delay * 1000)), awaitDeferred(stopSignal));
       if (signal === "stop") {
