@@ -11,7 +11,7 @@ import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as c
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
@@ -396,6 +396,82 @@ async function main(): Promise<void> {
       svc.cmdStatus();
     } else {
       fail("service: action must be install, uninstall or status");
+    }
+  } else if (verb === "cap") {
+    // Runtime cap control. The values live in the queue DB, so the daemon
+    // picks them up on its next claim: raising the cap frees queued jobs
+    // immediately, lowering it never interrupts the jobs already running.
+    const action = rest[0] === undefined ? "show" : rest[0];
+    if (action === "show") {
+      if (rest.length > 1) {
+        fail("cap show: takes no arguments");
+      }
+      const running = (
+        db.prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running'").all([]) as { c: number }[]
+      )[0].c;
+      process.stdout.write(
+        JSON.stringify({
+          machine_cap: q.machineCap(db),
+          repo_cap: q.repoCap(db),
+          running: running,
+          machine: q.MACHINE,
+        }) + "\n",
+      );
+    } else if (action === "set") {
+      let machineCapValue: number | null = null;
+      let repoCapValue: number | null = null;
+      let force = false;
+      for (let i = 1; i < rest.length; i++) {
+        const t = rest[i];
+        if (t === "--repo-cap") {
+          repoCapValue = parseIntArg(rest[++i], "--repo-cap");
+        } else if (t === "--machine-cap") {
+          machineCapValue = parseIntArg(rest[++i], "--machine-cap");
+        } else if (t === "--force") {
+          force = true;
+        } else {
+          fail("cap set: unknown argument " + t);
+        }
+      }
+      if (machineCapValue === null && repoCapValue === null) {
+        fail("cap set: give --machine-cap N and/or --repo-cap N");
+      }
+      for (const [flag, v] of [
+        ["--machine-cap", machineCapValue],
+        ["--repo-cap", repoCapValue],
+      ] as [string, number | null][]) {
+        if (v !== null && v <= 0) {
+          fail("cap set " + flag + ": must be a positive integer");
+        }
+      }
+      const running = (
+        db.prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running'").all([]) as { c: number }[]
+      )[0].c;
+      if (machineCapValue !== null && machineCapValue < running && !force) {
+        fail(
+          "cap set --machine-cap " +
+            machineCapValue +
+            ": " +
+            running +
+            " job(s) are running; lowering below that waits for them to drain. Pass --force to accept the overshoot.",
+        );
+      }
+      if (machineCapValue !== null) {
+        q.setCap(db, q.SETTING_MACHINE_CAP, machineCapValue);
+      }
+      if (repoCapValue !== null) {
+        q.setCap(db, q.SETTING_REPO_CAP, repoCapValue);
+      }
+      process.stdout.write(
+        JSON.stringify({
+          machine_cap: q.machineCap(db),
+          repo_cap: q.repoCap(db),
+          running: running,
+          machine: q.MACHINE,
+        }) + "\n",
+      );
+    } else {
+      fail("cap: action must be show or set");
     }
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
