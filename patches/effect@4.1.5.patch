@@ -30,10 +30,10 @@ index 6ecf62d4127b78b5b55dcdc5923b9330d93c6b92..2072fc29979f6d4e33421368067b638a
  /**
   * Returns a schedule that recurs once after the specified duration.
 diff --git a/dist/internal/effect.js b/dist/internal/effect.js
-index a4ce7771b7f945d199a69ee668b7466a7aaff505..393cb9dca90fe6c34348c2ee9c0712de87adf8df 100644
+index a4ce7771b7f945d199a69ee668b7466a7aaff505..89300c4be866464de05c745ad190ce8af1bfd2e1 100644
 --- a/dist/internal/effect.js
 +++ b/dist/internal/effect.js
-@@ -331,7 +331,19 @@ const AsyncResource = /*#__PURE__*/(() => {
+@@ -331,7 +331,22 @@ const AsyncResource = /*#__PURE__*/(() => {
      return undefined;
    }
  })();
@@ -42,15 +42,18 @@ index a4ce7771b7f945d199a69ee668b7466a7aaff505..393cb9dca90fe6c34348c2ee9c0712de
 +// continuations to an AsyncResource so async_hooks consumers (vitest's leak
 +// detector) can see them. A host whose builtin-module loader answers a value
 +// that is not constructible (a scriptc-built binary, for example) must not
-+// have it constructed: the fiber works without the capture.
-+const captureAsyncContext = () => {
-+  if (AsyncResource === undefined) return undefined;
++// have it constructed: the fiber works without the capture. The probe runs
++// once, at module load, so the hot path never throws.
++const asyncContextSupported = /*#__PURE__*/(() => {
++  if (AsyncResource === undefined) return false;
 +  try {
-+    return new AsyncResource("effect/Fiber");
++    new AsyncResource("effect/probe");
++    return true;
 +  } catch {
-+    return undefined;
++    return false;
 +  }
-+};
++})();
++const captureAsyncContext = () => asyncContextSupported ? new AsyncResource("effect/Fiber") : undefined;
  /** @internal */
  export const getCurrentFiber = () => globalThis[currentFiberTypeId];
  /** @internal */

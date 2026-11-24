@@ -163,7 +163,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  effect@4.1.5: 8d72037f48f70153aca667e90c9acd0f26d0e226704dd166aeb3e15174bf34cf
+  effect@4.1.5: 336cff13c3959ff941d02b86759887eb3d7495154f06be0f58df27a6e8966a29
 
 importers:
 
@@ -177,7 +177,7 @@ importers:
         version: 0.8.0(koffi@2.14.1)
       effect:
         specifier: 4.1.5
-        version: 4.1.5(patch_hash=8d72037f48f70153aca667e90c9acd0f26d0e226704dd166aeb3e15174bf34cf)
+        version: 4.1.5(patch_hash=336cff13c3959ff941d02b86759887eb3d7495154f06be0f58df27a6e8966a29)
     devDependencies:
       '@docmd/core':
         specifier: 0.10.1
@@ -918,7 +918,7 @@ snapshots:
     dependencies:
       aiplug: 0.2.0
 
-  effect@4.1.5(patch_hash=8d72037f48f70153aca667e90c9acd0f26d0e226704dd166aeb3e15174bf34cf): {}
+  effect@4.1.5(patch_hash=336cff13c3959ff941d02b86759887eb3d7495154f06be0f58df27a6e8966a29): {}
 
   embed-lite@0.1.6: {}
 
