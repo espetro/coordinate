@@ -166,12 +166,12 @@ jobs:
           "$EXE" daemon &
           DAEMON_PID=$!
           for i in $(seq 1 30); do
-            STATE=$("$EXE" status "$JID" | awk '{print $2}') && [ "$STATE" = done ] && break
+            "$EXE" status "$JID" | grep -q '"status": *"done"' && break
             sleep 2
           done
           kill "$DAEMON_PID" 2>/dev/null || true
 
-          STATE=$("$EXE" status "$JID" | awk '{print $2}')
+          "$EXE" status "$JID" | grep -q '"status": *"done"' && STATE=done || STATE=other
           echo "final state: $STATE"
           "$EXE" events | grep -q '"done"'
           [ "$STATE" = done ]
