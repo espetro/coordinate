@@ -115,6 +115,11 @@ async function main(): Promise<void> {
     );
     process.exit(argv.length === 0 ? 1 : 0);
   }
+  if (argv[0] === "--version" || argv[0] === "-V" || argv[0] === "version") {
+    const { CLI_VERSION } = await import("./version.ts");
+    process.stdout.write("coordinate " + CLI_VERSION + "\n");
+    return;
+  }
   const verb = argv[0];
   const rest = argv.slice(1);
 
