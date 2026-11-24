@@ -215,6 +215,13 @@ export class AcpClient {
     if (stdin === null || stdin === undefined || this.closed) {
       throw new Error("agent stdin closed");
     }
+    // EPIPE on a dead agent surfaces as an async stdin 'error' event, not as
+    // a thrown write: swallow it here so an unhandled event cannot crash the
+    // daemon. The client is marked closed, which fails the pending request
+    // through failAll; the next send throws the typed "agent stdin closed".
+    stdin.on("error", () => {
+      this.closed = true;
+    });
     stdin.write(JSON.stringify(msg) + "\n");
   }
 
@@ -258,7 +265,6 @@ export class AcpClient {
       // The timer must not keep the process alive on its own. The cast is
       // narrowed to a named interface (not an inline object type) so scriptc
       // can lower the method call.
-      // The timer must not keep the process alive on its own.
       timer.unref();
     });
   }
