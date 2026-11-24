@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 OUT="${1:-dist}"
 VERSION="$(node -p "require('./package.json').version")"
 mkdir -p "$OUT"
-COMMON="--npm-static @cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json --no-keep-llvm"
+COMMON="--npm-static effect,@cutils/sqlite,@cutils/cli --ffi node_modules/@cutils/sqlite/ffi.json --no-keep-llvm"
 SQLITE=node_modules/@cutils/sqlite
 
 # Stamp the real release version into src/version.ts so the binary's doctor

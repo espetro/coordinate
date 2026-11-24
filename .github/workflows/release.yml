@@ -47,11 +47,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           scriptc build src/main-elf.ts \
-            --npm-static @cutils/sqlite,@cutils/cli \
+            --npm-static effect,@cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
             -o "coordinate-${VERSION}-linux-x64-gnu"
           scriptc build src/main-elf.ts \
-            --npm-static @cutils/sqlite,@cutils/cli \
+            --npm-static effect,@cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
             --static \
             -o "coordinate-${VERSION}-linux-x64-musl"
@@ -70,7 +70,7 @@ jobs:
             node_modules/@cutils/sqlite/build/libsqlite3-shim.a
           SCRIPTC_TARGET=arm64-apple-macosx14.0.0 \
             scriptc build src/main-elf.ts \
-            --npm-static @cutils/sqlite,@cutils/cli \
+            --npm-static effect,@cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
             -o "coordinate-${VERSION}-darwin-arm64"
 
@@ -82,7 +82,7 @@ jobs:
             node_modules/@cutils/sqlite/build/libsqlite3-shim.a
           SCRIPTC_TARGET=x86_64-apple-macosx14.0.0 \
             scriptc build src/main-elf.ts \
-            --npm-static @cutils/sqlite,@cutils/cli \
+            --npm-static effect,@cutils/sqlite,@cutils/cli \
             --ffi node_modules/@cutils/sqlite/ffi.json \
             -o "coordinate-${VERSION}-darwin-x64"
 
