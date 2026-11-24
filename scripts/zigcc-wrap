@@ -1,4 +1,9 @@
 #!/bin/sh
 # zig >= 0.15 removed the "zig cc" driver scriptc invokes; this wrapper restores it.
 # ZIG overrides the zig binary; default is zig on PATH (CI pins zig 0.14.1).
+# SCRIPTC_EXTRA_OBJS adds COFF objects to the link line (e.g. the Windows
+# stack probe, scripts/win/chkstk.o).
+if [ -n "${SCRIPTC_EXTRA_OBJS:-}" ]; then
+  exec "${ZIG:-zig}" cc "$@" ${SCRIPTC_EXTRA_OBJS}
+fi
 exec "${ZIG:-zig}" cc "$@"
