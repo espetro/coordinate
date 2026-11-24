@@ -579,4 +579,45 @@ export function validateConfig(): void {
   slotsConfig();
   toolClasses();
   defaultMaxRuntimeS();
+  agingConfig();
+}
+
+// [scheduler] aging configuration: priority aging for the claim order.
+// aging = "off" (default, the historical behavior) or "linear", where an old
+// queued job's priority is boosted by up to aging_ceiling over aging_period.
+export function agingConfig(): { aging: string; periodS: number; ceiling: number } {
+  const cf = readConfig();
+  if (cf === null) {
+    return { aging: "off", periodS: 3600.0, ceiling: 5 };
+  }
+  const scheduler = section(cf, "scheduler");
+  const agingRaw = scheduler["aging"];
+  const aging = agingRaw === undefined || agingRaw === null ? "off" : agingRaw;
+  if (aging !== "off" && aging !== "linear") {
+    throw new ConfigError(cf.file, lineOf(cf, "scheduler.aging"), "scheduler.aging must be \"off\" or \"linear\", got " + JSON.stringify(aging));
+  }
+  let periodS = 3600.0;
+  const periodRaw = scheduler["aging_period"];
+  if (periodRaw !== undefined && periodRaw !== null) {
+    if (typeof periodRaw === "number") {
+      periodS = periodRaw;
+    } else if (typeof periodRaw === "string") {
+      const secs = parseDurationSecs(periodRaw);
+      if (secs === null) {
+        throw new ConfigError(cf.file, lineOf(cf, "scheduler.aging_period"), "bad duration " + JSON.stringify(periodRaw) + " for scheduler.aging_period (use e.g. 30m, 1h, 2h)");
+      }
+      periodS = secs;
+    } else {
+      throw new ConfigError(cf.file, lineOf(cf, "scheduler.aging_period"), "scheduler.aging_period must be a duration");
+    }
+    if (!(periodS > 0)) {
+      throw new ConfigError(cf.file, lineOf(cf, "scheduler.aging_period"), "scheduler.aging_period must be positive, got " + JSON.stringify(periodRaw));
+    }
+  }
+  let ceiling = 5;
+  const ceilingRaw = scheduler["aging_ceiling"];
+  if (ceilingRaw !== undefined && ceilingRaw !== null) {
+    ceiling = nonNegInt(cf, "scheduler.aging_ceiling", ceilingRaw);
+  }
+  return { aging: aging, periodS: periodS, ceiling: ceiling };
 }

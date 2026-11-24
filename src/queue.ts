@@ -4,25 +4,75 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
+import type { BindValue } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
 import * as cfg from "./config.ts";
+export const cfgValidate = cfg.validateConfig;
 
 export const LEASE_S = Number(env("LEASE_S", "30"));
 export const MACHINE = env("MACHINE", "laptop") as string;
 const MACHINE_CAPS: Record<string, number> = { laptop: 3, vps: 6 };
 
-export function machineCap(): number {
+// The machine and repo caps are read at claim time, not frozen at daemon start,
+// so `coordinate cap set` takes effect on the next claim without a daemon
+// restart and without interrupting the jobs already running. Precedence:
+// the stored setting (written by `coordinate cap set`), then the environment
+// (COORDINATE_CAP / COORDINATE_REPO_CAP), then the built-in default.
+export const SETTING_MACHINE_CAP = "machine_cap";
+export const SETTING_REPO_CAP = "repo_cap";
+
+function storedCap(db: Database, key: string): number | null {
+  const row = db.prepareRaw("SELECT value FROM settings WHERE key=?").getOrNull([key]) as { value: string } | null;
+  if (row === null) {
+    return null;
+  }
+  const n = Number(row.value);
+  if (!Number.isInteger(n) || n <= 0) {
+    return null;
+  }
+  return n;
+}
+
+export function setCap(db: Database, key: string, value: number | null): void {
+  if (value === null) {
+    db.prepareRaw("DELETE FROM settings WHERE key=?").run([key]);
+    return;
+  }
+  db.prepareRaw("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run([
+    key,
+    String(value),
+  ]);
+}
+
+export function machineCap(db: Database): number {
+  const stored = storedCap(db, SETTING_MACHINE_CAP);
+  if (stored !== null) {
+    return stored;
+  }
   const raw = env("CAP");
   if (raw !== null) {
-    return Number(raw);
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) {
+      return n;
+    }
   }
   const known = MACHINE_CAPS[MACHINE];
   return known === undefined ? 3 : known;
 }
 
-export function repoCap(): number {
+export function repoCap(db: Database): number {
+  const stored = storedCap(db, SETTING_REPO_CAP);
+  if (stored !== null) {
+    return stored;
+  }
   const raw = env("REPO_CAP");
-  return raw === null ? 1 : Number(raw);
+  if (raw !== null) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) {
+      return n;
+    }
+  }
+  return 1;
 }
 
 export const SCHEMA = [
@@ -80,6 +130,13 @@ export const SCHEMA = [
   data TEXT NOT NULL DEFAULT '{}'
 )`,
   `CREATE INDEX IF NOT EXISTS idx_events_job ON events(job_id)`,
+  // Runtime-adjustable settings, written by `coordinate cap set` and read at
+  // claim time. Keeping the cap in the DB (not the env) is what lets it change
+  // without restarting the daemon.
+  `CREATE TABLE IF NOT EXISTS settings(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`,
 ];
 
 export function emit(db: Database, jid: number | null, kind: string, data: Record<string, unknown> = {}): void {
@@ -356,19 +413,31 @@ export function claim(db: Database, owner: string): Parsed | null {
   db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + now);
   const used = usedByKey(db);
   const machineKey = "machine:" + MACHINE;
-  if ((used[machineKey] === undefined ? 0 : used[machineKey]) >= machineCap()) {
+  if ((used[machineKey] === undefined ? 0 : used[machineKey]) >= machineCap(db)) {
     return null;
   }
-  const rows = db
-    .prepareRaw("SELECT id, payload, kind FROM jobs WHERE status='queued' AND run_at<=? ORDER BY priority DESC, run_at, id LIMIT 100")
-    .all([now]) as { id: number; payload: string; kind: string }[];
+  // Aging (config.toml [scheduler]): boost = min(ceiling, age/period) when
+  // aging="linear", else 0. "off" keeps the byte-identical historical SQL.
+  const sched = cfg.agingConfig();
+  let sql: string;
+  let binds: BindValue[];
+  if (sched.aging === "off") {
+    sql = "SELECT id, payload, kind FROM jobs WHERE status='queued' AND run_at<=? ORDER BY priority DESC, run_at, id LIMIT 100";
+    binds = [now];
+  } else {
+    sql =
+      "SELECT id, payload, kind FROM jobs WHERE status='queued' AND run_at<=? " +
+      "ORDER BY priority + MIN(?, CAST((? - created_at) / ? AS INTEGER)) DESC, run_at, id LIMIT 100";
+    binds = [now, sched.ceiling, now, sched.periodS];
+  }
+  const rows = db.prepareRaw(sql).all(binds) as { id: number; payload: string; kind: string }[];
   for (const row of rows) {
     const jid = row.id;
     const payload = JSON.parse(row.payload) as Payload;
     const keys = slotKeys(payload);
     let blocked = false;
     for (const k of keys) {
-      if (k.startsWith("repo:") && (used[k] === undefined ? 0 : used[k]) >= repoCap()) {
+      if (k.startsWith("repo:") && (used[k] === undefined ? 0 : used[k]) >= repoCap(db)) {
         blocked = true;
         break;
       }
