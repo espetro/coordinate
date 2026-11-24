@@ -12,6 +12,6 @@ mkdir -p "$(dirname "$OUT")"
 exec env SCRIPTC_TARGET=x86_64-windows-gnu \
   SCRIPTC_LINKER="$PWD/scripts/zigcc-wrap" \
   scriptc build src/main-elf.ts \
-  --npm-static @cutils/sqlite,@cutils/cli \
+  --npm-static effect,@cutils/sqlite,@cutils/cli \
   --ffi node_modules/@cutils/sqlite/ffi.json \
   -o "$OUT" "$@"

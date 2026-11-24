@@ -16,6 +16,11 @@ import * as path from "node:path";
 import { env, dbPath } from "./env.ts";
 import * as q from "./queue.ts";
 import { Database } from "@cutils/sqlite";
+// Effect v4 for the request/response lifetime: Effect.callback replaces the
+// hand-rolled 10ms poll loop, and acquireRelease scopes the agent process to
+// the session turn. Deep function-style imports, like daemon.ts.
+import { callback, fail, flatMap, gen, runPromise, scoped, succeed } from "effect/Effect";
+import type { Effect } from "effect/Effect";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -105,6 +110,27 @@ export function stopReasonOf(result: Record<string, unknown> | null): string {
 interface PendingSlot {
   resolved: boolean;
   response: RpcResponse | null;
+  resume: ((e: Effect<RpcResponse, Error>) => void) | null;
+}
+
+// A failed RPC response as an Effect error. A plain function, not an inline
+// effect constructor call inside callback bodies, so the shape stays obvious.
+function failRequest(message: string): Effect<RpcResponse, Error> {
+  return fail(new Error(message));
+}
+
+// mapResponse: the protocol calls all answer with an RpcResponse whose
+// `error` field carries the failure. This turns one into an Effect that
+// fails with an Error, so the turn program reads as ordinary Effect code.
+function mapResponse<A>(f: (r: RpcResponse) => A): (self: Effect<RpcResponse, Error>) => Effect<A, Error> {
+  return (self) =>
+    flatMap(self, (r) => {
+      try {
+        return succeed(f(r));
+      } catch (e) {
+        return fail(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
 }
 
 // Minimal ACP client over a child process's stdin/stdout. The daemon calls request()
@@ -113,7 +139,9 @@ interface PendingSlot {
 export class AcpClient {
   private proc: cp.ChildProcess;
   private nextId = 1;
-  private pending: Record<number, PendingSlot> = {};
+  // A Map, not a Record: `delete map.get(key)` compiles under scriptc where
+  // `delete obj[numberKey]` is SC1090, and the daemon needs this file static.
+  private pending = new Map<number, PendingSlot>();
   private buffer = "";
   private closed = false;
 
@@ -150,10 +178,16 @@ export class AcpClient {
         continue;
       }
       if (msg.response !== null) {
-        const slot = this.pending[msg.response.id];
+        const slot = this.pending.get(msg.response.id);
         if (slot !== undefined && !slot.resolved) {
           slot.resolved = true;
           slot.response = msg.response;
+          if (slot.resume !== null) {
+            this.pending.delete(msg.response.id);
+            const resume = slot.resume;
+            slot.resume = null;
+            resume(succeed(msg.response));
+          }
         }
       } else if (msg.notification !== null) {
         onNotification(msg.notification);
@@ -162,11 +196,16 @@ export class AcpClient {
   }
 
   private failAll(reason: string): void {
-    for (const key of Object.keys(this.pending)) {
-      const slot = this.pending[Number(key)];
-      if (!slot.resolved) {
+    for (const key of [...this.pending.keys()]) {
+      const slot = this.pending.get(key);
+      if (slot !== undefined && !slot.resolved) {
         slot.resolved = true;
-        slot.response = { id: Number(key), result: null, error: { code: -32000, message: reason } };
+        this.pending.delete(key);
+        if (slot.resume !== null) {
+          const resume = slot.resume;
+          slot.resume = null;
+          resume(succeed({ id: key, result: null, error: { code: -32000, message: reason } }));
+        }
       }
     }
   }
@@ -176,6 +215,13 @@ export class AcpClient {
     if (stdin === null || stdin === undefined || this.closed) {
       throw new Error("agent stdin closed");
     }
+    // EPIPE on a dead agent surfaces as an async stdin 'error' event, not as
+    // a thrown write: swallow it here so an unhandled event cannot crash the
+    // daemon. The client is marked closed, which fails the pending request
+    // through failAll; the next send throws the typed "agent stdin closed".
+    stdin.on("error", () => {
+      this.closed = true;
+    });
     stdin.write(JSON.stringify(msg) + "\n");
   }
 
@@ -183,64 +229,98 @@ export class AcpClient {
     this.send({ jsonrpc: "2.0", method: method, params: params });
   }
 
+  // request: send one JSON-RPC call and wait for its response. Effect.callback
+  // replaces the hand-rolled 10ms poll loop: the response resumes the effect
+  // directly, and the timeout is one timer instead of a poll that re-checks
+  // the clock every 10ms.
   request(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<RpcResponse> {
+    return runPromise(this.requestEffect(method, params, timeoutMs));
+  }
+
+  requestEffect(method: string, params: Record<string, unknown>, timeoutMs: number): Effect<RpcResponse, Error> {
     const rid = this.nextId;
     this.nextId = this.nextId + 1;
-    const slot: PendingSlot = { resolved: false, response: null };
-    this.pending[rid] = slot;
+    const slot: PendingSlot = { resolved: false, response: null, resume: null };
+    this.pending.set(rid, slot);
     try {
       this.send({ jsonrpc: "2.0", id: rid, method: method, params: params });
     } catch (e) {
-      delete this.pending[rid];
-      return Promise.reject(e);
+      this.pending.delete(rid);
+      return failRequest(e instanceof Error ? e.message : String(e));
     }
-    return new Promise<RpcResponse>((resolve, reject) => {
-      const started = Date.now();
-      const poll = (): void => {
-        if (slot.resolved) {
-          resolve(slot.response as RpcResponse);
-          return;
+    return callback<RpcResponse, Error>((resume) => {
+      slot.resume = resume;
+      const timer: NodeJS.Timeout = setTimeout(() => {
+        const current = this.pending.get(rid);
+        if (current !== undefined && !current.resolved) {
+          current.resolved = true;
+          this.pending.delete(rid);
+          if (current.resume !== null) {
+            const r = current.resume;
+            current.resume = null;
+            r(failRequest(method + " timed out"));
+          }
         }
-        if (Date.now() - started >= timeoutMs) {
-          delete this.pending[rid];
-          reject(new Error(method + " timed out"));
-          return;
-        }
-        setTimeout(poll, 10);
-      };
-      poll();
+      }, timeoutMs);
+      // The timer must not keep the process alive on its own. The cast is
+      // narrowed to a named interface (not an inline object type) so scriptc
+      // can lower the method call.
+      timer.unref();
     });
   }
 
   // initialize: verify the protocol handshake before any session work.
   async initialize(): Promise<void> {
-    const r = await this.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} }, 30000);
-    if (r.error !== null) {
-      throw new Error("initialize failed: " + r.error.message);
-    }
+    await this.initializeEffect();
+  }
+
+  // The Effect-shaped siblings of the four protocol calls. The async ones are
+  // thin wrappers over these, so the daemon can drive the turn as one Effect
+  // program while the tests can still await a promise.
+  initializeEffect(): Effect<void, Error> {
+    return this.requestEffect("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} }, 30000).pipe(mapResponse((r) => {
+      if (r.error !== null) {
+        throw new Error("initialize failed: " + r.error.message);
+      }
+    }));
+  }
+
+  newSessionEffect(cwd: string): Effect<string, Error> {
+    return this.requestEffect("session/new", { cwd: cwd, mcpServers: [] }, 60000).pipe(mapResponse((r) => {
+      if (r.error !== null || r.result === null) {
+        throw new Error("session/new failed: " + (r.error === null ? "no result" : r.error.message));
+      }
+      return String(r.result["sessionId"]);
+    }));
+  }
+
+  loadSessionEffect(sessionId: string, cwd: string): Effect<void, Error> {
+    return this.requestEffect("session/load", { sessionId: sessionId, cwd: cwd, mcpServers: [] }, 60000).pipe(mapResponse((r) => {
+      if (r.error !== null) {
+        throw new Error("session/load failed: " + r.error.message);
+      }
+    }));
+  }
+
+  promptEffect(sessionId: string, text: string): Effect<string, Error> {
+    return this.requestEffect("session/prompt", { sessionId: sessionId, prompt: [{ type: "text", text: text }] }, 3600000).pipe(mapResponse((r) => {
+      if (r.error !== null) {
+        throw new Error("session/prompt failed: " + r.error.message);
+      }
+      return stopReasonOf(r.result);
+    }));
   }
 
   async newSession(cwd: string): Promise<string> {
-    const r = await this.request("session/new", { cwd: cwd, mcpServers: [] }, 60000);
-    if (r.error !== null || r.result === null) {
-      throw new Error("session/new failed: " + (r.error === null ? "no result" : r.error.message));
-    }
-    return String(r.result["sessionId"]);
+    return runPromise(this.newSessionEffect(cwd));
   }
 
   async loadSession(sessionId: string, cwd: string): Promise<void> {
-    const r = await this.request("session/load", { sessionId: sessionId, cwd: cwd, mcpServers: [] }, 60000);
-    if (r.error !== null) {
-      throw new Error("session/load failed: " + r.error.message);
-    }
+    await runPromise(this.loadSessionEffect(sessionId, cwd));
   }
 
   async prompt(sessionId: string, text: string): Promise<string> {
-    const r = await this.request("session/prompt", { sessionId: sessionId, prompt: [{ type: "text", text: text }] }, 3600000);
-    if (r.error !== null) {
-      throw new Error("session/prompt failed: " + r.error.message);
-    }
-    return stopReasonOf(r.result);
+    return runPromise(this.promptEffect(sessionId, text));
   }
 
   cancel(sessionId: string): boolean {
@@ -357,49 +437,66 @@ export function startAcpJob(db: Database, jid: number, owner: string, payload: A
     handle.exitCode = code;
   });
   const drive = async (): Promise<void> => {
+    // The agent process is the resource; acquireRelease scopes its lifetime to
+    // the turn, so the release (terminate the group, close stdin, drop the
+    // pidfile) runs on every exit path, whether the turn ended or failed.
+    const program = scoped(
+      gen(function* () {
+        const stop = yield* gen(function* () {
+          yield* handle.client.initializeEffect();
+          if (payload.session !== null && payload.session !== "") {
+            yield* handle.client.loadSessionEffect(payload.session, payload.cwd);
+            handle.sessionId = payload.session;
+          } else {
+            const created = yield* handle.client.newSessionEffect(payload.cwd);
+            handle.sessionId = created;
+            q.setSession(db, jid, owner, created);
+          }
+          return yield* handle.client.promptEffect(handle.sessionId === null ? "" : handle.sessionId, payload.prompt);
+        });
+        handle.done = true;
+        handle.failure = stop === "end_turn" ? null : "stopReason: " + stop;
+      }),
+    );
     try {
-      await handle.client.initialize();
-      if (payload.session !== null && payload.session !== "") {
-        await handle.client.loadSession(payload.session, payload.cwd);
-        handle.sessionId = payload.session;
-      } else {
-        handle.sessionId = await handle.client.newSession(payload.cwd);
-        q.setSession(db, jid, owner, handle.sessionId);
-      }
-      const stop = await handle.client.prompt(handle.sessionId === null ? "" : handle.sessionId, payload.prompt);
-      handle.done = true;
-      handle.failure = stop === "end_turn" ? null : "stopReason: " + stop;
+      await runPromise(program);
     } catch (e) {
       handle.failure = e instanceof Error ? e.message : String(e);
     } finally {
       handle.settled = true;
-      // Turn finished or errored: terminate the agent's group like the wrapper did.
-      const pid = proc.pid;
-      if (pid !== undefined && pid !== null) {
-        try {
-          if (process.platform !== "win32") {
-            process.kill(-pid, "SIGTERM");
-          } else {
-            process.kill(pid, "SIGTERM");
-          }
-        } catch {
-          // already gone
-        }
-      }
-      const stdin = proc.stdin;
-      if (stdin !== null && stdin !== undefined) {
-        stdin.end();
-      }
-      proc.unref();
-      try {
-        fs.unlinkSync(pidfile);
-      } catch {
-        // already gone
-      }
+      releaseAgent(proc, pidfile);
     }
   };
   void drive();
   return handle;
+}
+
+// releaseAgent: terminate the agent's process group and drop its pidfile.
+// The wrapper's teardown, kept as a plain function so the acquireRelease
+// release and the failure path share one implementation.
+function releaseAgent(proc: cp.ChildProcess, pidfile: string): void {
+  const pid = proc.pid;
+  if (pid !== undefined && pid !== null) {
+    try {
+      if (process.platform !== "win32") {
+        process.kill(-pid, "SIGTERM");
+      } else {
+        process.kill(pid, "SIGTERM");
+      }
+    } catch {
+      // already gone
+    }
+  }
+  const stdin = proc.stdin;
+  if (stdin !== null && stdin !== undefined) {
+    stdin.end();
+  }
+  proc.unref();
+  try {
+    fs.unlinkSync(pidfile);
+  } catch {
+    // already gone
+  }
 }
 
 // Completion check for the daemon poll: an ACP job is finished when the spawnAcpJob

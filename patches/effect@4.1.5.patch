@@ -1,0 +1,59 @@
+diff --git a/dist/Schedule.js b/dist/Schedule.js
+index 6ecf62d4127b78b5b55dcdc5923b9330d93c6b92..2072fc29979f6d4e33421368067b638aca7ba649 100644
+--- a/dist/Schedule.js
++++ b/dist/Schedule.js
+@@ -1,6 +1,5 @@
+ import * as Cause from "./Cause.js";
+ import * as Context from "./Context.js";
+-import * as Cron from "./Cron.js";
+ import * as Duration from "./Duration.js";
+ import { constant, dual, identity } from "./Function.js";
+ import { isEffect } from "./internal/core.js";
+@@ -407,18 +406,7 @@ const maxDuration = results => {
+  * @since 2.0.0
+  */
+ export const cron = (expression, tz, options) => {
+-  const parsed = Cron.isCron(expression) ? Result.succeed(expression) : Cron.parse(expression, tz, options);
+-  return fromStep(effect.map(effect.fromResult(parsed), cron => (now, _) => {
+-    if (now === Number.POSITIVE_INFINITY) {
+-      return Cause.done(Duration.zero);
+-    }
+-    return effect.sync(() => {
+-      let next = Cron.next(cron, now).getTime();
+-      if (Duration.isZero(Duration.millis(next - now))) next = Cron.next(cron, next).getTime();
+-      const duration = Duration.millis(next - now);
+-      return [duration, duration];
+-    });
+-  }));
++  throw new Error("Schedule.cron is not available in this build");
+ };
+ /**
+  * Returns a schedule that recurs once after the specified duration.
+diff --git a/dist/internal/effect.js b/dist/internal/effect.js
+index a4ce7771b7f945d199a69ee668b7466a7aaff505..89300c4be866464de05c745ad190ce8af1bfd2e1 100644
+--- a/dist/internal/effect.js
++++ b/dist/internal/effect.js
+@@ -331,7 +331,22 @@ const AsyncResource = /*#__PURE__*/(() => {
+     return undefined;
+   }
+ })();
+-const captureAsyncContext = () => AsyncResource === undefined ? undefined : new AsyncResource("effect/Fiber");
++// The async-context capture is an optional optimisation: it ties a fiber's
++// continuations to an AsyncResource so async_hooks consumers (vitest's leak
++// detector) can see them. A host whose builtin-module loader answers a value
++// that is not constructible (a scriptc-built binary, for example) must not
++// have it constructed: the fiber works without the capture. The probe runs
++// once, at module load, so the hot path never throws.
++const asyncContextSupported = /*#__PURE__*/(() => {
++  if (AsyncResource === undefined) return false;
++  try {
++    new AsyncResource("effect/probe");
++    return true;
++  } catch {
++    return false;
++  }
++})();
++const captureAsyncContext = () => asyncContextSupported ? new AsyncResource("effect/Fiber") : undefined;
+ /** @internal */
+ export const getCurrentFiber = () => globalThis[currentFiberTypeId];
+ /** @internal */

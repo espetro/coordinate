@@ -5,3 +5,5 @@ allowBuilds:
   koffi: true
   esbuild: true
   "@docmd/engine-rust": false
+patchedDependencies:
+  effect@4.1.5: patches/effect@4.1.5.patch
