@@ -321,15 +321,15 @@ interface Parsed {
   payload: Payload;
 }
 
-export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempts = 3, runAt: number | null = null, maxRuntimeS: number | null = null): number {
+export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempts = 3, runAt: number | null = null, maxRuntimeS: number | null = null, kind: string = "cmd"): number {
   const now = Date.now() / 1000;
   const ins = db.prepareRaw(
     "INSERT INTO jobs(kind,payload,priority,run_at,attempts,max_attempts,created_at,max_runtime_s) VALUES(?,?,?,?,?,?,?,?)",
   );
-  const r = ins.run(["cmd", JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS]);
+  const r = ins.run([kind, JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS]);
   ins.finalize();
   const jid = r.lastInsertRowid;
-  emit(db, jid, "enqueued", { kind: "cmd" });
+  emit(db, jid, "enqueued", { kind: kind });
   return jid;
 }
 
@@ -602,6 +602,12 @@ export function finalizeTimedOut(db: Database, jid: number, outcome: string): bo
     emit(db, jid, "timed_out", { outcome });
   }
   return cur.changes > 0;
+}
+
+// Persist the ACP session id into the payload (port of queue.py set_session): the next
+// attempt after a dispatcher crash resumes the SAME session via session/load.
+export function setSession(db: Database, jid: number, owner: string, session: string): void {
+  db.prepareRaw("UPDATE jobs SET payload=json_set(payload,'$.session',?) WHERE id=? AND lease_owner=?").run([session, jid, owner]);
 }
 
 export function setProc(db: Database, jid: number, owner: string, pgid: number): void {

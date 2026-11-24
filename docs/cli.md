@@ -16,6 +16,7 @@ coordinate <verb> [args]
 | `service status` | Reports installed, enabled and running state by asking the system manager (`systemctl --user is-enabled`/`is-active`, or `launchctl print`), never pgrep |
 | `doctor` | Prints a health report (version, DB, config, daemon liveness via the heartbeat row, queue stats); exits non-zero on failed checks |
 | `enqueue [options] -- <command...>` | Adds a job and prints its id |
+| `enqueue --acp <agent> --cwd <dir> --prompt <text>` | Adds an ACP agent-session job; the daemon spawns the agent and drives one turn |
 | `status [id]` | Lists jobs, or shows one |
 | `status --self` | Shows the job whose id is in `COORDINATE_JOB_ID` |
 | `stats` | Prints the job count per state as JSON |
@@ -41,6 +42,9 @@ A job outlives the turn that enqueued it, so pair every dispatch with a wake-up:
 | `--max-attempts <n>` | How many times a job may be started. Default 3 |
 | `--max-runtime <duration>` | A deadline such as `90s`, `15m` or `2h` |
 | `--wait-on <event>` | Park the job immediately until `release <event>`. Finishing a job releases only its `tool:` slot waiters, so a `--wait-on` job needs an explicit release |
+| `--acp <agent>` | Enqueue an ACP job for this agent instead of a command (needs `--cwd` and `--prompt`) |
+| `--prompt <text>` | Prompt text for `--acp` jobs |
+| `--registry <file>` | ACP agent registry JSON, `{"<name>": {"command": ..., "args": [...]}}`. Default: `bench/agents.stub.json` relative to the daemon's cwd |
 
 ## Environment
 
@@ -51,3 +55,8 @@ A job outlives the turn that enqueued it, so pair every dispatch with a wake-up:
 | `COORDINATE_REPO_CAP` | 1 | Jobs running at once per repo key |
 | `COORDINATE_MACHINE` | `laptop` | Name of this machine |
 | `COORDINATE_LEASE_S` | 30 | Seconds before a silent job counts as dead |
+| `COORDINATE_ACP_CMD` | (unset) | Overrides the registry: the full agent command line (space separated) spawned for every `--acp` job |
+
+## ACP agent sessions
+
+`enqueue --acp` stores the agent, cwd, prompt and registry in an `acp` job. The daemon resolves the agent in the registry, spawns it detached with stdin/stdout pipes, and speaks Agent Client Protocol JSON-RPC 2.0 (ndjson): `initialize`, then `session/new` on the first attempt, `session/load` on every later one, then one `session/prompt` turn. The `sessionId` is persisted into the job payload the moment it exists, so a daemon that dies mid-turn and restarts resumes the SAME session instead of starting fresh. The job finishes `done` when the turn ends with `stopReason: end_turn`, `failed` otherwise. Timecap expiry sends `session/cancel` before the kill. Real-agent runs are exercised by the gated test (`COORDINATE_ACP_REAL=1`, `COORDINATE_ACP_REAL_AGENT='{"command":...,"args":[...]}'`); the default suite uses the stub agent in `test/fixtures/stub_acp_agent.mjs`.

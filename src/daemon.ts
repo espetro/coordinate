@@ -1,6 +1,6 @@
 // Dispatcher daemon: claim loop, subprocess execution, lease heartbeat, reaper.
-// Port of src/coordinate/daemon.py run() for cmd jobs only (no ACP lane, no tool-class
-// spawn interception: the bench --cli scenarios used here do not exercise [slots] config).
+// cmd jobs run as shell children; acp jobs (port of the Python ACP lane) go through
+// spawnAcpJob in acp.ts: JSON-RPC over the agent's stdio, session persisted for resume.
 // Python's Popen raised OSError synchronously and the loop recorded `failed` (daemon.py:307-309);
 // node reports the same failures asynchronously as an `error` event on the ChildProcess, so
 // spawnJob passes the running list down and spawnRaw marks the entry on error instead of
@@ -13,6 +13,8 @@ import * as path from "node:path";
 import { configPath, dbPath } from "./env.ts";
 import { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
+import type { AcpHandle } from "./acp.ts";
+import { acpPayloadOf, startAcpJob } from "./acp.ts";
 import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, toolClasses, validateConfig } from "./config.ts";
 
 const BACKOFF_MAX = 2.0;
@@ -23,6 +25,14 @@ interface Running {
   jid: number;
   proc: cp.ChildProcess;
   spawnErrored?: boolean;
+}
+
+// An in-flight ACP agent-session job: the spawnAcpJob promise drives the protocol
+// (session/new or session/load, then session/prompt) and settles on completion.
+interface RunningAcp {
+  jid: number;
+  handle: AcpHandle;
+  settled: boolean;
 }
 
 class Parked {
@@ -304,7 +314,14 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
   return toks[0];
 }
 
-function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
+function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[], runningAcp: RunningAcp[]): cp.ChildProcess {
+  if (kind === "acp") {
+    // ACP lane: no tool-class matching, no shell; the agent gets pipes and JSON-RPC.
+    const att = attemptEnv(db, jid);
+    const handle = startAcpJob(db, jid, owner, acpPayloadOf(payload), jobEnv(jid, deadlineEnv(db, jid), att.attempt, att.maxAttempts));
+    runningAcp.push({ jid, handle, settled: false });
+    return handle.proc;
+  }
   const argv0 = argv0Of(kind, payload);
   if (argv0 === null) {
     return spawnRaw(db, jid, owner, kind, payload, running);
@@ -432,6 +449,7 @@ export async function run(): Promise<void> {
     }
   }
   const running: Running[] = [];
+  const runningAcp: RunningAcp[] = [];
   let delay = BACKOFF_MIN;
   let lastHb = 0.0;
   let lastReap = 0.0;
@@ -473,6 +491,18 @@ export async function run(): Promise<void> {
 
     for (const row of q.expiredRunning(db)) {
       const payload = JSON.parse(row.payload) as q.Payload;
+      if (row.kind === "acp") {
+        // Timecap on an ACP job: ask the turn to stop first (best effort), like
+        // daemon.py _acp_cancel, then the shared TERM path runs below.
+        for (let i = 0; i < runningAcp.length; i++) {
+          if (runningAcp[i].jid === row.id) {
+            const sid = runningAcp[i].handle.sessionId;
+            if (sid !== null) {
+              runningAcp[i].handle.client.cancel(sid);
+            }
+          }
+        }
+      }
       q.finalizeTimedOut(db, row.id, "max runtime exceeded");
       // cmd lane: no recorded process to kill in this spike beyond best-effort pgid
       if (row.pgid !== null && row.pgid > 1) {
@@ -486,6 +516,19 @@ export async function run(): Promise<void> {
       }
       void payload;
       busy = true;
+    }
+
+    // ACP completion poll: the protocol promise settles when the turn ends.
+    for (let i = runningAcp.length - 1; i >= 0; i--) {
+      const ra = runningAcp[i];
+      if (ra.handle.settled) {
+        const event = q.finish(db, ra.jid, owner, ra.handle.done && ra.handle.failure === null ? "done" : "failed", ra.handle.failure);
+        if (event !== null) {
+          q.release(db, event);
+        }
+        runningAcp.splice(i, 1);
+        busy = true;
+      }
     }
 
     for (let i = running.length - 1; i >= 0; i--) {
@@ -506,6 +549,13 @@ export async function run(): Promise<void> {
           running.splice(i, 1);
         }
       }
+      for (let i = runningAcp.length - 1; i >= 0; i--) {
+        const ra = runningAcp[i];
+        if (!q.heartbeat(db, ra.jid, owner)) {
+          killGroup(ra.handle.proc);
+          runningAcp.splice(i, 1);
+        }
+      }
       lastHb = now;
     }
 
@@ -518,15 +568,18 @@ export async function run(): Promise<void> {
     // tell an idle dispatcher from a dead one (fresh ts = alive).
     q.daemonHeartbeat(db, process.pid);
 
-    while (running.length < q.machineCap()) {
+    while (running.length + runningAcp.length < q.machineCap()) {
       const got = q.claim(db, owner);
       if (got === null) {
         break;
       }
       busy = true;
       try {
-        const proc = spawnJob(db, got.jid, owner, got.kind, got.payload, running);
-        running.push({ jid: got.jid, proc });
+        const proc = spawnJob(db, got.jid, owner, got.kind, got.payload, running, runningAcp);
+        if (got.kind !== "acp") {
+          // ACP jobs are tracked in runningAcp; their proc exit is not the completion signal.
+          running.push({ jid: got.jid, proc });
+        }
       } catch (e) {
         if (e instanceof Parked) {
           busy = true; // parked at the heavy-spawn boundary, no worker spawned

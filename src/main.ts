@@ -3,6 +3,7 @@
 // mirrors argparse semantics (REMAINDER after `--`), because @cutils/cli owns the
 // subcommand seam only and cannot express positional remainder commands in-subset.
 
+import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
@@ -11,6 +12,7 @@ function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
     "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
     "  --repo KEY          per-repo cap key (default: cwd; an empty value skips the key)\n" +
@@ -75,16 +77,20 @@ interface Opts {
   shell: boolean;
   selfFlag: boolean;
   slots: string[];
+  acp: string | null;
+  prompt: string | null;
+  registry: string | null;
 }
 
 function opts(): Opts {
-  return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, waitOn: null, shell: false, selfFlag: false, slots: [] };
+  return { cwd: null, repo: null, priority: 0, maxAttempts: 3, maxRuntime: null, waitOn: null, shell: false, selfFlag: false, slots: [], acp: null, prompt: null, registry: null };
 }
 
 function isEnqueueOption(name: string): boolean {
   return (
     name === "--cwd" || name === "--repo" || name === "--priority" || name === "--max-attempts" ||
-    name === "--max-runtime" || name === "--wait-on" || name === "--shell" || name === "--slot"
+    name === "--max-runtime" || name === "--wait-on" || name === "--shell" || name === "--slot" ||
+    name === "--acp" || name === "--prompt" || name === "--registry"
   );
 }
 
@@ -191,11 +197,40 @@ async function main(): Promise<void> {
         o.shell = true;
       } else if (name === "--slot") {
         o.slots.push(need());
+      } else if (name === "--acp") {
+        o.acp = need();
+      } else if (name === "--prompt") {
+        o.prompt = need();
+      } else if (name === "--registry") {
+        o.registry = need();
       } else {
         fail("enqueue: unknown option " + t);
       }
     }
     cmd = valuePart;
+    if (o.acp !== null) {
+      // ACP lane: no command remainder; the agent comes from the registry.
+      if (o.cwd === null || o.prompt === null) {
+        fail("enqueue --acp: --cwd and --prompt are required");
+      }
+      if (cmd.length > 0) {
+        fail("enqueue --acp: no command expected");
+      }
+      const payload: q.Payload = { cmd: [], cwd: path.resolve(o.cwd), repo: null, slots: null, session: null };
+      const r = payload as unknown as Record<string, unknown>;
+      r["agent"] = o.acp;
+      r["prompt"] = o.prompt;
+      if (o.registry !== null) {
+        r["registry"] = o.registry;
+      }
+      const cap = maxRuntimeS(o.maxRuntime);
+      const jid = q.enqueue(db, payload, o.priority, o.maxAttempts, null, cap > 0 ? cap : null, "acp");
+      if (o.waitOn !== null) {
+        q.waitOn(db, jid, o.waitOn);
+      }
+      process.stdout.write(String(jid) + "\n");
+      return;
+    }
     if (cmd.length === 0) {
       fail("enqueue: no command given");
     }
