@@ -2,9 +2,10 @@
 """PreToolUse guard: keep agent sessions inside the coordinate queue.
 
 Blocks a shell command that spawns an agent CLI (maki, claude, codex, devin,
-aider, opencode, ...) unless it runs inside a coordinate job, which exports
-COORDINATE_JOB_ID. Queue caps are the device's admission control; spawning
-agents outside the queue bypasses them and is how machines OOM.
+aider, opencode, ...) or starts a T3 thread turn, unless it runs inside a
+coordinate job, which exports COORDINATE_JOB_ID. Queue caps are the device's
+admission control; spawning agents outside the queue bypasses them and is how
+machines OOM.
 
 Wire it as a PreToolUse hook for the shell/exec tool of your agent CLI (same
 contract as ~/.config/devin/hooks/block-deployment-approvals.py):
@@ -19,14 +20,21 @@ off. Interactive user-run sessions are unaffected because hooks only fire on
 agent tool calls.
 
 Reads the hook event JSON on stdin; exits 2 to block, 0 to allow.
+
+Matching is token-based, not text-based: only words in command position count
+(the first word of a simple command, after ; && || | ( , after env VAR=.. and
+other prefixes, and inside sh/bash/zsh -c '<script>'), compared by basename.
+A command that merely mentions `claude -p` in a string, a heredoc body or a
+grep pattern is allowed; `/abs/path/claude -p` and `(claude -p)` are blocked.
 """
 import json
 import os
 import re
+import shlex
 import sys
 
 # Agent CLIs and the subcommands/flags that spawn (or resume) a session.
-SPAWNS = (
+SPAWNS = {
     "maki",
     "claude",
     "codex",
@@ -38,15 +46,150 @@ SPAWNS = (
     "gemini",
     "kiro",
     "continue",
-)
-SPAWN_RE = re.compile(
-    r"(?:^|[;&|]\s*|\s)(?:env\s+\w+=\S+\s+)*"
-    r"(" + "|".join(re.escape(c) for c in SPAWNS) + r")"
-    r"\s+(?:\S+\s+)*?(?:acp|run|exec|task|chat|-p\b|--print\b|--prompt\b|--non-interactive\b)",
-)
+}
+SPAWN_ARGS = {
+    "acp",
+    "run",
+    "exec",
+    "task",
+    "chat",
+    "-p",
+    "--print",
+    "--prompt",
+    "--non-interactive",
+}
+
+# Shell keywords and grouping tokens that end a simple command.
+SEPS = {"then", "do", "else", "elif", "!", "{", "}"}
+
+# Wrapper commands whose next token(s) are the real command.
+PREFIX_CMDS = {
+    "env",
+    "command",
+    "sudo",
+    "nice",
+    "time",
+    "nohup",
+    "exec",
+    "xargs",
+    "timeout",
+}
+
+# Options of the wrapper commands that consume the following token.
+PREFIX_VALUE_OPTS = {
+    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
+    "command": {"-p", "-v", "-V"},
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-r", "-t", "-U"},
+    "nice": {"-n"},
+    "time": {"-f", "-o", "--format", "--output"},
+    "nohup": set(),
+    "exec": set(),
+    "xargs": {
+        "-n",
+        "-P",
+        "-I",
+        "-L",
+        "-s",
+        "-a",
+        "-d",
+        "-E",
+        "--max-args",
+        "--max-procs",
+        "--replace",
+        "--max-lines",
+    },
+    "timeout": {"-s", "-k", "-S", "--signal", "--kill-after"},
+}
+
+SHELLS = {"sh", "bash", "zsh"}
+PUNCT = set(";&|()\n")
+
+VAR_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+DURATION_RE = re.compile(r"^[0-9]+(\.[0-9]+)?[smhd]?$")
+SHELL_C_RE = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 
 
-def main() -> int:
+def strip_heredocs(cmd):
+    """Drop heredoc bodies: everything between `<<WORD` and the terminator."""
+    return re.sub(
+        r"<<-?\s*['\"]?(\w+)['\"]?([^\n]*)\n.*?\n[ \t]*\1[ \t]*(?=\n|$)",
+        r"\2",
+        cmd,
+        flags=re.S,
+    )
+
+
+def commands(cmd, depth=0):
+    """Yield the argv of each simple command in cmd."""
+    cmd = strip_heredocs(cmd)
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()\n")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        lex.commenters = "#"
+        toks = list(lex)
+    except ValueError:
+        return  # unbalanced quotes: let it through rather than guess
+    cur = []
+    for t in toks + [";"]:
+        if t in SEPS or (t and set(t) <= PUNCT):
+            if cur:
+                yield from expand(cur, depth)
+            cur = []
+        else:
+            cur.append(t)
+
+
+def drop_prefixes(argv):
+    """Strip VAR=.. assignments and wrapper commands, return the real argv."""
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if VAR_ASSIGN_RE.match(tok):
+            i += 1
+            continue
+        base = os.path.basename(tok)
+        if base in PREFIX_CMDS:
+            i += 1
+            value_opts = PREFIX_VALUE_OPTS.get(base, set())
+            while i < len(argv) and argv[i].startswith("-") and argv[i] != "-":
+                opt = argv[i]
+                i += 1
+                if opt.split("=", 1)[0] in value_opts and i < len(argv):
+                    i += 1
+            if base == "timeout" and i < len(argv) and DURATION_RE.match(argv[i]):
+                i += 1
+            continue
+        break
+    return argv[i:]
+
+
+def expand(argv, depth):
+    argv = drop_prefixes(argv)
+    if not argv:
+        return
+    name = os.path.basename(argv[0])
+    if name in SHELLS:
+        for idx, tok in enumerate(argv[1:], start=1):
+            if tok == "-c" or SHELL_C_RE.match(tok):
+                if idx + 1 < len(argv) and depth < 3:
+                    yield from commands(argv[idx + 1], depth + 1)
+                    return
+                break
+    yield argv
+
+
+def offending(cmd):
+    for argv in commands(cmd):
+        name = os.path.basename(argv[0])
+        if name in SPAWNS and any(a in SPAWN_ARGS for a in argv[1:]):
+            return " ".join(argv[:2])
+        if name == "t3" and len(argv) > 2 and argv[1] == "thread" and argv[2] in ("start", "send"):
+            return "t3 thread " + argv[2]
+    return None
+
+
+def main():
     mode = os.environ.get("COORDINATE_GUARD", "block")
     if mode == "off":
         return 0
@@ -62,14 +205,15 @@ def main() -> int:
     command = ""
     if isinstance(tool_input, dict):
         command = str(tool_input.get("command") or "")
-    if not command or not SPAWN_RE.search(command):
+    hit = offending(command) if command else None
+    if not hit:
         return 0
 
     msg = (
-        "coordinate-guard: spawning an agent session outside the queue. "
-        "Enqueue it instead: coordinate enqueue sh -c '<cmd>' "
-        "(see the coordinate skill / rules/delegation.md). "
-        "Set COORDINATE_GUARD=off to disable this guard."
+        "coordinate-guard: `%s` starts an agent session outside the queue. "
+        "Use `t3q new <project> <msg>` or `t3q send <thread> <msg>` (queued T3 threads), "
+        "or `coordinate enqueue -- <cmd>` for other headless work. "
+        "Queue caps are this machine's overload control." % hit
     )
     sys.stderr.write(("WARN " if mode == "warn" else "BLOCKED: ") + msg + "\n")
     return 0 if mode == "warn" else 2
