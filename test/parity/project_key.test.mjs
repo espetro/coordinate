@@ -41,9 +41,15 @@ async function projectKeyFor(cwd, extra = {}) {
       encoding: "utf8",
     });
     assert.equal(p.status, 0, p.stderr);
-    startDaemon(r, extra);
+    const d = startDaemon(r, extra);
     const ok = await waitFor(() => rows(r, "SELECT COUNT(*) AS n FROM spawn_audit")[0]?.n > 0, 15000);
-    assert.ok(ok, "the heavy-tool spawn was never audited");
+    // On a timeout the daemon's own stderr is the only evidence, and it lives in
+    // a temp file the runner never prints. Include it in the failure message.
+    assert.ok(
+      ok,
+      "the heavy-tool spawn was never audited" +
+        (d.exited ? " (daemon exited: " + fs.readFileSync(d.logPath, "utf8").trim() + ")" : " (daemon still running)"),
+    );
     return rows(r, "SELECT project FROM spawn_audit")[0].project;
   } finally {
     await cleanup(r);
