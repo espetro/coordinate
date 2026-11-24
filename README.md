@@ -13,10 +13,13 @@
 curl -fsSL https://raw.githubusercontent.com/espetro/coordinate/main/install.sh | sh
 
 coordinate daemon &
+coordinate service install    # systemd user unit / launchd agent instead of a shell &
 coordinate enqueue --shell -- 'pnpm test && pnpm build'
 coordinate status
 coordinate events --follow
 ```
+
+`coordinate service install` sets up the daemon as a user-level service (systemd user unit on Linux, launchd agent on macOS; Windows is not supported yet), so it starts on login and survives PATH changes. `service status` and `service uninstall` manage it. See the [command reference](docs/cli.md).
 
 ## Why
 

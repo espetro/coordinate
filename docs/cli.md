@@ -11,6 +11,9 @@ coordinate <verb> [args]
 | Verb | What it does |
 | --- | --- |
 | `daemon` | Runs the claim loop on this machine |
+| `service install [--force]` | Installs a user-level service that runs `coordinate daemon` on login/boot. Linux: systemd user unit at `~/.config/systemd/user/coordinate.service`, enabled with `systemctl --user enable --now`. macOS: launchd plist at `~/Library/LaunchAgents/sh.coordinate.daemon.plist`, loaded with `launchctl bootstrap gui/$UID`. Windows is not supported yet; run `coordinate daemon` manually or from a scheduled task. The unit embeds the absolute path of the running binary plus the resolved `COORDINATE_DB` (if set), `COORDINATE_MACHINE`, `COORDINATE_CAP` and `PATH`, so the service survives PATH changes. Install is idempotent: re-running with an identical unit is a no-op, and an existing but differing unit requires `--force` to overwrite |
+| `service uninstall` | Stops and removes the installed service unit |
+| `service status` | Reports installed, enabled and running state by asking the system manager (`systemctl --user is-enabled`/`is-active`, or `launchctl print`), never pgrep |
 | `doctor` | Prints a health report (version, DB, config, daemon liveness, queue stats); exits non-zero on failed checks |
 | `enqueue [options] -- <command...>` | Adds a job and prints its id |
 | `status [id]` | Lists jobs, or shows one |
