@@ -37,6 +37,8 @@ coordinate forward --exec '<cmd>' [--kinds k1,k2] [--interval S] [--once]
 coordinate wait-on JOB_ID EVENT / release EVENT
 coordinate cancel JOB_ID
 coordinate dead retry [JOB_ID]
+coordinate cap show                # {"machine_cap":N,"repo_cap":N,"running":N}
+coordinate cap set --machine-cap N [--repo-cap N] [--force]
 coordinate daemon               # claim loop; run under tmux/service, one per machine
 ```
 
@@ -44,6 +46,7 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 - Higher `--priority` claims first, then the older job. Without aging a high-priority backlog can starve low priorities; `config.toml` `[scheduler] aging = "linear"` (off by default) boosts waiting jobs up to `aging_ceiling`. `--run-at 15m` or `--run-at 2026-11-23T18:00:00Z` holds a job until that time (it does not raise its priority). `--repo` serializes jobs touching the same repo; an empty `--repo ""` skips the repo key, and the default key is the working directory.
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
 - Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.
+- The concurrency caps are runtime-adjustable: `coordinate cap set --machine-cap N` writes the value into the queue DB and the daemon re-reads it on every claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count.
 
 ## Watching dispatched jobs
 

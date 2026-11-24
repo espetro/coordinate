@@ -20,7 +20,9 @@ A job is one row in SQLite. It moves through these states.
 
 ## Caps
 
-A daemon never runs more than `COORDINATE_CAP` jobs at once, and never more than `COORDINATE_REPO_CAP` jobs for the same repo key. Jobs beyond the cap wait in the queue, and nothing is dropped. Among queued jobs, a higher `--priority` goes first, then the older job.
+ A daemon never runs more than `COORDINATE_CAP` jobs at once, and never more than `COORDINATE_REPO_CAP` jobs for the same repo key. Jobs beyond the cap wait in the queue, and nothing is dropped. Among queued jobs, a higher `--priority` goes first, then the older job.
+
+The caps are runtime-adjustable with `coordinate cap set --machine-cap N --repo-cap N`: the values are stored in the queue DB and re-read at claim time, so raising the cap starts queued jobs without a daemon restart, and lowering it never interrupts running jobs; claims pause until the count drains (verified in `test/cap.test.mjs`) (M).
 
 ## Ordering
 
