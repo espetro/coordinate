@@ -4,7 +4,7 @@ Date: 2026-11-24. Branch `feat/effect-seams`, effect 4.1.5, scriptc 0.4.16. Comp
 
 ## Result
 
-Three seams migrated (daemon, acp, forwarder), zero scriptc build blockers, all 114 tests pass, and the binary runs the full loop (enqueue -> daemon claims -> job runs -> done) compiled statically with Effect in the program.
+Three seams migrated (daemon, acp, forwarder), zero scriptc build blockers, all 119 tests pass (69 in `test/`, 50 in `test/parity/`), and the binary runs the full loop (enqueue -> daemon claims -> job runs -> done) compiled statically with Effect in the program.
 
 ## The two scriptc blockers and the patch
 
@@ -13,7 +13,7 @@ Effect 4.1.5 did not build under scriptc out of the box. Both blockers are solve
 1. ICU. `effect/Effect` statically imports `internal/schedule.js`, which imports `Schedule.js`, which imports `Cron.js`, whose internal `dateTime.js` constructs `new Intl.DateTimeFormat`. The macos-arm64 scriptc runtime pack ships no ICU objects (only linux-x64-gnu does), so any program that imports `effect/Effect` failed with SC3002 on macOS. Scriptc tree-shakes at function granularity, and `Schedule.cron` was the only Intl-reachable call, so the patch deletes the unused `Cron` import and turns `Schedule.cron` into a throw. coordinate does not use cron schedules. An upstream note for scriptc (ship ICU in the darwin packs, or gate the feature) or for Effect (lazy-import Cron) would remove the need for this.
 2. AsyncResource. Effect's fiber runtime captures an async context per yield: `process.getBuiltinModule("node:async_hooks").AsyncResource`, then `new AsyncResource(...)` around each fiber evaluation. Scriptc's builtin-module loader answers a value for `node:async_hooks`, but the `AsyncResource` it hands back is not constructible, so every fiber that yielded crashed with "constructor is not a constructor". The patch probes the constructor once at module load and skips the capture when it does not work. The capture is an optional async_hooks integration (vitest's leak detector), not load-bearing.
 
-With both patched, `Effect.gen`, `sleep`, `Deferred`, `Effect.callback`, `Effect.scoped`, `acquireRelease`, `race`, `forkChild`, `Schedule.spaced` and `retry` run correctly in a static binary.
+With both patched, `Effect.gen`, `sleep`, `Deferred`, `Effect.callback`, `Effect.scoped`, `acquireRelease`, `race`, `forkChild`, `Schedule.spaced` and `retry` run correctly in a static binary (the last three verified in a probe binary, not used in the shipped seams).
 
 ## Coverage numbers (M)
 
@@ -24,6 +24,7 @@ With both patched, `Effect.gen`, `sleep`, `Deferred`, `Effect.callback`, `Effect
 | Baseline, before any migration | 2350 | 2348 (99%) | 2 SC1090 (`delete obj[numberKey]` in src/acp.ts) |
 | After daemon migration | 7828 | 7815 (99%) | 2 SC1090 (same) |
 | After acp + forwarder migration | 7852 | 7841 (99%) | 0 |
+| Final, after the acp EPIPE fix and the new seam tests | 7856 | 7845 (99%) | 0 |
 
 The two SC1090 blockers were pre-existing on this tree (the ACP lane landed before this job), not introduced by Effect; they fell out of the acp seam's migration because the pending map became a `Map` (`Map.delete` compiles, `delete obj[numberKey]` does not). Statement count grows because Effect's compiled modules enter the graph.
 
