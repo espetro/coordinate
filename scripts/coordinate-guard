@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""PreToolUse guard: keep agent sessions inside the coordinate queue.
+
+Blocks a shell command that spawns an agent CLI (maki, claude, codex, devin,
+aider, opencode, ...) unless it runs inside a coordinate job, which exports
+COORDINATE_JOB_ID. Queue caps are the device's admission control; spawning
+agents outside the queue bypasses them and is how machines OOM.
+
+Wire it as a PreToolUse hook for the shell/exec tool of your agent CLI (same
+contract as ~/.config/devin/hooks/block-deployment-approvals.py):
+
+  Claude Code (~/.claude/settings.json):
+    "hooks": {"PreToolUse": [{"matcher": "Bash",
+      "hooks": [{"type": "command",
+        "command": "~/.config/claude/hooks/coordinate-guard"}]}]}
+
+Modes via COORDINATE_GUARD env: block (default), warn (allow + stderr note),
+off. Interactive user-run sessions are unaffected because hooks only fire on
+agent tool calls.
+
+Reads the hook event JSON on stdin; exits 2 to block, 0 to allow.
+"""
+import json
+import os
+import re
+import sys
+
+# Agent CLIs and the subcommands/flags that spawn (or resume) a session.
+SPAWNS = (
+    "maki",
+    "claude",
+    "codex",
+    "devin",
+    "aider",
+    "opencode",
+    "cursor-agent",
+    "amp",
+    "gemini",
+    "kiro",
+    "continue",
+)
+SPAWN_RE = re.compile(
+    r"(?:^|[;&|]\s*|\s)(?:env\s+\w+=\S+\s+)*"
+    r"(" + "|".join(re.escape(c) for c in SPAWNS) + r")"
+    r"\s+(?:\S+\s+)*?(?:acp|run|exec|task|chat|-p\b|--print\b|--prompt\b|--non-interactive\b)",
+)
+
+
+def main() -> int:
+    mode = os.environ.get("COORDINATE_GUARD", "block")
+    if mode == "off":
+        return 0
+    if os.environ.get("COORDINATE_JOB_ID") or os.environ.get("FLEET_JOB_ID"):
+        return 0  # already inside a queue job
+
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        return 0
+
+    tool_input = data.get("tool_input")
+    command = ""
+    if isinstance(tool_input, dict):
+        command = str(tool_input.get("command") or "")
+    if not command or not SPAWN_RE.search(command):
+        return 0
+
+    msg = (
+        "coordinate-guard: spawning an agent session outside the queue. "
+        "Enqueue it instead: coordinate enqueue sh -c '<cmd>' "
+        "(see the coordinate skill / rules/delegation.md). "
+        "Set COORDINATE_GUARD=off to disable this guard."
+    )
+    sys.stderr.write(("WARN " if mode == "warn" else "BLOCKED: ") + msg + "\n")
+    return 0 if mode == "warn" else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
