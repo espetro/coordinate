@@ -209,3 +209,99 @@ test("events: enqueue/claim/finish emit transitions", async () => {
   const all = db.prepareRaw("SELECT kind FROM events ORDER BY id").all([]);
   assert.equal(all[all.length - 1].kind, "cancelled");
 });
+
+// ---- priority aging ([scheduler] aging) --------------------------------------------------
+
+async function agingDb(config) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-aging-test-"));
+  process.env["COORDINATE_LEASE_S"] = "30";
+  process.env["COORDINATE_DB"] = path.join(dir, "queue.db");
+  process.env["COORDINATE_MACHINE"] = "aging";
+  process.env["COORDINATE_CAP"] = "3";
+  process.env["COORDINATE_REPO_CAP"] = "1";
+  process.env["XDG_CONFIG_HOME"] = path.join(dir, "cfg");
+  fs.mkdirSync(path.join(dir, "cfg", "coordinate"), { recursive: true });
+  process.env["COORDINATE_CONFIG"] = path.join(dir, "cfg", "coordinate", "config.toml");
+  fs.writeFileSync(path.join(dir, "cfg", "coordinate", "config.toml"), config);
+  // config.ts caches nothing, but each import must be a fresh module graph
+  return await import("../src/queue.ts?aging" + (counter += 1));
+}
+
+test("aging off: claim order is byte-identical priority DESC (default config)", async () => {
+  const q = await agingDb("");
+  const db = q.connect();
+  const a = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const b = q.enqueue(db, { cmd: ["true"], cwd: null }, 9);
+  assert.equal(q.claim(db, "o").jid, b, "higher priority still wins with aging off");
+  assert.equal(q.claim(db, "o").jid, a);
+});
+
+test("aging linear: an aged priority-0 job claims before a fresh priority-9", async () => {
+  // period 30m and ceiling 12: 6h of age floors to 12 boosts, 12 > 9, so low wins
+  const q = await agingDb('[scheduler]\naging = "linear"\naging_period = "30m"\naging_ceiling = 12\n');
+  const db = q.connect();
+  const low = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const high = q.enqueue(db, { cmd: ["true"], cwd: null }, 9);
+  db.prepareRaw("UPDATE jobs SET created_at = created_at - ? WHERE id=?").run([6 * 3600, low]);
+  assert.equal(q.claim(db, "o").jid, low, "boost min(12, 12) = 12 must beat priority 9");
+  assert.equal(q.claim(db, "o").jid, high);
+});
+
+test("aging linear: ceiling respected", async () => {
+  const q = await agingDb('[scheduler]\naging = "linear"\naging_period = "1h"\naging_ceiling = 3\n');
+  const db = q.connect();
+  const low = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const high = q.enqueue(db, { cmd: ["true"], cwd: null }, 4);
+  db.prepareRaw("UPDATE jobs SET created_at = created_at - ? WHERE id=?").run([100 * 3600, low]);
+  assert.equal(q.claim(db, "o").jid, high, "boost capped at ceiling 3 must not beat priority 4");
+  assert.equal(q.claim(db, "o").jid, low);
+});
+
+test("aging linear: period respected (less than one period = no boost)", async () => {
+  const q = await agingDb('[scheduler]\naging = "linear"\naging_period = "1h"\naging_ceiling = 5\n');
+  const db = q.connect();
+  const low = q.enqueue(db, { cmd: ["true"], cwd: null }, 0);
+  const high = q.enqueue(db, { cmd: ["true"], cwd: null }, 1);
+  db.prepareRaw("UPDATE jobs SET created_at = created_at - ? WHERE id=?").run([1800, low]);
+  assert.equal(q.claim(db, "o").jid, high, "half a period floors to boost 0");
+});
+
+test("[scheduler] invalid aging value rejected at enqueue", async () => {
+  const { ConfigError } = await import("../src/config.ts");
+  const q = await agingDb('[scheduler]\naging = "crazy"\n');
+  const db = q.connect();
+  let verr = null;
+  try {
+    q.cfgValidate();
+  } catch (e) {
+    verr = e;
+  }
+  assert.ok(verr instanceof ConfigError, "invalid aging must throw ConfigError");
+  assert.match(String(verr), /:\d+.*scheduler\.aging/);
+});
+
+test("[scheduler] malformed aging_period rejected with file:line", async () => {
+  const { ConfigError } = await import("../src/config.ts");
+  const q = await agingDb('[scheduler]\naging = "linear"\naging_period = "xs"\n');
+  let verr = null;
+  try {
+    q.cfgValidate();
+  } catch (e) {
+    verr = e;
+  }
+  assert.ok(verr instanceof ConfigError, "bad duration must throw ConfigError");
+  assert.match(String(verr), /:\d+.*scheduler\.aging_period/);
+});
+
+test("[scheduler] negative aging_ceiling rejected with file:line", async () => {
+  const { ConfigError } = await import("../src/config.ts");
+  const q = await agingDb('[scheduler]\naging_ceiling = -1\n');
+  let verr = null;
+  try {
+    q.cfgValidate();
+  } catch (e) {
+    verr = e;
+  }
+  assert.ok(verr instanceof ConfigError, "negative ceiling must throw ConfigError");
+  assert.match(String(verr), /:\d+.*scheduler\.aging_ceiling/);
+});

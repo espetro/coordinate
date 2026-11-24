@@ -100,3 +100,24 @@ Example — failure alerter with dedup (what `forward` cannot do): keep a small 
 ## What does not exist
 
 The old Python plugin runner (manifest + `~/.config/coordinate/plugins/`, `frontend`/`resume`/`hook` interfaces) was retired before the TypeScript port. `forward --exec` and `events --follow` cover its use cases; the design rationale is in `.agents/docs/archive/extensibility.md`. If a real second consumer appears (e.g. non-ACP resume providers), revisit then — do not rebuild the loader speculatively.
+
+## External scheduler policies
+
+The claim order inside the daemon is `priority DESC, run_at, id` and the built-in knob for starvation is `[scheduler] aging` in `config.toml` (off by default; a linear boost for waiting jobs up to `aging_ceiling`). Policies that aging cannot express (deadline-aware, cost-aware, fair-share per agent) are still possible without touching the daemon: run a shape-2 consumer that rewrites priorities, because the claim query picks up priority changes from the jobs table on its next tick.
+
+This is the only supported way to influence ordering from outside. The binary is static and cannot load user JS in-process, so there is no claim-time hook, and the design is deliberate: a policy bug then costs a wrong row update, not a crashed scheduler.
+
+```
+coordinate events --follow | while read -r ev; do
+  # every few minutes: find starved jobs and rewrite them
+  sqlite3 "$COORDINATE_DB" "UPDATE jobs SET priority = 9
+    WHERE status='queued' AND priority = 0
+      AND created_at < (strftime('%s','now') - 3600)"
+done
+```
+
+Properties worth knowing:
+
+- Rewrites are idempotent, so a crashed consumer resumes safely; the worst case is a stale order for one tick.
+- Keep the policy out of the hot path: read `status`/`stats` for state, write only the `priority` column, and batch updates. The daemon reads the row it already claimed regardless of what you write mid-claim.
+- Start with `[scheduler] aging` before writing a consumer; it covers the common "low priorities starve" case with zero moving parts. Graduate to an external policy when you need a formula aging cannot express.

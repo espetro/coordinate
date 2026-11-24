@@ -24,7 +24,7 @@ A daemon never runs more than `COORDINATE_CAP` jobs at once, and never more than
 
 ## Ordering
 
-The daemon claims jobs in `priority DESC, run_at, id` order. Within one priority class, jobs run FIFO in submission order. `--run-at` holds a job back until its time; it does not raise the job ahead of others once it is due. There is no priority aging: a priority-9 job submitted later still claims before a priority-0 job that has waited for hours, so a busy queue can starve low priorities. A job whose repo key or tool slot is at cap is skipped, not blocking: the daemon moves on to the next eligible job in priority order.
+The daemon claims jobs in `priority DESC, run_at, id` order. Within one priority class, jobs run FIFO in submission order. `--run-at` holds a job back until its time; it does not raise the job ahead of others once it is due. By default a priority-9 job submitted later still claims before a priority-0 job that has waited for hours, so a busy queue can starve low priorities; `[scheduler] aging = "linear"` in `config.toml` (off by default) boosts the priority of waiting jobs by up to `aging_ceiling`, one step per `aging_period` of age. A job whose repo key or tool slot is at cap is skipped, not blocking: the daemon moves on to the next eligible job in priority order.
 
 ## Park and wake
 

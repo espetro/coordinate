@@ -600,7 +600,10 @@ export async function run(): Promise<void> {
     // tell an idle dispatcher from a dead one (fresh ts = alive).
     q.daemonHeartbeat(db, process.pid);
 
-    while (running.length + runningAcp.length < q.machineCap()) {
+    // The cap is read per turn, so `coordinate cap set` raises or lowers it
+    // without a daemon restart. Lowering never interrupts the jobs already
+    // running: the loop simply stops claiming until the count drains.
+    while (running.length + runningAcp.length < q.machineCap(db)) {
       const got = q.claim(db, owner);
       if (got === null) {
         break;
