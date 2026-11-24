@@ -454,6 +454,7 @@ export async function run(): Promise<void> {
   let lastHb = 0.0;
   let lastReap = 0.0;
   let stopping = false;
+  let sleepTimer: ReturnType<typeof setTimeout> | null = null;
   // Stop contract (ARCHITECTURE.md, durability): agents keep working when the orchestrator
   // stops. SIGTERM/SIGINT stop the claim loop and exit cleanly; running children are detached
   // (handles unref'd) and left alive. The next daemon start reaps their expired leases (X3).
@@ -462,6 +463,10 @@ export async function run(): Promise<void> {
       return;
     }
     stopping = true;
+    if (sleepTimer !== null) {
+      clearTimeout(sleepTimer);
+      sleepTimer = null;
+    }
     for (const r of running) {
       r.proc.unref();
       // Detached children keep their own process group; no kill: the job outlives the daemon.
@@ -590,21 +595,18 @@ export async function run(): Promise<void> {
     }
 
     delay = busy ? BACKOFF_MIN : Math.min(delay * 2, BACKOFF_MAX);
-    // Atomics.wait does not run signal/timer callbacks while blocked (signals are
-    // delivered only between macrotasks), so the idle sleep must go through the event loop.
-    const target = delay;
-    setTimeout(() => {}, target * 1000);
-    const sleepStart = Date.now();
-    const pump = (): void => {
-      if (stopping || Date.now() - sleepStart >= target * 1000) {
-        if (!stopping) {
-          setImmediate(loop);
-        }
-        return;
+    // Idle sleep via a real timer: setImmediate pumping spins one core at ~100%
+    // (issue #5). setTimeout parks the thread in the kernel and still delivers
+    // signals between macrotasks, so the stop contract (SIGTERM/SIGINT) holds.
+    const t = setTimeout(() => {
+      sleepTimer = null;
+      if (!stopping) {
+        loop();
       }
-      setImmediate(pump);
-    };
-    pump();
+    }, delay * 1000);
+    // The timer stays referenced: it is the daemon's only reason to stay alive
+    // while idle, so unref'ing it would let the process exit.
+    sleepTimer = t;
   };
   loop();
 }
