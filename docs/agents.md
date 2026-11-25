@@ -15,7 +15,7 @@ The daemon sets these variables for every job it starts.
 | Variable | Value |
 | --- | --- |
 | `COORDINATE_JOB_ID` | The id of this job |
-| `COORDINATE_MACHINE` | The machine name |
+| `COORDINATE_MACHINE` | The machine name. The daemon records it in the queue DB on claim, and the forwarder resolves the same value, so the daemon, `cap show` and the forwarder prefixes always agree |
 | `COORDINATE_DB` | The database file |
 | `COORDINATE_DEADLINE_AT` | Epoch-second deadline of this attempt, empty when uncapped |
 | `COORDINATE_ATTEMPT` | 1-based attempt number of this run |

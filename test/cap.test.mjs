@@ -81,3 +81,14 @@ test("a stored cap that is not a positive integer is ignored", async () => {
   assert.equal(q.machineCap(db), 3);
   q.setCap(db, q.SETTING_MACHINE_CAP, null);
 });
+
+test("claimDaemon records the machine name so cap show reports the daemon's identity", async () => {
+  const q = await freshDb();
+  const db = q.connect();
+  // Before any daemon claims the queue, no machine is recorded.
+  assert.equal(q.recordedMachine(db), null);
+  const conflict = { v: null };
+  assert.equal(q.claimDaemon(db, 4242, conflict), true);
+  // After the claim, the daemon's machine name is in the queue DB.
+  assert.equal(q.recordedMachine(db), "capbench");
+});

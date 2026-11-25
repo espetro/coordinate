@@ -387,7 +387,32 @@ export function claimDaemon(db: Database, pid: number, conflictPid: { v: number 
     return false;
   }
   daemonHeartbeat(db, pid);
+  recordMachine(db);
   return true;
+}
+
+// The daemon's machine name, recorded in the settings table on every claim so
+// that `cap show` (and anything else that reads the queue from another
+// process) reports the daemon's identity rather than the CLI process's env,
+// which may not carry COORDINATE_MACHINE at all.
+export const SETTING_MACHINE = "machine";
+
+function recordMachine(db: Database): void {
+  setSetting(db, SETTING_MACHINE, MACHINE);
+}
+
+// The generic settings writer behind setCap; kept separate so setCap's
+// number-typed API stays honest.
+function setSetting(db: Database, key: string, value: string): void {
+  qRun(db, "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [
+    key,
+    value,
+  ]);
+}
+
+export function recordedMachine(db: Database): string | null {
+  const row = qOne(db, "SELECT value FROM settings WHERE key=?", [SETTING_MACHINE]) as { value: string } | null;
+  return row === null ? null : row.value;
 }
 
 export function slotKeys(payload: Payload): string[] {

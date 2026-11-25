@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { env } from "./env.ts";
 import * as q from "./queue.ts";
 // Effect v4 for the follow loop: gen + sleep as the polling driver, replacing
 // the hand-rolled `await new Promise(setTimeout)` chain. Deep function-style
@@ -102,7 +101,12 @@ export interface ForwardOpts {
 }
 
 export async function forward(o: ForwardOpts): Promise<void> {
-  const machine = o.machine || process.env.MACHINE || os.hostname().split(".")[0];
+  // The queue's own machine name, so the forwarder and the daemon can never
+  // disagree: the daemon labels every event with queue.ts MACHINE (the
+  // COORDINATE_/FLEET_ env pair, "laptop" by default), and the forwarder
+  // labels its messages with the same value. A bare MACHINE env is not
+  // consulted: the daemon does not read it either.
+  const machine = o.machine || q.MACHINE;
   const kinds = new Set((o.kinds ?? DEFAULT_KINDS).split(",").map((k) => k.trim()).filter(Boolean));
   const cursorPath = o.cursor || defaultCursorPath();
   let cur = o.since !== null && o.since !== undefined ? o.since : loadCursor(cursorPath);

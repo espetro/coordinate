@@ -32,7 +32,9 @@ macOS `sandbox-exec` seatbelt profiles or Linux cgroups can bound a spawned agen
 
 | Device | Daemon | Cap | Guard |
 |---|---|---|---|
-| kinosmac | tmux `coordinate` | 3 (laptop default) | warn mode, devin hooks |
-| ovhcloud VPS | nohup, `COORDINATE_MACHINE=vps` | 6 | not installed |
+| kinosmac | tmux `coordinate` | 10 (stored in the queue DB) | warn mode, devin hooks |
+| ovhcloud VPS | systemd user unit `coordinate.service`, `COORDINATE_MACHINE=vps` | 8 (stored in the queue DB) | not installed |
+
+The daemon records its machine name in the queue DB on claim, so `cap show` reports the daemon's identity even when the CLI process has no `COORDINATE_MACHINE` in its env (the common case over ssh). The forwarder resolves the same name from `queue.ts` `MACHINE`, so the daemon's events and the forwarder's message prefixes always agree.
 
 False-positive log: check the hook's stderr in the agent's tool-output stream during the warn soak.

@@ -4,7 +4,7 @@ import * as assert from "node:assert";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import "koffi";
 import "@cutils/sqlite/node-binding";
 
@@ -65,7 +65,7 @@ test("CLI forward: filtering, {message} substitution, cursor resume", async () =
     ...process.env,
     XDG_STATE_HOME: d,
     COORDINATE_DB: dbPath,
-    MACHINE: "testbox",
+    COORDINATE_MACHINE: "testbox",
   };
   const run = (args) => execFileSync(process.execPath, [exe, ...args], { env, encoding: "utf8" });
 
@@ -87,6 +87,27 @@ test("CLI forward: filtering, {message} substitution, cursor resume", async () =
   assert.ok(lines2[lines2.length-1].startsWith("[testbox] coordinate[failed] job null \u2014 boom"), lines2.join("|"));
   assert.ok(!lines2[1].includes("{message}"));
   assert.equal(f.loadCursor(cursor), 4);
+});
+
+test("X15: the forwarder resolves the machine name from COORDINATE_MACHINE, like the daemon", async () => {
+  const d = tmpdir();
+  const dbPath = path.join(d, "queue.db");
+  const log = path.join(d, "fwd.log");
+  const cursor = path.join(d, "cursor");
+  const exe = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "bin", "coordinate.mjs");
+  // The daemon reads COORDINATE_MACHINE (queue.ts MACHINE). The forwarder used
+  // to read bare MACHINE, so the two disagreed whenever only the prefixed
+  // variable was set.
+  const env = {
+    ...process.env,
+    XDG_STATE_HOME: d,
+    COORDINATE_DB: dbPath,
+    COORDINATE_MACHINE: "vps",
+  };
+  delete env.MACHINE;
+  delete env.FLEET_MACHINE;
+  const r = spawnSync(process.execPath, [exe, "forward", "--exec", `echo "{message}" >> ${JSON.stringify(log)}`, "--once", "--since", "0", "--kinds", "done", "--cursor", cursor], { env, encoding: "utf8" });
+  assert.ok(r.stderr.includes("forwarding machine=vps"), r.stderr);
 });
 
 test("X14: a failed send does not advance the in-memory cursor; the event is retried", async () => {
