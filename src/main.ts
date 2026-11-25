@@ -412,7 +412,11 @@ async function main(): Promise<void> {
           machine_cap: q.machineCap(db),
           repo_cap: q.repoCap(db),
           running: running,
-          machine: q.MACHINE,
+          // The daemon records its machine name in the queue DB on claim, so
+          // this reports the daemon's identity even when this CLI process has
+          // no COORDINATE_MACHINE in its env (e.g. over ssh). The CLI's own
+          // name is only a fallback for a queue no daemon has claimed yet.
+          machine: q.recordedMachine(db) ?? q.MACHINE,
         }) + "\n",
       );
     } else if (action === "set") {
@@ -465,7 +469,11 @@ async function main(): Promise<void> {
           machine_cap: q.machineCap(db),
           repo_cap: q.repoCap(db),
           running: running,
-          machine: q.MACHINE,
+          // The daemon records its machine name in the queue DB on claim, so
+          // this reports the daemon's identity even when this CLI process has
+          // no COORDINATE_MACHINE in its env (e.g. over ssh). The CLI's own
+          // name is only a fallback for a queue no daemon has claimed yet.
+          machine: q.recordedMachine(db) ?? q.MACHINE,
         }) + "\n",
       );
     } else {
