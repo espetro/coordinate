@@ -1,0 +1,45 @@
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -568,6 +568,14 @@ export class Database {
+     }
+     get path() {
+         return this._path;
++    }
++    // Test/observability accessor: how many prepared statements this
++    // connection is still tracking. Production code should keep this at or
++    // near zero by finalizing statements (the queue.ts helpers do); a number
++    // that grows without bound on a long-lived connection is a leak and makes
++    // close() quadratic.
++    get trackedStatementCount() {
++        return trackOf(this).stmts.length;
+     }
+     get memory() {
+         return this._memory;
+@@ -739,7 +747,14 @@ export class Database {
+         if (this._closed) {
+             return;
+         }
+-        const stmts = trackOf(this).stmts;
++        const track = trackOf(this);
++        const stmts = track.stmts;
++        // Detach the list before finalizing. finalize() calls _untrack(),
++        // which searches this same array for the statement; searching a list
++        // that still holds every statement made the whole close quadratic
++        // (160k statements took 55s). Emptying it first makes each search
++        // trivial, so the close is linear.
++        track.stmts = [];
+         for (let i = stmts.length - 1; i >= 0; i--) {
+             stmts[i].finalize();
+         }
+diff --git a/dist/esm/index.d.ts b/dist/esm/index.d.ts
+--- a/dist/esm/index.d.ts
++++ b/dist/esm/index.d.ts
+@@ -98,6 +98,7 @@ export declare class Database {
+     static open(path: string, opts?: OpenOpts): Database;
+     static openInMemory(): Database;
+     get path(): string;
++    get trackedStatementCount(): number;
+     get memory(): boolean;
+     get readonly(): boolean;
+     get inTransaction(): boolean;
