@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
-import type { BindValue } from "@cutils/sqlite";
+import type { BindValue, RunResult } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
 import * as cfg from "./config.ts";
 export const cfgValidate = cfg.validateConfig;
@@ -22,7 +22,7 @@ export const SETTING_MACHINE_CAP = "machine_cap";
 export const SETTING_REPO_CAP = "repo_cap";
 
 function storedCap(db: Database, key: string): number | null {
-  const row = db.prepareRaw("SELECT value FROM settings WHERE key=?").getOrNull([key]) as { value: string } | null;
+  const row = qOne(db, "SELECT value FROM settings WHERE key=?", [key]) as { value: string } | null;
   if (row === null) {
     return null;
   }
@@ -35,10 +35,10 @@ function storedCap(db: Database, key: string): number | null {
 
 export function setCap(db: Database, key: string, value: number | null): void {
   if (value === null) {
-    db.prepareRaw("DELETE FROM settings WHERE key=?").run([key]);
+    qRun(db, "DELETE FROM settings WHERE key=?", [key]);
     return;
   }
-  db.prepareRaw("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run([
+  qRun(db, "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [
     key,
     String(value),
   ]);
@@ -139,8 +139,34 @@ export const SCHEMA = [
 )`,
 ];
 
+// Statement lifecycle: every prepareRaw is tracked for the life of the
+// connection, and Database.close() finalizes the tracked list through
+// _untrack, which used to be a linear scan (quadratic close, measured at
+// 29 s SIGTERM-to-exit on a churned daemon). The hot paths go through the
+// helpers below, which finalize via `using` as the scope exits, so the
+// tracked list stays near-empty and both the leak and the slow shutdown
+// disappear.
+
+// Run a statement that returns rows, finalizing it on the way out.
+export function qAll(db: Database, sql: string, binds: BindValue[]): unknown[] {
+  using st = db.prepareRaw(sql);
+  return st.all(binds);
+}
+
+// Run a statement returning at most one row, finalizing it on the way out.
+export function qOne(db: Database, sql: string, binds: BindValue[]): unknown | null {
+  using st = db.prepareRaw(sql);
+  return st.getOrNull(binds);
+}
+
+// Run a mutating statement, finalizing it on the way out.
+export function qRun(db: Database, sql: string, binds: BindValue[]): RunResult {
+  using st = db.prepareRaw(sql);
+  return st.run(binds);
+}
+
 export function emit(db: Database, jid: number | null, kind: string, data: Record<string, unknown> = {}): void {
-  db.prepareRaw("INSERT INTO events(ts,job_id,kind,data) VALUES(?,?,?,?)").run([
+  qRun(db, "INSERT INTO events(ts,job_id,kind,data) VALUES(?,?,?,?)", [
     Date.now() / 1000,
     jid,
     kind,
@@ -182,14 +208,14 @@ interface KeyRow {
 }
 
 function migrateJobs(db: Database): void {
-  const row = db.prepareRaw("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'").get([]) as
+  const row = qOne(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'", []) as
     | { sql: string }
-    | undefined;
-  if (row === undefined || row.sql.indexOf("timed_out") !== -1) {
+    | null;
+  if (row === null || row.sql.indexOf("timed_out") !== -1) {
     return;
   }
   const oldCols: string[] = [];
-  const tiOld = db.prepareRaw("PRAGMA table_info(jobs)").all([]);
+  const tiOld = qAll(db, "PRAGMA table_info(jobs)", []);
   for (const r of tiOld as { name: string }[]) {
     oldCols.push(r.name);
   }
@@ -220,7 +246,7 @@ function migrateJobs(db: Database): void {
 )`,
     );
     const newCols: string[] = [];
-    const tiNew = db.prepareRaw("PRAGMA table_info(jobs_new)").all([]);
+    const tiNew = qAll(db, "PRAGMA table_info(jobs_new)", []);
     for (const r of tiNew as { name: string }[]) {
       newCols.push(r.name);
     }
@@ -254,11 +280,11 @@ export function connect(): Database {  const p = dbPath();
   ensureParentDir(p);
   if (fs.existsSync(p)) {
     const db0 = Database.open(p);
-    const row = db0
-      .prepareRaw("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
-      .get([]) as { sql: string } | undefined;
+    const row = qOne(db0, "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'", []) as
+      | { sql: string }
+      | null;
     db0.close();
-    if (row !== undefined && row.sql.indexOf("timed_out") === -1) {
+    if (row !== null && row.sql.indexOf("timed_out") === -1) {
       backupDbFile(p);
     }
   }
@@ -283,7 +309,7 @@ export function connect(): Database {  const p = dbPath();
     db.exec(ddl);
   }
   const have: string[] = [];
-  const tiJobs = db.prepareRaw("PRAGMA table_info(jobs)").all([]);
+  const tiJobs = qAll(db, "PRAGMA table_info(jobs)", []);
   for (const r of tiJobs as { name: string }[]) {
     have.push(r.name);
   }
@@ -323,22 +349,24 @@ function claimStaleS(): number {
 }
 
 export function daemonHeartbeatTs(db: Database): number | null {
-  const row = db.prepareRaw("SELECT heartbeat_ts FROM daemon WHERE id=1").getOrNull([]) as { heartbeat_ts: number } | null;
+  const row = qOne(db, "SELECT heartbeat_ts FROM daemon WHERE id=1", []) as { heartbeat_ts: number } | null;
   return row === null ? null : row.heartbeat_ts;
 }
 
 export function daemonHeartbeat(db: Database, pid: number): void {
   const now = Date.now() / 1000;
-  db.prepareRaw(
+  qRun(
+    db,
     "INSERT INTO daemon(id,pid,heartbeat_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid, heartbeat_ts=excluded.heartbeat_ts",
-  ).run([pid, now]);
+    [pid, now],
+  );
 }
 
 // claimable: any heartbeat older than LEASE_S is from a daemon whose job
 // leases have already expired, so it cannot be making progress. Returns the
 // pid of the running daemon when a fresh-enough heartbeat exists, else null.
 export function liveDaemonPid(db: Database): number | null {
-  const row = db.prepareRaw("SELECT pid, heartbeat_ts FROM daemon WHERE id=1").getOrNull([]) as DaemonRow | null;
+  const row = qOne(db, "SELECT pid, heartbeat_ts FROM daemon WHERE id=1", []) as DaemonRow | null;
   if (row === null) {
     return null;
   }
@@ -392,11 +420,11 @@ interface Parsed {
 
 export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempts = 3, runAt: number | null = null, maxRuntimeS: number | null = null, kind: string = "cmd"): number {
   const now = Date.now() / 1000;
-  const ins = db.prepareRaw(
+  const r = qRun(
+    db,
     "INSERT INTO jobs(kind,payload,priority,run_at,attempts,max_attempts,created_at,max_runtime_s) VALUES(?,?,?,?,?,?,?,?)",
+    [kind, JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS],
   );
-  const r = ins.run([kind, JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS]);
-  ins.finalize();
   const jid = r.lastInsertRowid;
   emit(db, jid, "enqueued", { kind: kind });
   return jid;
@@ -404,18 +432,14 @@ export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempt
 
 function usedByKey(db: Database): Record<string, number> {
   const out: Record<string, number> = {};
-  const sel = db.prepareRaw("SELECT key, COUNT(*) AS c FROM concurrency_slots GROUP BY key");
-  for (const row of sel.all([]) as KeyCostRow[]) {
+  for (const row of qAll(db, "SELECT key, COUNT(*) AS c FROM concurrency_slots GROUP BY key", []) as KeyCostRow[]) {
     out[row.key] = row.c;
   }
-  sel.finalize();
   return out;
 }
 
 function qUsedCost(db: Database, key: string): number {
-  const sel = db.prepareRaw("SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?");
-  const row = sel.getOrNull([key]) as { c: number } | null;
-  sel.finalize();
+  const row = qOne(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number } | null;
   return row === null ? 0 : row.c;
 }
 
@@ -442,7 +466,7 @@ export function claim(db: Database, owner: string): Parsed | null {
       "ORDER BY priority + MIN(?, CAST((? - created_at) / ? AS INTEGER)) DESC, run_at, id LIMIT 100";
     binds = [now, sched.ceiling, now, sched.periodS];
   }
-  const rows = db.prepareRaw(sql).all(binds) as { id: number; payload: string; kind: string }[];
+  const rows = qAll(db, sql, binds) as { id: number; payload: string; kind: string }[];
   for (const row of rows) {
     const jid = row.id;
     const payload = JSON.parse(row.payload) as Payload;
@@ -468,7 +492,7 @@ export function claim(db: Database, owner: string): Parsed | null {
     if (blocked) {
       continue;
     }
-    const budget = db.prepareRaw("SELECT max_runtime_s, runtime_used_s FROM jobs WHERE id=?").getOrNull([jid]) as
+    const budget = qOne(db, "SELECT max_runtime_s, runtime_used_s FROM jobs WHERE id=?", [jid]) as
       | { max_runtime_s: number | null; runtime_used_s: number }
       | null;
     let deadlineAt: number | null = null;
@@ -484,18 +508,19 @@ export function claim(db: Database, owner: string): Parsed | null {
       deadlineAt = now + remaining;
     }
     const exp = now + LEASE_S;
-    db.prepareRaw("UPDATE jobs SET status='running', attempts=attempts+1, lease_owner=?, lease_expires_at=?, claim_at=?, deadline_at=? WHERE id=?").run([
+    qRun(db, "UPDATE jobs SET status='running', attempts=attempts+1, lease_owner=?, lease_expires_at=?, claim_at=?, deadline_at=? WHERE id=?", [
       owner,
       exp,
       now,
       deadlineAt,
       jid,
     ]);
-    const insSlot = db.prepareRaw("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)");
-    for (const k of keys) {
-      insSlot.run([k, exp, jid]);
+    {
+      using insSlot = db.prepareRaw("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)");
+      for (const k of keys) {
+        insSlot.run([k, exp, jid]);
+      }
     }
-    insSlot.finalize();
     emit(db, jid, "claimed", { owner });
     return { jid, kind: row.kind, payload };
   }
@@ -504,15 +529,15 @@ export function claim(db: Database, owner: string): Parsed | null {
 
 export function chargeRuntime(db: Database, jid: number): void {
   const now = Date.now() / 1000;
-  db.prepareRaw("UPDATE jobs SET runtime_used_s=runtime_used_s+? - COALESCE(claim_at, ?) WHERE id=? AND status='running' AND claim_at IS NOT NULL").run([now, now, jid]);
+  qRun(db, "UPDATE jobs SET runtime_used_s=runtime_used_s+? - COALESCE(claim_at, ?) WHERE id=? AND status='running' AND claim_at IS NOT NULL", [now, now, jid]);
 }
 
 export function heartbeat(db: Database, jid: number, owner: string): boolean {
   const exp = Date.now() / 1000 + LEASE_S;
   using _tx = db.transaction();
-  const cur = db.prepareRaw("UPDATE jobs SET lease_expires_at=? WHERE id=? AND status='running' AND lease_owner=?").run([exp, jid, owner]);
+  const cur = qRun(db, "UPDATE jobs SET lease_expires_at=? WHERE id=? AND status='running' AND lease_owner=?", [exp, jid, owner]);
   if (cur.changes > 0) {
-    db.prepareRaw("UPDATE concurrency_slots SET lease_expires_at=? WHERE job_id=?").run([exp, jid]);
+    qRun(db, "UPDATE concurrency_slots SET lease_expires_at=? WHERE job_id=?", [exp, jid]);
   }
   return cur.changes > 0;
 }
@@ -520,20 +545,20 @@ export function heartbeat(db: Database, jid: number, owner: string): boolean {
 export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null): string | null {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
-  db.prepareRaw("UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?").run([
+  qRun(db, "UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?", [
     status,
     outcome,
     jid,
     owner,
   ]);
   let event: string | null = null;
-  const slots = db.prepareRaw("SELECT key FROM concurrency_slots WHERE job_id=? AND key LIKE 'tool:%'").all([jid]) as KeyRow[];
+  const slots = qAll(db, "SELECT key FROM concurrency_slots WHERE job_id=? AND key LIKE 'tool:%'", [jid]) as KeyRow[];
   for (const s of slots) {
     if (event === null) {
       event = s.key;
     }
   }
-  db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')").run([jid, jid]);
+  qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
   emit(db, jid, status === "done" ? "done" : status, { status });
   return event;
 }
@@ -562,28 +587,28 @@ function killOrphans(db: Database, pgid: number | null, _pidfile: string | null)
 export function reap(db: Database): number[] {
   const now = Date.now() / 1000;
   using _tx = db.transaction();
-  const expired = db.prepareRaw("SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?").all([now]) as IdRow[];
+  const expired = qAll(db, "SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?", [now]) as IdRow[];
   for (const row of expired) {
     chargeRuntime(db, row.id);
   }
   // Kill survivors before the requeue commits, so a retry never runs beside the old attempt.
-  for (const row of db.prepareRaw("SELECT id, pgid, pidfile FROM jobs WHERE status='running' AND lease_expires_at<?").all([now]) as { id: number; pgid: number | null; pidfile: string | null }[]) {
+  for (const row of qAll(db, "SELECT id, pgid, pidfile FROM jobs WHERE status='running' AND lease_expires_at<?", [now]) as { id: number; pgid: number | null; pidfile: string | null }[]) {
     killOrphans(db, row.pgid, row.pidfile);
   }
-  for (const row of db
-    .prepareRaw(
-      "UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=? RETURNING id",
-    )
-    .all([now, now]) as IdRow[]) {
+  for (const row of qAll(
+    db,
+    "UPDATE jobs SET status='timed_out', outcome='lease expired after deadline', lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE status='running' AND lease_expires_at<? AND deadline_at IS NOT NULL AND deadline_at<=? RETURNING id",
+    [now, now],
+  ) as IdRow[]) {
     emit(db, row.id, "timed_out", { outcome: "lease expired after deadline" });
   }
-  const rows = db
-    .prepareRaw(
-      "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL WHERE status='running' AND lease_expires_at<? RETURNING id",
-    )
-    .all([now]) as IdRow[];
+  const rows = qAll(
+    db,
+    "UPDATE jobs SET status=CASE WHEN attempts<max_attempts THEN 'queued' ELSE 'dead' END, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL, deadline_at=NULL WHERE status='running' AND lease_expires_at<? RETURNING id",
+    [now],
+  ) as IdRow[];
   for (const r of rows) {
-    const st = (db.prepareRaw("SELECT status FROM jobs WHERE id=?").getOrNull([r.id]) as { status: string } | null)?.status;
+    const st = (qOne(db, "SELECT status FROM jobs WHERE id=?", [r.id]) as { status: string } | null)?.status;
     emit(db, r.id, st === "queued" ? "requeued" : "dead", { reason: "lease expired" });
   }
   db.exec("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')");
@@ -597,10 +622,12 @@ export function reap(db: Database): number[] {
 export function waitOn(db: Database, jid: number, event: string): boolean {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
-  const cur = db
-    .prepareRaw("UPDATE jobs SET status='waiting', waiting_on=?, lease_owner=NULL, lease_expires_at=NULL, claim_at=NULL, deadline_at=NULL WHERE id=? AND status IN ('queued','running')")
-    .run([event, jid]);
-  db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=?").run([jid]);
+  const cur = qRun(
+    db,
+    "UPDATE jobs SET status='waiting', waiting_on=?, lease_owner=NULL, lease_expires_at=NULL, claim_at=NULL, deadline_at=NULL WHERE id=? AND status IN ('queued','running')",
+    [event, jid],
+  );
+  qRun(db, "DELETE FROM concurrency_slots WHERE job_id=?", [jid]);
   if (cur.changes > 0) {
     emit(db, jid, "parked", { waiting_on: event });
   }
@@ -608,9 +635,11 @@ export function waitOn(db: Database, jid: number, event: string): boolean {
 }
 
 export function release(db: Database, event: string): number[] {
-  const rows = db
-    .prepareRaw("UPDATE jobs SET status='queued', waiting_on=NULL WHERE status='waiting' AND waiting_on=? RETURNING id")
-    .all([event]) as IdRow[];
+  const rows = qAll(
+    db,
+    "UPDATE jobs SET status='queued', waiting_on=NULL WHERE status='waiting' AND waiting_on=? RETURNING id",
+    [event],
+  ) as IdRow[];
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
@@ -622,10 +651,12 @@ export function release(db: Database, event: string): number[] {
 export function cancel(db: Database, jid: number): boolean {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
-  const cur = db
-    .prepareRaw("UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL, claim_at=NULL WHERE id=? AND status IN ('queued','running','waiting')")
-    .run([jid]);
-  db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND cost>0").run([jid]);
+  const cur = qRun(
+    db,
+    "UPDATE jobs SET status='failed', lease_owner=NULL, lease_expires_at=NULL, waiting_on=NULL, claim_at=NULL WHERE id=? AND status IN ('queued','running','waiting')",
+    [jid],
+  );
+  qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND cost>0", [jid]);
   if (cur.changes > 0) {
     emit(db, jid, "cancelled", { recorded_as: "failed" });
   }
@@ -638,7 +669,7 @@ export function retryDead(db: Database, jid: number | null): number[] {
     sql += " AND id=" + jid;
   }
   sql += " RETURNING id";
-  const rows = db.prepareRaw(sql).all([]) as IdRow[];
+  const rows = qAll(db, sql, []) as IdRow[];
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
@@ -649,7 +680,7 @@ export function retryDead(db: Database, jid: number | null): number[] {
 
 export function stats(db: Database): Record<string, number> {
   const out: Record<string, number> = {};
-  const rows = db.prepareRaw("SELECT status, COUNT(*) AS c FROM jobs GROUP BY status").all([]) as { status: string; c: number }[];
+  const rows = qAll(db, "SELECT status, COUNT(*) AS c FROM jobs GROUP BY status", []) as { status: string; c: number }[];
   for (const r of rows) {
     out[r.status] = r.c;
   }
@@ -657,7 +688,7 @@ export function stats(db: Database): Record<string, number> {
 }
 
 export function getJob(db: Database, jid: number): Job | null {
-  const row = db.prepareRaw("SELECT * FROM jobs WHERE id=?").getOrNull([jid]) as Job | null;
+  const row = qOne(db, "SELECT * FROM jobs WHERE id=?", [jid]) as Job | null;
   return row;
 }
 
@@ -667,18 +698,22 @@ export function statusSelf(db: Database, jidText: string): Job | null {
 
 export function expiredRunning(db: Database): { id: number; kind: string; payload: string; pgid: number | null; pidfile: string | null }[] {
   const now = Date.now() / 1000;
-  return db
-    .prepareRaw("SELECT id, kind, payload, pgid, pidfile FROM jobs WHERE status='running' AND deadline_at IS NOT NULL AND deadline_at<=?")
-    .all([now]) as { id: number; kind: string; payload: string; pgid: number | null; pidfile: string | null }[];
+  return qAll(
+    db,
+    "SELECT id, kind, payload, pgid, pidfile FROM jobs WHERE status='running' AND deadline_at IS NOT NULL AND deadline_at<=?",
+    [now],
+  ) as { id: number; kind: string; payload: string; pgid: number | null; pidfile: string | null }[];
 }
 
 export function finalizeTimedOut(db: Database, jid: number, outcome: string): boolean {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
-  const cur = db
-    .prepareRaw("UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL WHERE id=? AND status='running'")
-    .run([outcome, jid]);
-  db.prepareRaw("DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')").run([jid, jid]);
+  const cur = qRun(
+    db,
+    "UPDATE jobs SET status='timed_out', outcome=?, claim_at=NULL, lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, waiting_on=NULL WHERE id=? AND status='running'",
+    [outcome, jid],
+  );
+  qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
   if (cur.changes > 0) {
     emit(db, jid, "timed_out", { outcome });
   }
@@ -688,11 +723,11 @@ export function finalizeTimedOut(db: Database, jid: number, outcome: string): bo
 // Persist the ACP session id into the payload (port of queue.py set_session): the next
 // attempt after a dispatcher crash resumes the SAME session via session/load.
 export function setSession(db: Database, jid: number, owner: string, session: string): void {
-  db.prepareRaw("UPDATE jobs SET payload=json_set(payload,'$.session',?) WHERE id=? AND lease_owner=?").run([session, jid, owner]);
+  qRun(db, "UPDATE jobs SET payload=json_set(payload,'$.session',?) WHERE id=? AND lease_owner=?", [session, jid, owner]);
 }
 
 export function setProc(db: Database, jid: number, owner: string, pgid: number): void {
-  db.prepareRaw("UPDATE jobs SET pgid=? WHERE id=? AND status='running' AND lease_owner=?").run([pgid, jid, owner]);
+  qRun(db, "UPDATE jobs SET pgid=? WHERE id=? AND status='running' AND lease_owner=?", [pgid, jid, owner]);
 }
 
 export { configPath, dbPath };

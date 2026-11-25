@@ -115,9 +115,13 @@ export async function forward(o: ForwardOpts): Promise<void> {
   );
 
   const poll = (): void => {
-    const rows = db.prepareRaw(
-      "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id",
-    ).all([cur]) as { id: number; ts: number; job_id: number | null; kind: string; data: string }[];
+    const rows = q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [cur]) as {
+      id: number;
+      ts: number;
+      job_id: number | null;
+      kind: string;
+      data: string;
+    }[];
     for (const r of rows) {
       if (kinds.size && !kinds.has(r.kind)) {
         // Filtered events need no send, so the cursor may advance past them (D16).
