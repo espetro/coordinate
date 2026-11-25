@@ -307,7 +307,7 @@ async function main(): Promise<void> {
       }
       process.stdout.write(JSON.stringify(jobView(job), null, 2) + "\n");
     } else {
-      const rows = db.prepareRaw("SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id").all([]) as Record<string, unknown>[];
+      const rows = q.qAll(db, "SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id", []) as Record<string, unknown>[];
       for (const r of rows) {
         const cells = [r["id"], r["status"], r["attempts"], r["max_attempts"], r["waiting_on"], r["payload"]];
         const line = cells.map((v) => (v === null || v === undefined ? "" : String(v))).join("\t");
@@ -350,12 +350,10 @@ async function main(): Promise<void> {
         process.stdout.write(JSON.stringify(line) + "\n");
       }
     };
-    printRows(
-      db.prepareRaw("SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id").all([last]) as never,
-    );
+    printRows(q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never);
     while (follow) {
       printRows(
-        db.prepareRaw("SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id").all([last]) as never,
+        q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never,
       );
       await new Promise((res) => setTimeout(res, 500));
     }
@@ -407,7 +405,7 @@ async function main(): Promise<void> {
         fail("cap show: takes no arguments");
       }
       const running = (
-        db.prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running'").all([]) as { c: number }[]
+        q.qAll(db, "SELECT COUNT(*) AS c FROM jobs WHERE status='running'", []) as { c: number }[]
       )[0].c;
       process.stdout.write(
         JSON.stringify({
@@ -445,7 +443,7 @@ async function main(): Promise<void> {
         }
       }
       const running = (
-        db.prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running'").all([]) as { c: number }[]
+        q.qAll(db, "SELECT COUNT(*) AS c FROM jobs WHERE status='running'", []) as { c: number }[]
       )[0].c;
       if (machineCapValue !== null && machineCapValue < running && !force) {
         fail(

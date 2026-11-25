@@ -44,10 +44,10 @@ function checkDaemon(db: Database): CheckRow {
   if (pid !== null) {
     return row("daemon", true, "heartbeat fresh (pid " + pid + "); dispatcher is alive");
   }
-  const fresh = db
-    .prepareRaw("SELECT COUNT(*) AS c FROM jobs WHERE status='running' AND lease_expires_at > ?")
-    .all([Date.now() / 1000]) as { c: number }[];
-  const n = fresh.length > 0 ? fresh[0].c : 0;
+  const fresh = q.qOne(db, "SELECT COUNT(*) AS c FROM jobs WHERE status='running' AND lease_expires_at > ?", [
+    Date.now() / 1000,
+  ]) as { c: number } | null;
+  const n = fresh === null ? 0 : fresh.c;
   if (n > 0) {
     return row("daemon", true, n + " fresh job lease(s) but a stale daemon heartbeat; a dispatcher may be alive");
   }
@@ -65,10 +65,12 @@ export function doctor(): Report {
   } else {
     try {
       db = Database.open(p);
-      const uv = db.prepareRaw("PRAGMA user_version").get([]) as { user_version: number } | undefined;
-      const tables = db.prepareRaw(
+      const uv = q.qOne(db, "PRAGMA user_version", []) as { user_version: number } | null;
+      const tables = q.qAll(
+        db,
         "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','events','concurrency_slots')",
-      ).all([]) as { name: string }[];
+        [],
+      ) as { name: string }[];
       const have: string[] = [];
       for (const t of tables) {
         have.push(t.name);
@@ -79,7 +81,7 @@ export function doctor(): Report {
           missing.push(want);
         }
       }
-      const userVersion = uv === undefined ? 0 : uv.user_version;
+      const userVersion = uv === null ? 0 : uv.user_version;
       if (missing.length > 0) {
         rows.push(row("db", false, p + " (" + dbSource() + "): opens but is missing table(s): " + missing.join(", ") + " (user_version " + userVersion + ")"));
       } else {

@@ -28,6 +28,11 @@ import { millis as durationMillis } from "effect/Duration";
 
 const BACKOFF_MAX = 2.0;
 const BACKOFF_MIN = 0.05;
+// How long the daemon may take to shut down after SIGTERM/SIGINT before it
+// exits anyway. The normal path is milliseconds; the budget exists so a
+// pathological close can never make the daemon look like it ignores the
+// signal (measured on v0.1.3: 29 s of 100% CPU before the process fell out).
+const SHUTDOWN_BUDGET_MS = 5000;
 const SH = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
 
 // Completing a Deferred from outside the Effect world (a signal handler)
@@ -150,7 +155,7 @@ function projectKey(cwd: string | null): string {
 }
 
 function auditSpawn(db: Database, jid: number, argv0: string, cls: string, proj: string): void {
-  db.prepareRaw("INSERT INTO spawn_audit(ts,job_id,argv0,tool_class,project) VALUES(?,?,?,?,?)").run([
+  q.qRun(db, "INSERT INTO spawn_audit(ts,job_id,argv0,tool_class,project) VALUES(?,?,?,?,?)", [
     Date.now() / 1000,
     jid,
     argv0,
@@ -167,14 +172,14 @@ function acquireToolLease(db: Database, jid: number, key: string, cost: number):
   using _tx = db.transaction();
   db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + Date.now() / 1000);
   let used = 0;
-  const rows = db.prepareRaw("SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?").all([key]) as { c: number }[];
+  const rows = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number }[];
   for (const r of rows) {
     used = r.c;
   }
   if (used + cost > slotLimit(key)) {
     return false;
   }
-  db.prepareRaw("INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)").run([
+  q.qRun(db, "INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)", [
     key,
     Date.now() / 1000 + q.LEASE_S,
     jid,
@@ -189,7 +194,7 @@ interface DeadlineRow {
 
 // Absolute epoch-second deadline of this attempt, set at claim; empty when the job has no cap.
 function deadlineEnv(db: Database, jid: number): string {
-  const rows = db.prepareRaw("SELECT deadline_at FROM jobs WHERE id=?").all([jid]) as DeadlineRow[];
+  const rows = q.qAll(db, "SELECT deadline_at FROM jobs WHERE id=?", [jid]) as DeadlineRow[];
   if (rows.length === 0 || rows[0].deadline_at === null) {
     return "";
   }
@@ -204,7 +209,7 @@ interface AttemptRow {
 // Attempt numbers let a retried job detect replay and stay idempotent (D17:
 // at-least-once execution means a killed attempt can replay side effects).
 function attemptEnv(db: Database, jid: number): { attempt: string; maxAttempts: string } {
-  const rows = db.prepareRaw("SELECT attempts, max_attempts FROM jobs WHERE id=?").all([jid]) as AttemptRow[];
+  const rows = q.qAll(db, "SELECT attempts, max_attempts FROM jobs WHERE id=?", [jid]) as AttemptRow[];
   if (rows.length === 0) {
     return { attempt: "", maxAttempts: "" };
   }
@@ -487,8 +492,17 @@ export async function run(): Promise<void> {
   // (handles unref'd) and left alive. The next daemon start reaps their expired leases (X3).
   // Effect models the stop signal as a Deferred the loop races against its sleep:
   // the signal handler completes the Deferred, which wakes the sleep at once.
+  //
+  // The handler does the minimum: it marks the stop and wakes the loop. Closing
+  // the DB happens once, after the loop has drained, in the shutdown path below.
+  // Closing inside the handler is what made SIGTERM and SIGINT look ignored:
+  // Node only delivers signal handlers between macrotasks, so a long
+  // synchronous close inside the handler delayed the handler's own completion
+  // and the user saw a daemon that burned CPU until it eventually fell out
+  // (measured 29 s on a churned queue, v0.1.3).
   const stopSignal = makeDeferredUnsafe<"stop">();
   let stopping = false;
+  let shutdownTimer: ReturnType<typeof setTimeout> | null = null;
   const stop = (): void => {
     if (stopping) {
       return;
@@ -499,11 +513,14 @@ export async function run(): Promise<void> {
       // Detached children keep their own process group; no kill: the job outlives the daemon.
     }
     completeDeferred(stopSignal, syncStop());
-    try {
-      db.close();
-    } catch {
-      // already closed by a concurrent loop turn
-    }
+    // Backstop: if the loop does not reach the shutdown path in time, leave
+    // anyway. A daemon that ignores its stop signal is worse than one that
+    // exits with an unfinished checkpoint: the queue state is durable in the
+    // WAL and the next start reaps the expired leases.
+    shutdownTimer = setTimeout(() => {
+      process.stderr.write("coordinate: shutdown exceeded " + String(SHUTDOWN_BUDGET_MS) + "ms, exiting\n");
+      process.exit(0);
+    }, SHUTDOWN_BUDGET_MS);
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
@@ -660,4 +677,16 @@ export async function run(): Promise<void> {
   });
 
   await runPromise(program);
+  // Shutdown path: the loop has drained, running children are detached, so
+  // closing the DB here is safe. The statement-tracking helpers in queue.ts
+  // keep the tracked list short, so this close is milliseconds, not seconds.
+  try {
+    db.close();
+  } catch {
+    // already closed by a concurrent turn
+  }
+  if (shutdownTimer !== null) {
+    clearTimeout(shutdownTimer);
+    shutdownTimer = null;
+  }
 }
