@@ -1,0 +1,759 @@
+{
+  "backend": "sqlite",
+  "generated_by": "bench/merge-ab.mjs",
+  "baseline_bin": "/tmp/coord-preeffect",
+  "baseline_version": "coordinate 0.1.3",
+  "baseline_acp_lane": true,
+  "candidate_bin": "/tmp/coord-v013",
+  "candidate_version": "coordinate 0.1.3",
+  "candidate_acp_lane": true,
+  "host": {
+    "cpu_model": "Apple M4",
+    "cores": 10,
+    "mem_total_mb": 24576,
+    "mem_available_mb": 57,
+    "load_1m": 26.4,
+    "load_5m": 22.46,
+    "load_15m": 24.48,
+    "os": "Darwin 27.2.0",
+    "platform": "darwin-arm64",
+    "timestamp": "2026-11-25T00:50:18.254Z"
+  },
+  "rounds": {
+    "baseline": [
+      "pe-baseline-r1.json",
+      "pe-baseline-r2.json",
+      "pe-baseline-r3.json",
+      "pe-baseline-single.json"
+    ],
+    "candidate": [
+      "pe-candidate-r1.json",
+      "pe-candidate-r2.json",
+      "pe-candidate-r3.json",
+      "pe-candidate-single.json"
+    ]
+  },
+  "host_load_1m_per_round": {
+    "baseline": [
+      16.15,
+      12.22,
+      18.87,
+      15.62
+    ],
+    "candidate": [
+      26.4,
+      17.41,
+      46.59,
+      19.97
+    ]
+  },
+  "metrics": {
+    "enqueue_cli_median_ms": {
+      "baseline_rounds": [
+        11.9,
+        11.6,
+        10.9
+      ],
+      "candidate_rounds": [
+        9.5,
+        10.4,
+        24.5
+      ],
+      "baseline_median": 11.6,
+      "candidate_median": 10.4
+    },
+    "enqueue_cli_p95_ms": {
+      "baseline_rounds": [
+        16.4,
+        11.8,
+        12.1
+      ],
+      "candidate_rounds": [
+        10.1,
+        11.9,
+        36.6
+      ],
+      "baseline_median": 12.1,
+      "candidate_median": 11.9
+    },
+    "idle_rss_mb": {
+      "baseline_rounds": [
+        7.4,
+        7.4,
+        6.5
+      ],
+      "candidate_rounds": [
+        16.2,
+        16.1,
+        16.2
+      ],
+      "baseline_median": 7.4,
+      "candidate_median": 16.2
+    },
+    "idle_cpu_pct": {
+      "baseline_rounds": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "candidate_rounds": [
+        0.05,
+        0.05,
+        0.1
+      ],
+      "baseline_median": 0.05,
+      "candidate_median": 0.05
+    },
+    "enqueue_total_s": {
+      "baseline_rounds": [
+        0.61,
+        0.59,
+        0.9
+      ],
+      "candidate_rounds": [
+        0.72,
+        0.76,
+        1.79
+      ],
+      "baseline_median": 0.61,
+      "candidate_median": 0.76
+    },
+    "throughput_makespan_s": {
+      "baseline_rounds": [
+        1.23,
+        1.19,
+        1.57
+      ],
+      "candidate_rounds": [
+        1.04,
+        1.36,
+        2.83
+      ],
+      "baseline_median": 1.23,
+      "candidate_median": 1.36
+    },
+    "throughput_jobs_per_s": {
+      "baseline_rounds": [
+        48.86,
+        50.59,
+        38.31
+      ],
+      "candidate_rounds": [
+        57.92,
+        44.09,
+        21.22
+      ],
+      "baseline_median": 48.86,
+      "candidate_median": 44.09
+    },
+    "peak_rss_mb": {
+      "baseline_rounds": [
+        10.9,
+        10.9,
+        10.7
+      ],
+      "candidate_rounds": [
+        19.6,
+        19.8,
+        19.8
+      ],
+      "baseline_median": 10.9,
+      "candidate_median": 19.8
+    },
+    "cap_makespan_s": {
+      "baseline_rounds": [
+        4.3,
+        4.41,
+        4.4,
+        4.4
+      ],
+      "candidate_rounds": [
+        4.39,
+        4.42,
+        4.38,
+        4.53
+      ],
+      "baseline_median": 4.4,
+      "candidate_median": 4.404999999999999
+    },
+    "cap_ideal_s": {
+      "baseline_rounds": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "chaos_recovery_to_all_done_s": {
+      "baseline_rounds": [
+        18.56,
+        18.6,
+        18.52,
+        18.44
+      ],
+      "candidate_rounds": [
+        18.53,
+        18.5,
+        18.54,
+        18.53
+      ],
+      "baseline_median": 18.54,
+      "candidate_median": 18.53
+    },
+    "chaos_total_executions": {
+      "baseline_rounds": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "candidate_rounds": [
+        12,
+        9,
+        12,
+        12
+      ],
+      "baseline_median": 12,
+      "candidate_median": 12
+    },
+    "chaos_duplicated_jobs": {
+      "baseline_rounds": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        0,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "orchkill_recovery_s": {
+      "baseline_rounds": [
+        31.69,
+        31.64,
+        190.62,
+        32.16
+      ],
+      "candidate_rounds": [
+        31.62,
+        31.84,
+        32.1,
+        32.08
+      ],
+      "baseline_median": 31.924999999999997,
+      "candidate_median": 31.96
+    },
+    "orchkill_duplicate_turns": {
+      "baseline_rounds": [
+        3,
+        3,
+        0,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "orchkill_resumed_via_session_load": {
+      "baseline_rounds": [
+        3,
+        3,
+        0,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "orchkill_restarted": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_recovery_s": {
+      "baseline_rounds": [
+        31.88,
+        32.16,
+        32.01,
+        32.09
+      ],
+      "candidate_rounds": [
+        32.15,
+        32.13,
+        31.94,
+        32.06
+      ],
+      "baseline_median": 32.05,
+      "candidate_median": 32.095
+    },
+    "stateloss_jobs_lost": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_never_finished": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_jobs_run_twice": {
+      "baseline_rounds": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "candidate_rounds": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "baseline_median": 4,
+      "candidate_median": 4
+    },
+    "stateloss_duplicate_turns": {
+      "baseline_rounds": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "candidate_rounds": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "baseline_median": 1,
+      "candidate_median": 1
+    },
+    "stateloss_leases_leaked": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_leases_leaked_right_after_kill": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_parked_still_parked": {
+      "baseline_rounds": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "candidate_rounds": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "baseline_median": 2,
+      "candidate_median": 2
+    },
+    "stateloss_parked_released": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "stateloss_orphan_agents_surviving": {
+      "baseline_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": 0,
+      "candidate_median": 0
+    },
+    "enqueue_to_claim_p50_ms": {
+      "baseline_rounds": [
+        97,
+        89,
+        110
+      ],
+      "candidate_rounds": [
+        91,
+        85,
+        104
+      ],
+      "baseline_median": 97,
+      "candidate_median": 91
+    },
+    "enqueue_to_claim_p95_ms": {
+      "baseline_rounds": [
+        109,
+        101,
+        125
+      ],
+      "candidate_rounds": [
+        106,
+        105,
+        118
+      ],
+      "baseline_median": 109,
+      "candidate_median": 106
+    },
+    "enqueue_to_claim_max_ms": {
+      "baseline_rounds": [
+        109,
+        101,
+        125
+      ],
+      "candidate_rounds": [
+        106,
+        105,
+        118
+      ],
+      "baseline_median": 109,
+      "candidate_median": 106
+    },
+    "throughput_jobs": {
+      "baseline_values": [
+        "60",
+        "undefined"
+      ],
+      "candidate_values": [
+        "60",
+        "undefined"
+      ],
+      "equal": false
+    },
+    "throughput_all_done": {
+      "baseline_values": [
+        "true",
+        "undefined"
+      ],
+      "candidate_values": [
+        "true",
+        "undefined"
+      ],
+      "equal": false
+    },
+    "cap": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "cap_jobs": {
+      "baseline_values": [
+        "9"
+      ],
+      "candidate_values": [
+        "9"
+      ],
+      "equal": true
+    },
+    "cap_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "cap_max_concurrency": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "repo_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "repo_shared_max_concurrency": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "repo_cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "priority_ok": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "chaos_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_vitest_max_concurrency": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "tool_cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_trivial_ran_while_parked": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "orchkill_jobs": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "orchkill_all_done": {
+      "baseline_values": [
+        "true",
+        "false"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": false
+    },
+    "orchkill_done": {
+      "baseline_values": [
+        "3",
+        "0"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": false
+    },
+    "orchkill_agents_alive_before_kill": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "orchkill_agents_alive_after_kill": {
+      "baseline_values": [
+        "0"
+      ],
+      "candidate_values": [
+        "0"
+      ],
+      "equal": true
+    },
+    "orchkill_orphan_agents_surviving": {
+      "baseline_values": [
+        "0"
+      ],
+      "candidate_values": [
+        "0"
+      ],
+      "equal": true
+    },
+    "stateloss_live_jobs": {
+      "baseline_values": [
+        "2"
+      ],
+      "candidate_values": [
+        "2"
+      ],
+      "equal": true
+    },
+    "stateloss_parked_jobs": {
+      "baseline_values": [
+        "2"
+      ],
+      "candidate_values": [
+        "2"
+      ],
+      "equal": true
+    },
+    "stateloss_tool_jobs": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "stateloss_acp_jobs": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "priority_order": {
+      "baseline_values": [
+        "p9,p5,p1,p0"
+      ],
+      "candidate_values": [
+        "p9,p5,p1,p0"
+      ]
+    }
+  },
+  "skipped_or_failed": {}
+}

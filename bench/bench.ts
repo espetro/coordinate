@@ -470,6 +470,44 @@ async function scenarioThroughput(bin: string, tmp: string, n = 60, cap = 6): Pr
     throughput_makespan_s: Math.round(makespan * 100) / 100,
     throughput_jobs_per_s: Math.round((n / makespan) * 100) / 100,
     peak_rss_mb: Math.round(peak * 10) / 10,
+    ...(await claimLatency(bin, tmp, cap, 40)),
+  };
+}
+
+// Enqueue-to-claim latency, read from the durable store: the claim epoch minus
+// the enqueue epoch, per job. The daemon clears claim_at when a job finishes, so
+// the sample is taken while the jobs are still in flight (a fresh daemon, a fresh
+// store, a few long jobs, so the claim epoch survives long enough to be read).
+async function claimLatency(bin: string, tmp: string, cap: number, jobs: number): Promise<Record<string, unknown>> {
+  const dir = fs.mkdtempSync(path.join(tmp, "claimlat-"));
+  const f = new Fleet(bin, dir, cap, 30);
+  const log = path.join(dir, "spans");
+  f.start();
+  sleep(3000);
+  for (let i = 0; i < jobs; i++) f.enqueue(spanCmd(log, "c" + i, 8));
+  // Poll the store until every job carries a claim epoch (the daemon claims them
+  // as the cap allows), then read the deltas.
+  const lat: number[] = [];
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    const rows = jobRows(String(f.env["COORDINATE_DB"]));
+    lat.length = 0;
+    for (const jid of Object.keys(rows)) {
+      const r = rows[Number(jid)];
+      if (r["claim_at"] === null || r["claim_at"] === undefined || r["created_at"] === null) continue;
+      lat.push((Number(r["claim_at"]) - Number(r["created_at"])) * 1000);
+    }
+    if (lat.length >= Math.min(cap, jobs)) break;
+    sleep(50);
+  }
+  f.stop();
+  lat.sort((a, b) => a - b);
+  const pct = (q: number): number | null => (lat.length === 0 ? null : Math.round(lat[Math.min(lat.length - 1, Math.floor(q * lat.length))] * 10) / 10);
+  return {
+    enqueue_to_claim_p50_ms: pct(0.5),
+    enqueue_to_claim_p95_ms: pct(0.95),
+    enqueue_to_claim_max_ms: lat.length === 0 ? null : Math.round(lat[lat.length - 1] * 10) / 10,
+    enqueue_to_claim_samples: lat.length,
   };
 }
 
