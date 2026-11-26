@@ -35,7 +35,8 @@ coordinate logs JOB_ID [--attempt N] [--json] [--follow]
                                # the captured stdout/stderr of the job's attempts
 coordinate why JOB_ID [--json] # live state, blockers, next step, log pointers
 coordinate health [--json]     # one fixed summary object (daemon, caps, counts)
-coordinate jobs                # canonical v1 machine records, one JSON object per line
+coordinate jobs                # human table by default; --json for the machine records
+                               # --watch repaints the table every second
                                # flags: --status a,b --kind a,b --search TEXT
                                #        --sort id|created|priority|status|runtime --asc|--desc --limit N
 coordinate stats                # {"queued":N,...}
@@ -52,7 +53,7 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 - `enqueue --shell` takes ONE quoted string run through the platform shell (`/bin/sh`, `cmd.exe` on Windows); without it args are exec'd directly.
 - Higher `--priority` claims first, then the older job. Without aging a high-priority backlog can starve low priorities; `config.toml` `[scheduler] aging = "linear"` (off by default) boosts waiting jobs up to `aging_ceiling`. `--run-at 15m` or `--run-at 2026-11-23T18:00:00Z` holds a job until that time (it does not raise its priority). `--repo` serializes jobs touching the same repo; an empty `--repo ""` skips the repo key, and the default key is the working directory.
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
-- `jobs` is the machine surface: one v1 JSON record per line, with the payload decoded once and epoch-second timestamps, so `jq` and `while read` consume it directly. `docs/machine-schema.md` is the published contract.
+- `coordinate jobs --json` is the machine surface: one v1 JSON record per line, with the payload decoded once and epoch-second timestamps, so `jq` and `while read` consume it directly. The default output is a human table, which is not the machine contract. `docs/machine-schema.md` is the published contract.
 - Every cmd attempt's stdout and stderr are captured into files under the state directory (`logs/<job>-<attempt>.*.log`); the durable `job_logs` table links job, attempt and paths. `coordinate logs JOB_ID` reads them, `--json` gives paths and byte counts without the output. Events carry the paths, never the output.
 - `coordinate why JOB_ID` explains a job from the live rows: what holds it (waiting event, saturated cap, spent budget), the next step and the log pointers. `coordinate health --json` gives scripts and panels one fixed summary object.
 - Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.

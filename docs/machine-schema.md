@@ -6,9 +6,11 @@ title: Machine output schema
 
 coordinate's machine output is newline-delimited JSON. This page is the published contract for the v1 records. Additive fields are allowed within v1; renames and type changes require a new version number.
 
+The human table printed by `coordinate jobs` without `--json` (and by the no-id `coordinate status`) is presentation only: it is explicitly **not the machine contract**. Its columns, truncation and age formats can change at any time without a version bump. Scripts and agents must read `coordinate jobs --json`.
+
 ## Rules
 
-1. Collection queries (`coordinate jobs`) emit one JSON object per line, so `jq`, `while read` and line-oriented consumers work without a special parser.
+1. Collection queries (`coordinate jobs --json`) emit one JSON object per line, so `jq`, `while read` and line-oriented consumers work without a special parser.
 2. Single-object queries (`coordinate status ID`) emit one JSON document.
 3. Nested JSON is decoded once. A job's `payload` is an object in machine output, never a string containing JSON.
 4. stdout in machine mode contains data only. Warnings and progress go to stderr.
@@ -125,6 +127,8 @@ The record carries paths and sizes, never the output itself. A terminal event's 
 | `--sort id\|created\|priority\|status\|runtime` | Sort key, default `id` |
 | `--asc` / `--desc` | Sort direction, default `--desc` |
 | `--limit N` | Return at most N records |
+| `--json` | Emit the v1 NDJSON machine records; the default is the human table |
+| `--watch` | Repaint the human table every second with plain ANSI cursor moves; not a scripting surface (combine with `--json` is refused) |
 
 `coordinate events` accepts `--job ID`, `--kind a,b`, `--since ID` and `--search TEXT` in addition to `--follow`.
 

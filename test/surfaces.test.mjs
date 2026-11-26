@@ -47,7 +47,7 @@ test("jobs emits one v1 record per line with a decoded payload", async () => {
   try {
     const id = cli(r, "enqueue", "--cwd", "/tmp", "--shell", "--", "echo hi").stdout.trim();
     assert.ok(id, "enqueue printed no id");
-    const out = cli(r, "jobs");
+    const out = cli(r, "jobs", "--json");
     assert.equal(out.status, 0, out.stderr);
     const recs = records(out);
     assert.equal(recs.length, 1);
@@ -73,7 +73,7 @@ test("every line of the jobs output parses on its own (jq friendly)", async () =
     cli(r, "enqueue", "--cwd", "/tmp", "--", "true");
     cli(r, "enqueue", "--cwd", "/tmp", "--", "false");
     cli(r, "enqueue", "--acp", "stub", "--cwd", "/tmp", "--prompt", "hi");
-    const out = cli(r, "jobs");
+    const out = cli(r, "jobs", "--json");
     const lines = out.stdout.split("\n").filter((l) => l !== "");
     assert.equal(lines.length, 3);
     for (const line of lines) {
@@ -95,14 +95,14 @@ test("jobs filters by status and kind", async () => {
   try {
     cli(r, "enqueue", "--cwd", "/tmp", "--", "true");
     cli(r, "enqueue", "--acp", "stub", "--cwd", "/tmp", "--prompt", "hi");
-    const queued = records(cli(r, "jobs", "--status", "queued"));
+    const queued = records(cli(r, "jobs", "--json", "--status", "queued"));
     assert.equal(queued.length, 2);
-    const done = records(cli(r, "jobs", "--status", "done"));
+    const done = records(cli(r, "jobs", "--json", "--status", "done"));
     assert.equal(done.length, 0);
-    const cmd = records(cli(r, "jobs", "--kind", "cmd"));
+    const cmd = records(cli(r, "jobs", "--json", "--kind", "cmd"));
     assert.equal(cmd.length, 1);
     assert.equal(cmd[0].kind, "cmd");
-    const acp = records(cli(r, "jobs", "--kind", "acp"));
+    const acp = records(cli(r, "jobs", "--json", "--kind", "acp"));
     assert.equal(acp.length, 1);
   } finally {
     fs.rmSync(r.dir, { recursive: true, force: true });
@@ -114,10 +114,10 @@ test("jobs search matches metadata case-insensitively", async () => {
   try {
     cli(r, "enqueue", "--cwd", "/tmp", "--shell", "--", "echo NEEDLE");
     cli(r, "enqueue", "--cwd", "/var", "--shell", "--", "echo other");
-    const hits = records(cli(r, "jobs", "--search", "needle"));
+    const hits = records(cli(r, "jobs", "--json", "--search", "needle"));
     assert.equal(hits.length, 1);
     assert.equal(hits[0].payload.cmd, "echo NEEDLE");
-    const byCwd = records(cli(r, "jobs", "--search", "/VAR"));
+    const byCwd = records(cli(r, "jobs", "--json", "--search", "/VAR"));
     assert.equal(byCwd.length, 1);
     assert.equal(byCwd[0].payload.cwd, "/var");
   } finally {
@@ -131,14 +131,14 @@ test("jobs sorts by priority and id and honours the limit", async () => {
     const a = Number(cli(r, "enqueue", "--priority", "1", "--cwd", "/tmp", "--", "true").stdout.trim());
     const b = Number(cli(r, "enqueue", "--priority", "5", "--cwd", "/tmp", "--", "true").stdout.trim());
     const c = Number(cli(r, "enqueue", "--priority", "5", "--cwd", "/tmp", "--", "true").stdout.trim());
-    const desc = records(cli(r, "jobs", "--sort", "priority"));
+    const desc = records(cli(r, "jobs", "--json", "--sort", "priority"));
     // equal keys break on id in the same direction as the sort
     assert.deepEqual(desc.map((x) => x.id), [c, b, a]);
-    const asc = records(cli(r, "jobs", "--sort", "priority", "--asc"));
+    const asc = records(cli(r, "jobs", "--json", "--sort", "priority", "--asc"));
     assert.deepEqual(asc.map((x) => x.id), [a, b, c]);
-    const limited = records(cli(r, "jobs", "--sort", "priority", "--limit", "2"));
+    const limited = records(cli(r, "jobs", "--json", "--sort", "priority", "--limit", "2"));
     assert.deepEqual(limited.map((x) => x.id), [c, b]);
-    const byId = records(cli(r, "jobs", "--sort", "id", "--asc"));
+    const byId = records(cli(r, "jobs", "--json", "--sort", "id", "--asc"));
     assert.deepEqual(byId.map((x) => x.id), [a, b, c]);
   } finally {
     fs.rmSync(r.dir, { recursive: true, force: true });
@@ -148,7 +148,7 @@ test("jobs sorts by priority and id and honours the limit", async () => {
 test("jobs rejects bad arguments without a stack trace", async () => {
   const r = rig();
   try {
-    const bad = cli(r, "jobs", "--sort", "nope");
+    const bad = cli(r, "jobs", "--json", "--sort", "nope");
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /--sort/);
     const badLimit = cli(r, "jobs", "--limit", "-1");
@@ -242,7 +242,7 @@ test("the read model decodes a bad payload row without breaking the collection",
     const db = Database.open(r.env["COORDINATE_DB"]);
     db.exec("UPDATE jobs SET payload='not json' WHERE id=1");
     db.close();
-    const recs = records(cli(r, "jobs"));
+    const recs = records(cli(r, "jobs", "--json"));
     assert.equal(recs.length, 1);
     assert.equal(typeof recs[0].payload, "object");
     assert.equal(recs[0].payload._raw, "not json");

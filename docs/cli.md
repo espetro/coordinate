@@ -52,10 +52,11 @@ Capture is best effort: when the state directory is not writable the job still r
 
 ## Machine output
 
-`coordinate jobs` prints one v1 record per line, so `jq` and `while read` consume it directly. The payload is decoded once (an object, not a string with JSON inside) and timestamps stay epoch seconds. The full field list and the query semantics are in [Machine output schema](machine-schema.md).
+`coordinate jobs --json` prints one v1 record per line, so `jq` and `while read` consume it directly. The payload is decoded once (an object, not a string with JSON inside) and timestamps stay epoch seconds. The full field list and the query semantics are in [Machine output schema](machine-schema.md). Without `--json` the same query renders as a human table (id, state, age, attempts, priority, waiting-on, truncated command); the table is presentation only and not the machine contract.
 
 ```sh
-coordinate jobs --status queued,running --sort priority --limit 20 | jq -c '[.id,.status,.payload.cmd]'
+coordinate jobs --json --status queued,running --sort priority --limit 20 | jq -c '[.id,.status,.payload.cmd]'
+coordinate jobs --watch       # repaint the human table every second; Ctrl-C exits
 ```
 
 ## enqueue options
