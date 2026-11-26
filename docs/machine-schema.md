@@ -19,7 +19,7 @@ The human table printed by `coordinate jobs` without `--json` is presentation on
 
 ## Job record (v1)
 
-`coordinate jobs` emits one record per line with `v: 1`:
+`coordinate jobs --json` emits one record per line with `v: 1`:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ Events carry no raw prompts and no raw job output.
 
 The daemon captures each cmd attempt's stdout and stderr into files under the coordinate state directory and records the paths in the durable `job_logs` table (`job_id`, `attempt`, `stdout_path`, `stderr_path`, `created_at`). ACP jobs capture stderr only: their stdout carries the protocol stream.
 
-`coordinate logs ID --json` emits one record per attempt:
+`coordinate logs ID --json` emits one record for each selected attempt. Without `--attempt` the newest attempt is selected; `--attempt N` selects that attempt:
 
 | Field | Type | Meaning |
 | --- | --- | --- |

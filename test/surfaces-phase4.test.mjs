@@ -65,6 +65,33 @@ test("tui refuses to run when stdout is not a TTY", async () => {
   }
 });
 
+test("tui exits on q inside a pty", { timeout: 15000 }, async () => {
+  if (process.platform === "win32" || spawnSync("sh", ["-c", "command -v script"]).status !== 0) {
+    return;
+  }
+  const r = rig();
+  try {
+    const shq = (s) => "'" + String(s).split("'").join("'\\''") + "'";
+    const bin = path.join(import.meta.dirname, "..", "bin", "coordinate.mjs");
+    const wrapper = path.join(r.dir, "run-tui.sh");
+    fs.writeFileSync(wrapper, "#!/bin/sh\nexec " + shq(process.execPath) + " " + shq(bin) + " tui\n");
+    fs.chmodSync(wrapper, 0o755);
+    const scriptCmd =
+      process.platform === "darwin"
+        ? "script -q /dev/null " + shq(wrapper)
+        : "script -q -e -c " + shq(wrapper) + " /dev/null";
+    const p = spawnSync("sh", ["-c", "(sleep 1; printf q) | " + scriptCmd], {
+      env: r.env,
+      encoding: "utf8",
+      timeout: 8000,
+    });
+    assert.equal(p.error, null, "the TUI did not exit after q: " + String(p.error));
+    assert.equal(p.status, 0, "pty run failed: " + p.stderr + "\n" + p.stdout);
+  } finally {
+    fs.rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
 test("the reducer moves the selection and routes mutations through the queue", async () => {
   const r = rig();
   try {

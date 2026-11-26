@@ -11,6 +11,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { Database } from "@cutils/sqlite";
 import "koffi";
 import "@cutils/sqlite/node-binding";
+import { openLogFiles } from "../src/queue.ts";
 
 const BIN = path.join(import.meta.dirname, "..", "bin", "coordinate.mjs");
 
@@ -137,6 +138,31 @@ test("the log files live under the coordinate state directory", { timeout: 60000
     assert.ok(fs.existsSync(path.join(stateDir, "logs")));
   } finally {
     await cleanup(r);
+  }
+});
+
+test("opening an attempt log truncates a stale file with the same name", async () => {
+  const r = rig();
+  const savedDb = process.env["COORDINATE_DB"];
+  process.env["COORDINATE_DB"] = r.env["COORDINATE_DB"];
+  try {
+    const dir = path.join(r.dir, "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    const stale = path.join(dir, "1-1.stdout.log");
+    fs.writeFileSync(stale, "stale-output\n");
+    const opened = openLogFiles(1, 1, true);
+    assert.ok(opened !== null, "the log files did not open");
+    fs.writeSync(opened.stdoutFd, "new-output\n");
+    fs.closeSync(opened.stdoutFd);
+    fs.closeSync(opened.stderrFd);
+    assert.equal(fs.readFileSync(stale, "utf8"), "new-output\n");
+  } finally {
+    if (savedDb === undefined) {
+      delete process.env["COORDINATE_DB"];
+    } else {
+      process.env["COORDINATE_DB"] = savedDb;
+    }
+    fs.rmSync(r.dir, { recursive: true, force: true });
   }
 });
 

@@ -399,10 +399,10 @@ export function openLogFiles(
     const base = path.join(dir, String(jid) + "-" + String(attempt));
     const stdoutPath = withStdout ? base + ".stdout.log" : null;
     const stderrPath = base + ".stderr.log";
-    const stdoutFd = stdoutPath === null ? -1 : fs.openSync(stdoutPath, "a");
+    const stdoutFd = stdoutPath === null ? -1 : fs.openSync(stdoutPath, "w");
     let stderrFd = -1;
     try {
-      stderrFd = fs.openSync(stderrPath, "a");
+      stderrFd = fs.openSync(stderrPath, "w");
     } catch {
       if (stdoutFd >= 0) {
         fs.closeSync(stdoutFd);
