@@ -94,7 +94,7 @@ The record carries paths and sizes, never the output itself. A terminal event's 
 | `attempts`, `max_attempts` | number | Starts so far and starts allowed |
 | `state` | string | The readable state (`queued`, `scheduled`, `waiting`, `running`, `failed`, `dead`, `timed_out`, `done`) |
 | `detail` | string | One line saying what holds the job |
-| `blockers` | object array | `{reason, detail}` per blocker: `waiting_on`, `run_at`, `machine_cap`, `repo_cap`, `tool_slot`, `runtime_budget` |
+| `blockers` | object array | `{reason, detail}` per blocker: `waiting_on`, `run_at`, `no_daemon`, `machine_cap`, `repo_cap`, `tool_slot`, `runtime_budget` |
 | `next` | string or null | The next step, e.g. the release command |
 | `logs` | object array | The captured attempts, in the log record's shape |
 

@@ -201,6 +201,20 @@ test("why explains a queued job from the live rows", async () => {
   }
 });
 
+test("why names the missing daemon as the blocker of a queued job", async () => {
+  const r = rig();
+  try {
+    const id = Number(cli(r, "enqueue", "--cwd", r.dir, "--", "true").stdout.trim());
+    const rec = JSON.parse(cli(r, "why", String(id), "--json").stdout);
+    // no daemon is running in this rig, so nothing will claim the job
+    assert.equal(rec.blockers.length, 1);
+    assert.equal(rec.blockers[0].reason, "no_daemon");
+    assert.equal(rec.next, "coordinate daemon");
+  } finally {
+    fs.rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
 test("why explains a waiting job with its blocker and the next step", async () => {
   const r = rig();
   try {

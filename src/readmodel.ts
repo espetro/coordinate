@@ -304,6 +304,13 @@ export function whyJob(db: Database, jid: number): WhyRecord | null {
       state = "scheduled";
       detail = "held back until its run_at time";
       next = null;
+    } else if (q.liveDaemonPid(db) === null) {
+      // No dispatcher is claiming: the job is not queued behind a cap, it is
+      // queued because nothing is running the queue.
+      blockers.push({ reason: "no_daemon", detail: "no daemon heartbeat in the queue DB" });
+      state = "queued";
+      detail = "no daemon is running on this queue, so nothing will claim it";
+      next = "coordinate daemon";
     } else {
       const capReason = capBlocker(db, job, payload);
       if (capReason !== null) {

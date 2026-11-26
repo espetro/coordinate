@@ -425,6 +425,9 @@ async function main(): Promise<void> {
     if (q.getJob(db, jid) === null) {
       fail("no job " + jidText);
     }
+    if (asJson && follow) {
+      fail("logs: --json and --follow cannot be combined");
+    }
     const attempts = jobLogs(db, jid);
     if (attempts.length === 0) {
       fail("job " + jidText + " has no captured output");
