@@ -5,6 +5,7 @@ Design notes, research and spike reports. The user documentation is in `docs/`, 
 ## Design
 
 - `t3-integration.md`, `events-bridge.md`: showing jobs in T3 threads
+- `t3-admission-plan.md`: counting T3 agent turns against the device caps
 - `readoption-design.md`: re-attaching to agents after a daemon restart
 - `timecap.md`: execution-time caps for jobs
 - `toolcaps-design.md`: concurrency caps per tool class
