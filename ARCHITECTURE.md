@@ -51,6 +51,8 @@ flowchart TB
 | Improver | Tune config, prompts and plugins against the bench | (D) `research/self-improving-stack.md` | `propose`, `evaluate`, `promote`, `revert` |
 | Control panel | Human view and control | T3 Code, Orca, the CLI | consumes the modules above |
 
+The human side of the CLI includes `coordinate tui` (2026-11-26): a single-screen, keyboard-only triage view over the shared read model (`src/tui.ts`). It renders with the same table code as `coordinate jobs`, explains with the same `why` computation and mutates through the same queue operations as the CLI verbs, so its events are identical to the CLI's. Hooks are external commands from `[tui]` in config.toml with the selected job JSON on stdin and `{id}`, `{cwd}`, `{repo}`, `{status}` substitutions; there is no plugin loader. Without a TTY on stdout it fails with a clear message rather than emitting escapes into a pipe (M, verified against the static binary in a pty).
+
 Worktrees are not ours to enforce, because T3 and Orca already create them. Repo leases key on the repository and not on the worktree path. `project_key` resolves a worktree's `.git` file through its gitdir and commondir (or `git rev-parse --git-common-dir` with a 2s timeout), so every worktree of one repo shares the repo key.
 
 ## Files on disk

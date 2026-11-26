@@ -32,6 +32,7 @@ coordinate <verb> [args]
 | `why <id> [--json]` | Explains the job's live state from the current rows: the state, the blockers (waiting event, saturated caps, spent budget), the next step and the log pointers. `--json` emits the machine record |
 | `health [--json]` | Emits one fixed summary object: daemon liveness, caps, per-state job counts, oldest queued age and slot usage. `--json` is the machine form (one JSON object); without it the same data prints as short lines |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
+| `tui` | Runs the interactive triage screen. One screen, keyboard only, over the same read model as `jobs`; needs a terminal on stdout and fails with a clear message when there is none |
 
 ## Watching dispatched jobs
 
@@ -58,6 +59,36 @@ Capture is best effort: when the state directory is not writable the job still r
 coordinate jobs --json --status queued,running --sort priority --limit 20 | jq -c '[.id,.status,.payload.cmd]'
 coordinate jobs --watch       # repaint the human table every second; Ctrl-C exits
 ```
+
+## The triage screen
+
+`coordinate tui` is a small interactive triage UI over the shared read model. It renders the same table as `coordinate jobs`, reads the same `jobs --json` records for the details and mutates through the same queue operations as the CLI verbs, so the emitted events are identical to the CLI's. It fails with `tui: stdout is not a terminal; use coordinate jobs (or jobs --json) instead` when stdout is not a TTY, so escape sequences never reach a pipe.
+
+| Key | Action |
+| --- | --- |
+| arrows or Ctrl-N / Ctrl-P | Move the selection |
+| `/` | Filter jobs by metadata substring (the same search as `jobs --search`) |
+| `s` | Cycle the sort (id, created, priority, status, runtime) |
+| `f` | Cycle the state filter (all, queued, running, waiting, failed, dead, done, timed_out) |
+| enter | Toggle the details pane: decoded metadata, the computed `why`, recent events and the end of the newest stdout |
+| `r` | Refresh |
+| `x` | Cancel the selected job, after a y/n confirmation |
+| `R` | Retry (requeue) the selected failed or dead job, after a y/n confirmation |
+| `e` | Prompt for an event name and release it (the same as `coordinate release EVENT`) |
+| `q` or Ctrl-C | Quit |
+
+The screen repaints about once a second. Scripting stays on `jobs --json` and `events`; the TUI is not the scripting surface.
+
+## TUI hooks
+
+Hooks are external commands only, configured under `[tui]` in `config.toml`. Any key not otherwise bound becomes a hook key: pressing it runs the named command with the selected job's v1 JSON on stdin. Inside the command string, `{id}`, `{cwd}`, `{repo}` and `{status}` are substituted with the shell-quoted job fields, so a value containing spaces or quotes cannot change the command's word structure.
+
+```toml
+[tui]
+w = "codex open {id} --cwd {cwd}"
+```
+
+The hook inherits the terminal, its stderr lands in the TUI's status line (first 400 characters, with the exit code), and each invocation gets a 30s timeout. There is no plugin loader and no in-process API: foreign code always runs in its own process, the same boundary `forward --exec` uses.
 
 ## enqueue options
 
