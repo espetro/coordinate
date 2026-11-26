@@ -124,7 +124,7 @@ function jobHaystack(job: q.Job, payload: Record<string, unknown>): string {
   if (typeof cmd === "string") {
     parts.push(cmd);
   } else if (Array.isArray(cmd)) {
-    for (const c of cmd) parts.push(String(c));
+    for (const c of cmd as string[]) parts.push(String(c));
   }
   for (const k of ["cwd", "repo", "agent", "session"]) {
     const v = payload[k];
