@@ -196,6 +196,7 @@ export class AcpClient {
   }
 
   private failAll(reason: string): void {
+    // oxlint-disable-next-line no-useless-spread -- copy guards deletion during iteration
     for (const key of [...this.pending.keys()]) {
       const slot = this.pending.get(key);
       if (slot !== undefined && !slot.resolved) {

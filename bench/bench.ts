@@ -155,6 +155,7 @@ class Fleet {
 }
 
 process.on("exit", () => {
+  // oxlint-disable-next-line no-useless-spread -- copy guards mutation during iteration
   for (const f of [...LIVE]) {
     try {
       f.stop("SIGKILL");

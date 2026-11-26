@@ -10,12 +10,12 @@ import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { configPath, dbPath } from "./env.ts";
+import { dbPath } from "./env.ts";
 import { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
 import type { AcpHandle } from "./acp.ts";
 import { acpPayloadOf, startAcpJob } from "./acp.ts";
-import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, validateConfig } from "./config.ts";
+import { ConfigError, slotLimit, validateConfig } from "./config.ts";
 import { matchToolClass, projectKey, shlexSplit, toolSlotKey, which } from "./toolclass.ts";
 import * as up from "./upgrade.ts";
 // Effect v4 for the daemon's async machinery: the claim loop, the backoff

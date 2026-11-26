@@ -992,6 +992,7 @@ async function main(): Promise<void> {
       }
     };
     printMsgs();
+    // oxlint-disable-next-line no-unmodified-loop-condition -- follow mode is an intentional forever-loop ended by signals
     while (followInbox) {
       await new Promise((res) => setTimeout(res, 300));
       printMsgs();
@@ -1071,6 +1072,7 @@ async function main(): Promise<void> {
       return recs.map((rec) => ({ id: rec.id, ts: rec.ts, job_id: rec.job_id, kind: rec.kind, data: JSON.stringify(rec.data) }));
     };
     printRows(fetchRows());
+    // oxlint-disable-next-line no-unmodified-loop-condition -- follow mode is an intentional forever-loop ended by signals
     while (follow) {
       printRows(fetchRows());
       await new Promise((res) => setTimeout(res, 500));
