@@ -482,15 +482,23 @@ test("X4: SIGTERM stops the daemon even while a job is running", { timeout: DAEM
   }
 });
 
-test("X7: job stdout reaches the daemon's stdout (Python inherited stdio)", { timeout: DAEMON_T }, async () => {
+// X7: the job's output is captured per attempt. The daemon no longer inherits
+// the child's stdio (that made the output an undifferentiated daemon stream);
+// the attempt's stdout and stderr go to their own files under the state
+// directory, and `coordinate logs` reads them.
+test("X7: job stdout and stderr are captured per attempt", { timeout: DAEMON_T }, async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--shell", "--", "echo OUT-FROM-JOB; echo ERR-FROM-JOB >&2");
     const d = startDaemon(r);
     assert.ok(await waitFor(() => status(r, 1) === "done", 8000), "job did not finish");
+    const out = cli(r, "logs", "1");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /OUT-FROM-JOB/);
+    assert.match(out.stdout, /ERR-FROM-JOB/);
+    // the daemon's own stream no longer carries the job's output
     const log = fs.readFileSync(d.logPath, "utf8");
-    assert.match(log, /OUT-FROM-JOB/);
-    assert.match(log, /ERR-FROM-JOB/);
+    assert.doesNotMatch(log, /OUT-FROM-JOB/);
   } finally {
     await cleanup(r);
   }

@@ -19,7 +19,7 @@ Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSO
 | --- | --- |
 | `enqueued` | `kind` (the job kind, `cmd` or `acp`) |
 | `claimed` | `owner`, `attempt` (the attempt number just started, 1-based) |
-| `done`, `failed` | `status`; `outcome` when the exit carried one |
+| `done`, `failed` | `status`; `outcome` when the exit carried one; `exit_code` when the attempt exited with a code; `logs` (the stdout/stderr paths of the attempt) when the attempt was captured |
 | `timed_out` | `outcome` (why the budget or deadline ended the job) |
 | `cancelled` | `recorded_as` (always `"failed"`) |
 | `dead`, `requeued` | `reason` (e.g. `"lease expired"`, `"dead retry"`), `attempt` when known |
@@ -27,6 +27,8 @@ Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSO
 | `released` | `event` (the released event id) |
 
 Event `id` is a monotonic integer — it is the resume cursor.
+
+Event `data` never carries raw output. The captured stdout and stderr of a cmd attempt live in files under the state directory; the terminal event points at them through `data.logs.stdout` and `data.logs.stderr`, and `coordinate logs <job>` reads them.
 
 ## Shape 1: stateless — `forward --exec`
 

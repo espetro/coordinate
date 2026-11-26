@@ -54,7 +54,7 @@ coordinate's machine output is newline-delimited JSON. This page is the publishe
 | --- | --- |
 | `enqueued` | `kind` (the job kind, `cmd` or `acp`) |
 | `claimed` | `owner` (the daemon's lease owner string), `attempt` (the attempt number just started, 1-based) |
-| `done`, `failed` | `status`; `outcome` when the exit carried one |
+| `done`, `failed` | `status`; `outcome` when the exit carried one; `exit_code` when the attempt exited with a code; `logs` when the attempt was captured |
 | `timed_out` | `outcome` (why the budget or deadline ended the job) |
 | `cancelled` | `recorded_as` (always `"failed"`) |
 | `dead`, `requeued` | `reason` (e.g. `"lease expired"`, `"dead retry"`), `attempt` when known |
@@ -62,6 +62,56 @@ coordinate's machine output is newline-delimited JSON. This page is the publishe
 | `released` | `event` (the released event id) |
 
 Events carry no raw prompts and no raw job output.
+
+## Log record
+
+The daemon captures each cmd attempt's stdout and stderr into files under the coordinate state directory and records the paths in the durable `job_logs` table (`job_id`, `attempt`, `stdout_path`, `stderr_path`, `created_at`). ACP jobs capture stderr only: their stdout carries the protocol stream.
+
+`coordinate logs ID --json` emits one record per attempt:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `v` | number | Schema version, `1` |
+| `job_id` | number | Job id |
+| `attempt` | number | Attempt number, 1-based |
+| `stdout` | string or null | Path of the captured stdout file |
+| `stderr` | string or null | Path of the captured stderr file |
+| `stdout_bytes` | number | Size of the stdout file in bytes |
+| `stderr_bytes` | number | Size of the stderr file in bytes |
+| `created_at` | number | When the attempt started, epoch seconds |
+
+The record carries paths and sizes, never the output itself. A terminal event's `data.logs` points at the same two files.
+
+## Why record
+
+`coordinate why ID --json` emits one object that explains the job from the live rows, not from its history:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `v` | number | Schema version, `1` |
+| `id` | number | Job id |
+| `status` | string | The job's current state |
+| `attempts`, `max_attempts` | number | Starts so far and starts allowed |
+| `state` | string | The readable state (`queued`, `scheduled`, `waiting`, `running`, `failed`, `dead`, `timed_out`, `done`) |
+| `detail` | string | One line saying what holds the job |
+| `blockers` | object array | `{reason, detail}` per blocker: `waiting_on`, `run_at`, `machine_cap`, `repo_cap`, `tool_slot`, `runtime_budget` |
+| `next` | string or null | The next step, e.g. the release command |
+| `logs` | object array | The captured attempts, in the log record's shape |
+
+## Health record
+
+`coordinate health --json` emits exactly one object with a fixed shape, whatever the queue holds:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `v` | number | Schema version, `1` |
+| `ts` | number | When the summary was taken, epoch seconds |
+| `machine` | string | The machine name the daemon recorded |
+| `daemon` | object | `{running, pid, heartbeat_age_s}` |
+| `machine_cap`, `repo_cap` | number | The effective caps |
+| `running`, `queued`, `waiting`, `done`, `failed`, `dead`, `timed_out`, `total` | number | The job counts |
+| `oldest_queued_age_s` | number or null | Age of the oldest queued job |
+| `slots` | object array | `{key, cost, limit}` per held slot |
 
 ## Query semantics
 
@@ -77,5 +127,7 @@ Events carry no raw prompts and no raw job output.
 | `--limit N` | Return at most N records |
 
 `coordinate events` accepts `--job ID`, `--kind a,b`, `--since ID` and `--search TEXT` in addition to `--follow`.
+
+`coordinate logs` accepts `--attempt N`, `--json` and `--follow`. `coordinate why` accepts `--json`. `coordinate health` accepts `--json`, which is the machine form.
 
 Search is metadata search, not log search. Once per-job logs exist, `rg` over the log files is the right tool for full-text search.
