@@ -6,12 +6,14 @@
 import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
+import { jobRecord, queryJobs, queryEvents, type JobQuery, type SortKey } from "./readmodel.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
@@ -34,27 +36,12 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-// Add the derived timecap fields an agent needs: remaining budget and deadline delta (cli.py:24-31).
 function jobView(job: q.Job): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const keys: (keyof q.Job)[] = [
-    "id", "kind", "payload", "status", "priority", "run_at", "lease_owner", "lease_expires_at",
-    "waiting_on", "attempts", "max_attempts", "created_at", "max_runtime_s", "runtime_used_s",
-    "deadline_at", "claim_at", "outcome", "pgid", "pidfile",
-  ];
-  for (const k of keys) {
-    out[k] = job[k];
-  }
-  const cap = job.max_runtime_s;
-  const used = job.runtime_used_s;
-  out["runtime_remaining_s"] = cap === null || cap <= 0 ? null : round3(Math.max(0, cap - used));
-  const dl = job.deadline_at;
-  out["deadline_in_s"] = dl === null || dl <= 0 ? null : round3(dl - Date.now() / 1000);
-  return out;
-}
-
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
+  // Single-job detail stays pretty-printed for human readers; the canonical
+  // machine record is the v1 record from readmodel.ts (see docs/machine-schema.md).
+  const rec = jobRecord(job) as unknown as Record<string, unknown>;
+  delete rec["v"];
+  return rec;
 }
 
 // Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
@@ -314,6 +301,49 @@ async function main(): Promise<void> {
         process.stdout.write(line + "\n");
       }
     }
+  } else if (verb === "jobs") {
+    const query: JobQuery = { sort: "id", asc: false };
+    const parseList = (v: string): string[] => v.split(",").map((s) => s.trim()).filter((s) => s !== "");
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      const eq = t.indexOf("=");
+      const name = eq === -1 ? t : t.slice(0, eq);
+      const inline = eq === -1 ? null : t.slice(eq + 1);
+      const need = (): string => {
+        if (inline !== null) return inline;
+        i = i + 1;
+        if (i >= rest.length) fail("jobs: argument " + name + ": expected one value");
+        return rest[i];
+      };
+      if (name === "--status") {
+        query.status = parseList(need());
+      } else if (name === "--kind") {
+        query.kind = parseList(need());
+      } else if (name === "--search") {
+        query.search = need();
+      } else if (name === "--sort") {
+        const v = need() as SortKey;
+        if (["id", "created", "priority", "status", "runtime"].indexOf(v) === -1) {
+          fail("jobs --sort: must be one of id, created, priority, status, runtime");
+        }
+        query.sort = v;
+      } else if (name === "--asc") {
+        query.asc = true;
+      } else if (name === "--desc") {
+        query.asc = false;
+      } else if (name === "--limit") {
+        const n = Number(need());
+        if (!Number.isInteger(n) || n < 0) {
+          fail("jobs --limit: must be a non-negative integer");
+        }
+        query.limit = n;
+      } else {
+        fail("jobs: unknown argument " + t);
+      }
+    }
+    for (const rec of queryJobs(db, query)) {
+      process.stdout.write(JSON.stringify(rec) + "\n");
+    }
   } else if (verb === "wait-on") {
     const ok = q.waitOn(db, Number(rest[0]), rest[1]);
     if (!ok) {
@@ -333,11 +363,20 @@ async function main(): Promise<void> {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;
     let since = 0;
+    let jobFilter: number | null = null;
+    let kinds: string | null = null;
+    let search: string | null = null;
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--follow") {
         follow = true;
       } else if (rest[i] === "--since") {
         since = Number(rest[++i]);
+      } else if (rest[i] === "--job") {
+        jobFilter = Number(rest[++i]);
+      } else if (rest[i] === "--kind") {
+        kinds = rest[++i];
+      } else if (rest[i] === "--search") {
+        search = rest[++i];
       } else {
         fail("events: unknown argument " + rest[i]);
       }
@@ -350,11 +389,13 @@ async function main(): Promise<void> {
         process.stdout.write(JSON.stringify(line) + "\n");
       }
     };
-    printRows(q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never);
+    const fetchRows = (): { id: number; ts: number; job_id: number | null; kind: string; data: string }[] => {
+      const recs = queryEvents(db, { job: jobFilter, kind: kinds === null ? null : kinds.split(",").map((s) => s.trim()).filter((s) => s !== ""), sinceId: last, search: search });
+      return recs.map((rec) => ({ id: rec.id, ts: rec.ts, job_id: rec.job_id, kind: rec.kind, data: JSON.stringify(rec.data) }));
+    };
+    printRows(fetchRows());
     while (follow) {
-      printRows(
-        q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never,
-      );
+      printRows(fetchRows());
       await new Promise((res) => setTimeout(res, 500));
     }
   } else if (verb === "forward") {
