@@ -3,6 +3,8 @@
 // elsewhere. Machine output rules (NDJSON collections, decoded-once payload,
 // epoch-second timestamps) are documented in docs/machine-schema.md.
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
 
@@ -211,4 +213,273 @@ export function queryEvents(db: Database, query: EventQuery): EventRecord[] {
     }
   }
   return out;
+}
+
+// --- log surface ---
+
+// One captured attempt: the log files and their sizes. The paths point into
+// the coordinate state directory; the sizes are read from disk on demand.
+export interface AttemptLogs {
+  attempt: number;
+  stdout: string | null;
+  stderr: string | null;
+  stdout_bytes: number;
+  stderr_bytes: number;
+  created_at: number;
+}
+
+function fileSize(p: string | null): number {
+  if (p === null) {
+    return 0;
+  }
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+// The captured attempts of one job, newest last. The rows come from the
+// durable job_logs metadata; the sizes come from the files themselves.
+export function jobLogs(db: Database, jid: number): AttemptLogs[] {
+  const rows = q.logRows(db, jid);
+  const out: AttemptLogs[] = [];
+  for (const r of rows) {
+    out.push({
+      attempt: r.attempt,
+      stdout: r.stdout_path,
+      stderr: r.stderr_path,
+      stdout_bytes: fileSize(r.stdout_path),
+      stderr_bytes: fileSize(r.stderr_path),
+      created_at: r.created_at,
+    });
+  }
+  return out;
+}
+
+// --- why: explain a job's live state from the current rows ---
+
+export interface WhyBlocker {
+  reason: string;
+  detail: string;
+}
+
+export interface WhyRecord {
+  v: number;
+  id: number;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  blockers: WhyBlocker[];
+  state: string;
+  detail: string;
+  next: string | null;
+  logs: AttemptLogs[];
+}
+
+// The blockers a job is held by, computed from the live rows: the slot it
+// waits on, the caps that are saturated, its own schedule and its budget.
+// Nothing is inferred from history: a requeued job reads as "queued" again.
+export function whyJob(db: Database, jid: number): WhyRecord | null {
+  const job = q.getJob(db, jid);
+  if (job === null) {
+    return null;
+  }
+  const payload = decodePayload(job.payload);
+  const now = Date.now() / 1000;
+  const blockers: WhyBlocker[] = [];
+  let state = job.status;
+  let detail = "";
+  let next: string | null = null;
+
+  if (job.status === "waiting") {
+    const key = job.waiting_on === null ? "" : job.waiting_on;
+    blockers.push({ reason: "waiting_on", detail: key });
+    state = "waiting";
+    detail = "parked until the event " + key + " is released";
+    next = "coordinate release " + key;
+  } else if (job.status === "queued") {
+    if (job.run_at > now) {
+      blockers.push({ reason: "run_at", detail: String(job.run_at) });
+      state = "scheduled";
+      detail = "held back until its run_at time";
+      next = null;
+    } else {
+      const capReason = capBlocker(db, job, payload);
+      if (capReason !== null) {
+        blockers.push(capReason);
+        state = "queued";
+        detail = capReason.detail;
+        next = null;
+      } else {
+        state = "queued";
+        detail = "waiting for a free slot on the machine";
+        next = null;
+      }
+    }
+  } else if (job.status === "running") {
+    const remaining = job.max_runtime_s === null ? null : job.max_runtime_s - job.runtime_used_s;
+    if (remaining !== null && remaining <= 0) {
+      blockers.push({ reason: "runtime_budget", detail: "budget exhausted" });
+      state = "running";
+      detail = "the runtime budget is spent; the daemon will time it out";
+    } else {
+      state = "running";
+      detail = "running on " + (job.lease_owner === null ? "the daemon" : job.lease_owner);
+    }
+  } else if (job.status === "failed") {
+    state = "failed";
+    detail = job.outcome === null ? "the attempt exited non-zero" : job.outcome;
+    next = "coordinate dead retry " + String(job.id);
+  } else if (job.status === "dead") {
+    state = "dead";
+    detail = job.outcome === null ? "the attempts are exhausted" : job.outcome;
+    next = "coordinate dead retry " + String(job.id);
+  } else if (job.status === "timed_out") {
+    state = "timed_out";
+    detail = job.outcome === null ? "the runtime budget was spent" : job.outcome;
+    next = "coordinate dead retry " + String(job.id);
+  } else if (job.status === "done") {
+    state = "done";
+    detail = job.outcome === null ? "the attempt exited zero" : job.outcome;
+  }
+
+  return {
+    v: MACHINE_SCHEMA_VERSION,
+    id: job.id,
+    status: job.status,
+    attempts: job.attempts,
+    max_attempts: job.max_attempts,
+    blockers,
+    state,
+    detail,
+    next,
+    logs: jobLogs(db, jid),
+  };
+}
+
+// The saturated cap that keeps a queued job from being claimed, or null when
+// a slot is free. The machine cap counts the running jobs, the repo cap the
+// running jobs of the same repo key, the static tool slots their leases.
+function capBlocker(db: Database, job: q.Job, payload: Record<string, unknown>): WhyBlocker | null {
+  const running = q.qAll(db, "SELECT COUNT(*) AS c FROM jobs WHERE status='running'", []) as { c: number }[];
+  const runningCount = running.length === 0 ? 0 : running[0].c;
+  if (runningCount >= q.machineCap(db)) {
+    return {
+      reason: "machine_cap",
+      detail: runningCount + " job(s) running, the machine cap is " + String(q.machineCap(db)),
+    };
+  }
+  const repo = typeof payload["repo"] === "string" ? (payload["repo"] as string) : null;
+  const cwd = typeof payload["cwd"] === "string" ? (payload["cwd"] as string) : null;
+  const repoValue = repo !== null && repo !== "" ? repo : cwd;
+  const repoKey = repoValue === null || repoValue === "" ? null : "repo:" + path.resolve(repoValue);
+  if (repoKey !== null) {
+    const used = q.qAll(db, "SELECT COUNT(*) AS c FROM concurrency_slots WHERE key=?", [repoKey]) as { c: number }[];
+    const usedCount = used.length === 0 ? 0 : used[0].c;
+    if (usedCount >= q.repoCap(db)) {
+      return {
+        reason: "repo_cap",
+        detail: "the repo slot " + repoKey + " is full (" + String(q.repoCap(db)) + " allowed)",
+      };
+    }
+  }
+  for (const key of q.slotKeys(payload as unknown as q.Payload)) {
+    if (key.startsWith("machine:") || key.startsWith("repo:")) {
+      continue;
+    }
+    const used = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number }[];
+    const usedCost = used.length === 0 ? 0 : used[0].c;
+    const limit = q.slotCapacity(key);
+    if (usedCost + 1 > limit) {
+      return { reason: "tool_slot", detail: "the slot " + key + " is full (" + String(usedCost) + "/" + String(limit) + ")" };
+    }
+  }
+  return null;
+}
+
+// --- health: one fixed summary object ---
+
+export interface HealthRecord {
+  v: number;
+  ts: number;
+  machine: string;
+  daemon: { running: boolean; pid: number | null; heartbeat_age_s: number | null };
+  machine_cap: number;
+  repo_cap: number;
+  running: number;
+  queued: number;
+  waiting: number;
+  failed: number;
+  dead: number;
+  done: number;
+  timed_out: number;
+  total: number;
+  oldest_queued_age_s: number | null;
+  slots: { key: string; cost: number; limit: number }[];
+}
+
+// The fixed health summary. One object, always the same keys, so a panel or
+// a script can read it without guessing which fields exist.
+export function health(db: Database): HealthRecord {
+  const counts: Record<string, number> = {
+    queued: 0,
+    running: 0,
+    waiting: 0,
+    done: 0,
+    failed: 0,
+    dead: 0,
+    timed_out: 0,
+  };
+  const rows = q.qAll(db, "SELECT status, COUNT(*) AS c FROM jobs GROUP BY status", []) as { status: string; c: number }[];
+  let total = 0;
+  for (const r of rows) {
+    counts[r.status] = r.c;
+    total += r.c;
+  }
+  const oldest = q.qOne(db, "SELECT MIN(created_at) AS a FROM jobs WHERE status='queued'", []) as { a: number | null } | null;
+  const oldestAge = oldest === null || oldest.a === null ? null : round3(Date.now() / 1000 - oldest.a);
+  const pid = q.liveDaemonPid(db);
+  const hb = q.daemonHeartbeatTs(db);
+  const hbAge = hb === null ? null : round3(Date.now() / 1000 - hb);
+  const slotRows = q.qAll(db, "SELECT key, COALESCE(SUM(cost),0) AS c FROM concurrency_slots GROUP BY key ORDER BY key", []) as {
+    key: string;
+    c: number;
+  }[];
+  const slots: { key: string; cost: number; limit: number }[] = [];
+  const mCap = q.machineCap(db);
+  const rCap = q.repoCap(db);
+  for (const r of slotRows) {
+    slots.push({ key: r.key, cost: r.c, limit: slotLimitFor(r.key, mCap, rCap) });
+  }
+  return {
+    v: MACHINE_SCHEMA_VERSION,
+    ts: Date.now() / 1000,
+    machine: q.recordedMachine(db) ?? q.MACHINE,
+    daemon: { running: pid !== null, pid: pid, heartbeat_age_s: hbAge },
+    machine_cap: q.machineCap(db),
+    repo_cap: q.repoCap(db),
+    running: counts["running"],
+    queued: counts["queued"],
+    waiting: counts["waiting"],
+    failed: counts["failed"],
+    dead: counts["dead"],
+    done: counts["done"],
+    timed_out: counts["timed_out"],
+    total,
+    oldest_queued_age_s: oldestAge,
+    slots,
+  };
+}
+
+// The capacity of a slot key: the machine cap for the machine key, the repo
+// cap for a repo key, the configured limit for the static tool slots.
+function slotLimitFor(key: string, machineCap: number, repoCap: number): number {
+  if (key.startsWith("machine:")) {
+    return machineCap;
+  }
+  if (key.startsWith("repo:")) {
+    return repoCap;
+  }
+  return q.slotCapacity(key);
 }

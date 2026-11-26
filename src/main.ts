@@ -3,17 +3,21 @@
 // mirrors argparse semantics (REMAINDER after `--`), because @cutils/cli owns the
 // subcommand seam only and cannot express positional remainder commands in-subset.
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
-import { jobRecord, queryJobs, queryEvents, type JobQuery, type SortKey } from "./readmodel.ts";
+import { jobRecord, queryJobs, queryEvents, whyJob, health, jobLogs, type JobQuery, type SortKey } from "./readmodel.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], daemon, doctor, service install [--force]|uninstall|status\n" +
     "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
+    "logs <id> prints the captured stdout and stderr paths of the job's attempts; --attempt N reads that attempt, --follow tails new output\n" +
+    "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
+    "health emits one fixed v1 summary object (--json is the default and only form)\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
@@ -34,6 +38,49 @@ function usage(): string {
 function fail(msg: string): never {
   process.stderr.write(msg + "\n");
   process.exit(1);
+}
+
+// The size of a log file, or 0 when it is gone.
+function fileSizeOf(p: string): number {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+// A slice of a log file, from byte offset to the current end.
+function readFrom(p: string, offset: number, size: number): string {
+  try {
+    const fd = fs.openSync(p, "r");
+    try {
+      const buf = Buffer.alloc(size - offset);
+      const read = fs.readSync(fd, buf, 0, buf.length, offset);
+      return buf.slice(0, read).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+// Print a captured log file to stdout, with a header naming the stream.
+function printLogFile(p: string | null, stream: string): void {
+  if (p === null) {
+    return;
+  }
+  let text = "";
+  try {
+    text = fs.readFileSync(p, "utf8");
+  } catch {
+    text = "";
+  }
+  process.stdout.write("--- " + stream + " (" + p + ") ---\n");
+  process.stdout.write(text);
+  if (text !== "" && text.charAt(text.length - 1) !== "\n") {
+    process.stdout.write("\n");
+  }
 }
 
 function jobView(job: q.Job): Record<string, unknown> {
@@ -343,6 +390,186 @@ async function main(): Promise<void> {
     }
     for (const rec of queryJobs(db, query)) {
       process.stdout.write(JSON.stringify(rec) + "\n");
+    }
+  } else if (verb === "logs") {
+    // The captured output of a job's attempts. The files live in the state
+    // directory; the metadata that links job, attempt and paths is durable.
+    let jidText: string | null = null;
+    let attemptFilter: number | null = null;
+    let follow = false;
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--attempt") {
+        attemptFilter = Number(rest[++i]);
+        if (!Number.isInteger(attemptFilter)) {
+          fail("logs --attempt: must be an integer");
+        }
+      } else if (t === "--follow") {
+        follow = true;
+      } else if (t === "--json") {
+        asJson = true;
+      } else if (t.startsWith("--")) {
+        fail("logs: unknown argument " + t);
+      } else {
+        jidText = t;
+      }
+    }
+    if (jidText === null) {
+      fail("logs: a job id is required");
+    }
+    const jid = Number(jidText);
+    if (!Number.isInteger(jid)) {
+      fail("logs: job id must be an integer");
+    }
+    if (q.getJob(db, jid) === null) {
+      fail("no job " + jidText);
+    }
+    const attempts = jobLogs(db, jid);
+    if (attempts.length === 0) {
+      fail("job " + jidText + " has no captured output");
+    }
+    const selected =
+      attemptFilter === null
+        ? [attempts[attempts.length - 1]]
+        : attempts.filter((a) => a.attempt === attemptFilter);
+    if (selected.length === 0) {
+      fail("job " + jidText + " has no captured attempt " + String(attemptFilter));
+    }
+    if (asJson) {
+      for (const a of selected) {
+        process.stdout.write(
+          JSON.stringify({
+            v: 1,
+            job_id: jid,
+            attempt: a.attempt,
+            stdout: a.stdout,
+            stderr: a.stderr,
+            stdout_bytes: a.stdout_bytes,
+            stderr_bytes: a.stderr_bytes,
+            created_at: a.created_at,
+          }) + "\n",
+        );
+      }
+    } else {
+      for (const a of selected) {
+        printLogFile(a.stdout, "stdout");
+        printLogFile(a.stderr, "stderr");
+      }
+    }
+    if (follow) {
+      // Tail the selected attempt's files: the same shape as `events --follow`.
+      const target = selected[selected.length - 1];
+      const offsets: Record<string, number> = {};
+      for (const p of [target.stdout, target.stderr]) {
+        if (p !== null) {
+          offsets[p] = fileSizeOf(p);
+        }
+      }
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 500));
+        for (const p of Object.keys(offsets)) {
+          const size = fileSizeOf(p);
+          if (size > offsets[p]) {
+            const chunk = readFrom(p, offsets[p], size);
+            offsets[p] = size;
+            process.stdout.write(chunk);
+          }
+        }
+      }
+    }
+  } else if (verb === "why") {
+    // Explain the job's live state from the current rows, not from history.
+    let jidText: string | null = null;
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--json") {
+        asJson = true;
+      } else if (t.startsWith("--")) {
+        fail("why: unknown argument " + t);
+      } else {
+        jidText = t;
+      }
+    }
+    if (jidText === null) {
+      fail("why: a job id is required");
+    }
+    const rec = whyJob(db, Number(jidText));
+    if (rec === null) {
+      fail("no job " + jidText);
+    }
+    if (asJson) {
+      process.stdout.write(JSON.stringify(rec) + "\n");
+    } else {
+      process.stdout.write("job " + String(rec.id) + ": " + rec.state + "\n");
+      process.stdout.write("  " + rec.detail + "\n");
+      if (rec.blockers.length > 0) {
+        for (const b of rec.blockers) {
+          process.stdout.write("  blocker: " + b.reason + " (" + b.detail + ")\n");
+        }
+      } else {
+        process.stdout.write("  blocker: none\n");
+      }
+      if (rec.next !== null) {
+        process.stdout.write("  next: " + rec.next + "\n");
+      }
+      for (const a of rec.logs) {
+        process.stdout.write(
+          "  attempt " +
+            String(a.attempt) +
+            ": stdout " +
+            (a.stdout === null ? "none" : a.stdout + " (" + String(a.stdout_bytes) + " bytes)") +
+            ", stderr " +
+            (a.stderr === null ? "none" : a.stderr + " (" + String(a.stderr_bytes) + " bytes)") +
+            "\n",
+        );
+      }
+    }
+  } else if (verb === "health") {
+    // One fixed summary object for scripts and panels.
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--json") {
+        asJson = true;
+      } else {
+        fail("health: unknown argument " + rest[i]);
+      }
+    }
+    const rec = health(db);
+    if (asJson) {
+      process.stdout.write(JSON.stringify(rec) + "\n");
+    } else {
+      process.stdout.write(
+        "machine " +
+          rec.machine +
+          "  daemon " +
+          (rec.daemon.running ? "up (pid " + String(rec.daemon.pid) + ")" : "not running") +
+          "\n",
+      );
+      process.stdout.write(
+        "queued " +
+          String(rec.queued) +
+          "  running " +
+          String(rec.running) +
+          "  waiting " +
+          String(rec.waiting) +
+          "  done " +
+          String(rec.done) +
+          "  failed " +
+          String(rec.failed) +
+          "  dead " +
+          String(rec.dead) +
+          "  timed_out " +
+          String(rec.timed_out) +
+          "\n",
+      );
+      process.stdout.write(
+        "caps: machine " + String(rec.machine_cap) + ", repo " + String(rec.repo_cap) + "\n",
+      );
+      for (const s of rec.slots) {
+        process.stdout.write("slot " + s.key + ": " + String(s.cost) + "/" + String(s.limit) + "\n");
+      }
     }
   } else if (verb === "wait-on") {
     const ok = q.waitOn(db, Number(rest[0]), rest[1]);

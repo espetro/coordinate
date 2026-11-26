@@ -75,6 +75,11 @@ export function repoCap(db: Database): number {
   return 1;
 }
 
+// Tool slot capacity for the static keys: what config.toml sets, else 1.
+export function slotCapacity(key: string): number {
+  return cfg.slotLimit(key);
+}
+
 export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS jobs(
   id INTEGER PRIMARY KEY,
@@ -137,6 +142,17 @@ export const SCHEMA = [
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 )`,
+  // Durable metadata linking a captured attempt to its log files. Paths point
+  // into the state directory; events never carry raw output, only these
+  // pointers (docs/machine-schema.md).
+  `CREATE TABLE IF NOT EXISTS job_logs(
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  attempt INTEGER NOT NULL,
+  stdout_path TEXT,
+  stderr_path TEXT,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(job_id, attempt)
+)`,
 ];
 
 // Statement lifecycle: every prepareRaw is tracked for the life of the
@@ -173,6 +189,30 @@ export function emit(db: Database, jid: number | null, kind: string, data: Recor
     JSON.stringify(data),
   ]);
 };
+
+// Attach the attempt's log paths to an event's data (pointer only, no output).
+// Kept separate from emit so existing callers stay untouched.
+export function emitWithLogPaths(db: Database, jid: number, kind: string, data: Record<string, unknown>): void {
+  const row = logRow(db, jid, currentAttempt(db, jid));
+  if (row !== null) {
+    const logs: Record<string, string | null> = {};
+    if (row.stdout_path !== null) {
+      logs["stdout"] = row.stdout_path;
+    }
+    if (row.stderr_path !== null) {
+      logs["stderr"] = row.stderr_path;
+    }
+    if (row.stdout_path !== null || row.stderr_path !== null) {
+      data["logs"] = logs;
+    }
+  }
+  emit(db, jid, kind, data);
+}
+
+export function currentAttempt(db: Database, jid: number): number {
+  const row = qOne(db, "SELECT attempts FROM jobs WHERE id=?", [jid]) as { attempts: number } | null;
+  return row === null ? 0 : row.attempts;
+}
 
 export interface Job {
   id: number;
@@ -328,6 +368,93 @@ export function connect(): Database {  const p = dbPath();
     }
   }
   return db;
+}
+
+// --- per-job, per-attempt output capture ---
+
+// Log directory inside the coordinate state directory, next to queue.db so an
+// override of COORDINATE_DB moves its logs with it.
+export function logsDir(): string {
+  return path.join(path.dirname(dbPath()), "logs");
+}
+
+export interface LogPathPair {
+  stdout: string | null;
+  stderr: string | null;
+}
+
+// Open the per-attempt log files and return the descriptors the child
+// inherits. The daemon passes them as the child's stdout/stderr fds, so the
+// output lands in the files without a copy in the daemon's memory.
+// ACP jobs keep stdout for the protocol, so only stderr is captured there.
+export function openLogFiles(
+  jid: number,
+  attempt: number,
+  withStdout: boolean,
+): { pair: LogPathPair; stdoutFd: number; stderrFd: number } | null {
+  try {
+    const dir = logsDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const base = path.join(dir, String(jid) + "-" + String(attempt));
+    const stdoutPath = withStdout ? base + ".stdout.log" : null;
+    const stderrPath = base + ".stderr.log";
+    const stdoutFd = stdoutPath === null ? -1 : fs.openSync(stdoutPath, "a");
+    let stderrFd = -1;
+    try {
+      stderrFd = fs.openSync(stderrPath, "a");
+    } catch {
+      if (stdoutFd >= 0) {
+        fs.closeSync(stdoutFd);
+      }
+      throw new Error("stderr log open failed");
+    }
+    return { pair: { stdout: stdoutPath, stderr: stderrPath }, stdoutFd, stderrFd };
+  } catch {
+    // Capture is best effort: a job must still run when the log directory is
+    // not writable (read-only state mount, permissions). The daemon inherits
+    // output as before and `coordinate logs` reports the missing metadata.
+    return null;
+  }
+}
+
+// Record the log paths of an attempt. Durable metadata links job, attempt and
+// the files; events only ever reference these paths, never the output.
+export function recordLogFiles(db: Database, jid: number, attempt: number, pair: LogPathPair): void {
+  try {
+    qRun(
+      db,
+      "INSERT INTO job_logs(job_id,attempt,stdout_path,stderr_path,created_at) VALUES(?,?,?,?,?) " +
+        "ON CONFLICT(job_id,attempt) DO UPDATE SET stdout_path=excluded.stdout_path, stderr_path=excluded.stderr_path",
+      [jid, attempt, pair.stdout, pair.stderr, Date.now() / 1000],
+    );
+  } catch {
+    // The metadata is best effort too: the files exist even if the row does not.
+  }
+}
+
+export interface JobLogRow {
+  job_id: number;
+  attempt: number;
+  stdout_path: string | null;
+  stderr_path: string | null;
+  created_at: number;
+}
+
+export function logRows(db: Database, jid: number): JobLogRow[] {
+  return qAll(db, "SELECT * FROM job_logs WHERE job_id=? ORDER BY attempt", [jid]) as JobLogRow[];
+}
+
+export function logRow(db: Database, jid: number, attempt: number): JobLogRow | null {
+  return qOne(db, "SELECT * FROM job_logs WHERE job_id=? AND attempt=?", [jid, attempt]) as JobLogRow | null;
+}
+
+export function latestAttempt(db: Database, jid: number): number {
+  const row = qOne(db, "SELECT MAX(attempt) AS a FROM job_logs WHERE job_id=?", [jid]) as { a: number | null } | null;
+  if (row !== null && row.a !== null) {
+    return row.a;
+  }
+  const j = getJob(db, jid);
+  return j === null ? 0 : j.attempts;
 }
 
 // --- daemon singleton + heartbeat (single row id=1 in the daemon table) ---
@@ -570,7 +697,7 @@ export function heartbeat(db: Database, jid: number, owner: string): boolean {
   return cur.changes > 0;
 }
 
-export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null): string | null {
+export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null, exitCode: number | null = null): string | null {
   using _tx = db.transaction();
   chargeRuntime(db, jid);
   qRun(db, "UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?", [
@@ -587,7 +714,14 @@ export function finish(db: Database, jid: number, owner: string, status: string,
     }
   }
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
-  emit(db, jid, status === "done" ? "done" : status, { status, outcome });
+  const data: Record<string, unknown> = { status };
+  if (outcome !== null) {
+    data["outcome"] = outcome;
+  }
+  if (exitCode !== null) {
+    data["exit_code"] = exitCode;
+  }
+  emitWithLogPaths(db, jid, status === "done" ? "done" : status, data);
   return event;
 }
 
