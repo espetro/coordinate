@@ -651,6 +651,273 @@ async function main(): Promise<void> {
     if (!ok) {
       fail("job " + rest[0] + " not cancellable");
     }
+  } else if (verb === "lease") {
+    // Weighted semaphore leases with FIFO waits (surfaces-design.md). Open to
+    // any process on the machine, job or not: the default owner is the parent
+    // process of this CLI call, so a shim or hook that stays alive while the
+    // tool runs keeps the lease; a dead owner is reaped within one poll cycle
+    // of the next acquirer and the TTL is the final backstop.
+    const sub = rest[0];
+    if (sub === "acquire") {
+      let key: string | null = null;
+      let cost = 1;
+      let waitDur: string | null = null;
+      let owner: string | null = null;
+      for (let i = 1; i < rest.length; i++) {
+        const t = rest[i];
+        if (t === "--cost") {
+          cost = parseIntArg(rest[++i], "--cost");
+        } else if (t === "--wait") {
+          waitDur = rest[++i];
+        } else if (t === "--owner") {
+          owner = rest[++i];
+        } else if (t.startsWith("--cost=")) {
+          cost = parseIntArg(t.slice(7), "--cost");
+        } else if (t.startsWith("--wait=")) {
+          waitDur = t.slice(7);
+        } else if (t.startsWith("--owner=")) {
+          owner = t.slice(8);
+        } else if (!t.startsWith("--") && key === null) {
+          key = t;
+        } else {
+          fail("lease acquire: unknown argument " + t);
+        }
+      }
+      if (key === null) {
+        fail("lease acquire: give a lease key, e.g. coordinate lease acquire tool:vitest --cost 2 --wait 60s");
+      }
+      if (cost <= 0) {
+        fail("lease acquire --cost: must be a positive integer");
+      }
+      const { slotLimit } = await import("./config.ts");
+      const limit = slotLimit(key);
+      if (cost > limit) {
+        process.stderr.write(
+          JSON.stringify({ error: "ungrantable", key, cost, limit, detail: "cost exceeds the key limit; raise it in [slots] config" }) + "\n",
+        );
+        process.exit(4);
+      }
+      if (owner === null) {
+        owner = "pid:" + process.ppid;
+      }
+      const kind = owner.startsWith("pid:") ? "process" : owner.startsWith("job:") ? "job" : "agent";
+      q.registerEntity(db, owner, kind, null);
+      const immediate = q.acquireLease(db, key, owner, cost);
+      if (immediate !== null) {
+        const lease = q.qOne(db, "SELECT * FROM leases WHERE grant_id=?", [immediate]) as q.Lease;
+        process.stdout.write(JSON.stringify({ ...lease, wait_id: null }) + "\n");
+        return;
+      }
+      let deadlineAt: number | null = null;
+      if (waitDur !== null) {
+        const secs = parseDurationSecs(waitDur);
+        if (secs === null || secs <= 0) {
+          fail("lease acquire --wait: bad duration " + JSON.stringify(waitDur) + " (use e.g. 30s, 15m)");
+        }
+        deadlineAt = Date.now() / 1000 + secs;
+      }
+      const waitId = q.enqueueWait(db, key, owner, cost, deadlineAt);
+      // Poll loop: every iteration runs the shared maintenance (expire TTLs,
+      // reap dead owners, drain the FIFO), so any active waiter is its own
+      // granter and no daemon is required for fairness.
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 150));
+        {
+          using _tx = q.writeTx(db);
+          q.maintainLeases(db, [key]);
+        }
+        const w = q.getWait(db, waitId);
+        if (w === null) {
+          process.exit(4);
+        }
+        if (w.state === "granted" && w.grant_id !== null) {
+          const lease = q.qOne(db, "SELECT * FROM leases WHERE grant_id=?", [w.grant_id]) as q.Lease | null;
+          if (lease !== null) {
+            process.stdout.write(JSON.stringify({ ...lease, wait_id: waitId }) + "\n");
+            process.exit(0);
+          }
+        }
+        if (w.state === "expired") {
+          process.stderr.write(JSON.stringify({ error: "timeout", key, wait_id: waitId }) + "\n");
+          process.exit(3);
+        }
+        if (w.state === "cancelled") {
+          process.stderr.write(JSON.stringify({ error: "cancelled", key, wait_id: waitId }) + "\n");
+          process.exit(4);
+        }
+      }
+    } else if (sub === "release") {
+      if (rest.length !== 2) {
+        fail("lease release: give one grant id");
+      }
+      if (!q.releaseLease(db, rest[1])) {
+        fail("lease release: no such grant " + rest[1]);
+      }
+    } else if (sub === "cancel") {
+      if (rest.length !== 2) {
+        fail("lease cancel: give one wait id");
+      }
+      if (!q.cancelWait(db, Number(rest[1]))) {
+        fail("lease cancel: no queued wait " + rest[1]);
+      }
+    } else if (sub === "refresh") {
+      if (rest.length !== 2) {
+        fail("lease refresh: give one grant id");
+      }
+      if (!q.refreshLease(db, rest[1])) {
+        fail("lease refresh: no such grant " + rest[1]);
+      }
+    } else if (sub === "list" || sub === "waits") {
+      const rows = sub === "list" ? q.listLeases(db) : q.listWaits(db);
+      for (const r of rows) {
+        process.stdout.write(JSON.stringify(r) + "\n");
+      }
+    } else {
+      fail("lease: action must be acquire, release, cancel, refresh, list or waits");
+    }
+  } else if (verb === "run") {
+    // Enforcement adapter (surfaces-design.md): wrap a heavy tool run in a
+    // lease. The command is classified with the same table the daemon uses;
+    // unmatched commands run directly, so the wrapper is safe to apply
+    // broadly. This process stays alive for the whole run — it is the lease
+    // owner and the babysitter, refreshing the grant until the tool exits.
+    let waitDur: string | null = null;
+    let forceKey: string | null = null;
+    let forceCost: number | null = null;
+    let shellStr: string | null = null;
+    const cmd: string[] = [];
+    {
+      let i = 0;
+      for (; i < rest.length; i++) {
+        const t = rest[i];
+        if (t === "--wait") {
+          waitDur = rest[++i];
+        } else if (t === "--key") {
+          forceKey = rest[++i];
+        } else if (t === "--cost") {
+          forceCost = parseIntArg(rest[++i], "--cost");
+        } else if (t === "--shell") {
+          i = i + 1;
+          if (i >= rest.length) {
+            fail("run --shell: expected one string");
+          }
+          shellStr = rest[i];
+          i = i + 1;
+          break;
+        } else if (t === "--") {
+          i = i + 1;
+          break;
+        } else if (!t.startsWith("--")) {
+          break;
+        } else {
+          fail("run: unknown option " + t);
+        }
+      }
+      for (; i < rest.length; i++) {
+        cmd.push(rest[i]);
+      }
+    }
+    if (shellStr === null && cmd.length === 0) {
+      fail("run: no command given (use -- cmd... or --shell 'cmd...')");
+    }
+    const tc = await import("./toolclass.ts");
+    let argv0: string | null = null;
+    if (shellStr !== null) {
+      const toks = tc.shlexSplit(shellStr);
+      argv0 = toks === null || toks.length === 0 ? null : toks[0];
+    } else {
+      argv0 = cmd[0];
+    }
+    let key: string | null = forceKey;
+    let cost = forceCost === null ? 1 : forceCost;
+    if (key === null && argv0 !== null) {
+      const resolved = tc.which(argv0);
+      const m = tc.matchToolClass(resolved === null ? argv0 : resolved);
+      if (m !== null) {
+        key = tc.toolSlotKey(m.cls, tc.projectKey(null));
+        cost = forceCost === null ? m.cost : forceCost;
+      }
+    }
+    const runChild = async (): Promise<number> => {
+      const cp = await import("node:child_process");
+      const proc =
+        shellStr !== null
+          ? cp.spawn(process.platform === "win32" ? "cmd.exe" : "/bin/sh", [process.platform === "win32" ? "/c" : "-c", shellStr], { stdio: "inherit" })
+          : cp.spawn(cmd[0], cmd.slice(1), { stdio: "inherit" });
+      return await new Promise((resolve) => {
+        proc.on("error", (err: Error) => {
+          process.stderr.write("coordinate run: spawn failed: " + err.message + "\n");
+          resolve(127);
+        });
+        proc.on("exit", (code: number | null) => {
+          resolve(code === null ? 1 : code);
+        });
+      });
+    };
+    if (key === null) {
+      // not a heavy tool: transparent passthrough, no lease round-trip (D4)
+      process.exit(await runChild());
+    }
+    const { slotLimit } = await import("./config.ts");
+    if (cost > slotLimit(key)) {
+      process.stderr.write(JSON.stringify({ error: "ungrantable", key, cost, limit: slotLimit(key) }) + "\n");
+      process.exit(4);
+    }
+    const owner = "pid:" + process.pid;
+    q.registerEntity(db, owner, "process", null);
+    let grantId: string | null = q.acquireLease(db, key, owner, cost);
+    if (grantId === null) {
+      let deadlineAt: number | null = null;
+      if (waitDur !== null) {
+        const secs = parseDurationSecs(waitDur);
+        if (secs === null || secs <= 0) {
+          fail("run --wait: bad duration " + JSON.stringify(waitDur));
+        }
+        deadlineAt = Date.now() / 1000 + secs;
+      } else {
+        // runs must eventually run: default to an unbounded wait, since the
+        // whole point of the wrapper is that the tool does start at some point
+        deadlineAt = null;
+      }
+      const waitId = q.enqueueWait(db, key, owner, cost, deadlineAt);
+      process.stderr.write("coordinate run: waiting for " + key + " (wait " + waitId + ")\n");
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 150));
+        {
+          using _tx = q.writeTx(db);
+          q.maintainLeases(db, [key]);
+        }
+        const w = q.getWait(db, waitId);
+        if (w === null) {
+          process.exit(4);
+        }
+        if (w.state === "granted" && w.grant_id !== null) {
+          grantId = w.grant_id;
+          break;
+        }
+        if (w.state === "expired") {
+          process.stderr.write(JSON.stringify({ error: "timeout", key, wait_id: waitId }) + "\n");
+          process.exit(3);
+        }
+        if (w.state === "cancelled") {
+          process.stderr.write(JSON.stringify({ error: "cancelled", key, wait_id: waitId }) + "\n");
+          process.exit(4);
+        }
+      }
+    }
+    // babysit: refresh the grant while the tool runs so a long suite never
+    // loses its units to the TTL; release on exit, whatever the code.
+    const refresh = setInterval(() => {
+      if (grantId !== null) {
+        q.refreshLease(db, grantId);
+      }
+    }, Math.max(1000, Math.floor(q.LEASE_S * 1000 / 3)));
+    const code = await runChild();
+    clearInterval(refresh);
+    if (grantId !== null) {
+      q.releaseLease(db, grantId);
+    }
+    process.exit(code);
   } else if (verb === "events") {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;

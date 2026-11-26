@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
+import type { Transaction } from "@cutils/sqlite";
 import type { BindValue, RunResult } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
 import * as cfg from "./config.ts";
@@ -153,6 +154,42 @@ export const SCHEMA = [
   created_at REAL NOT NULL,
   PRIMARY KEY(job_id, attempt)
 )`,
+  // Surfaces primitives (surfaces-design.md): entities are addressable lease
+  // and mailbox owners of any kind (jobs, processes, agents, endpoints);
+  // leases are weighted semaphore grants; waits are the durable FIFO queue
+  // for grants. concurrency_slots is the legacy job-only lease table and is
+  // kept for schema compatibility, but new writes go to leases.
+  `CREATE TABLE IF NOT EXISTS entities(
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  device TEXT NOT NULL,
+  heartbeat_ts REAL,
+  meta TEXT NOT NULL DEFAULT '{}',
+  created_at REAL NOT NULL,
+  expires_at REAL
+)`,
+  `CREATE TABLE IF NOT EXISTS leases(
+  grant_id TEXT PRIMARY KEY,
+  key TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  cost INTEGER NOT NULL DEFAULT 1,
+  acquired_at REAL NOT NULL,
+  lease_expires_at REAL NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_leases_key ON leases(key)`,
+  `CREATE INDEX IF NOT EXISTS idx_leases_owner ON leases(owner_id)`,
+  `CREATE TABLE IF NOT EXISTS waits(
+  id INTEGER PRIMARY KEY,
+  key TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  cost INTEGER NOT NULL DEFAULT 1,
+  enqueued_at REAL NOT NULL,
+  deadline_at REAL,
+  state TEXT NOT NULL DEFAULT 'queued'
+    CHECK(state IN ('queued','granted','cancelled','expired')),
+  grant_id TEXT
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_waits_key ON waits(key, state)`,
 ];
 
 // Statement lifecycle: every prepareRaw is tracked for the life of the
@@ -245,6 +282,22 @@ interface KeyCostRow {
 }
 interface KeyRow {
   key: string;
+}
+
+// Open a transaction that holds the write lock from the start. The library
+// issues a deferred BEGIN, and a deferred transaction that reads first cannot
+// take the lock once another process has written: SQLite answers "database is
+// locked" at once, without consulting busy_timeout. A write that matches no row,
+// issued before any read, takes the lock while waiting is still possible.
+export function writeTx(db: Database): Transaction {
+  const tx = db.transaction();
+  try {
+    db.exec("DELETE FROM settings WHERE 0");
+  } catch (e) {
+    tx.rollback();
+    throw e;
+  }
+  return tx;
 }
 
 function migrateJobs(db: Database): void {
@@ -508,7 +561,7 @@ export function liveDaemonPid(db: Database): number | null {
 // now owns row id=1; returns false when a fresh heartbeat from another daemon
 // is present (that daemon's pid is written to *conflictPid).
 export function claimDaemon(db: Database, pid: number, conflictPid: { v: number | null }): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const other = liveDaemonPid(db);
   if (other !== null) {
     conflictPid.v = other;
@@ -579,27 +632,29 @@ export function enqueue(db: Database, payload: Payload, priority = 0, maxAttempt
     [kind, JSON.stringify(payload), priority, runAt === null ? now : runAt, 0, maxAttempts, now, maxRuntimeS === null ? null : maxRuntimeS],
   );
   const jid = r.lastInsertRowid;
+  registerEntity(db, "job:" + jid, "job", null);
   emit(db, jid, "enqueued", { kind: kind });
   return jid;
 }
 
 function usedByKey(db: Database): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const row of qAll(db, "SELECT key, COUNT(*) AS c FROM concurrency_slots GROUP BY key", []) as KeyCostRow[]) {
+  for (const row of qAll(db, "SELECT key, COUNT(*) AS c FROM leases GROUP BY key", []) as KeyCostRow[]) {
     out[row.key] = row.c;
   }
   return out;
 }
 
 function qUsedCost(db: Database, key: string): number {
-  const row = qOne(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number } | null;
+  const row = qOne(db, "SELECT COALESCE(SUM(cost),0) AS c FROM leases WHERE key=?", [key]) as { c: number } | null;
   return row === null ? 0 : row.c;
 }
 
 export function claim(db: Database, owner: string): Parsed | null {
   const now = Date.now() / 1000;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + now);
+  db.exec("DELETE FROM leases WHERE lease_expires_at < " + now);
   const used = usedByKey(db);
   const machineKey = "machine:" + MACHINE;
   if ((used[machineKey] === undefined ? 0 : used[machineKey]) >= machineCap(db)) {
@@ -669,9 +724,9 @@ export function claim(db: Database, owner: string): Parsed | null {
       jid,
     ]);
     {
-      using insSlot = db.prepareRaw("INSERT INTO concurrency_slots(key,lease_expires_at,job_id) VALUES(?,?,?)");
+      using insSlot = db.prepareRaw("INSERT INTO leases(grant_id,key,owner_id,cost,acquired_at,lease_expires_at) VALUES(?,?,?,?,?,?)");
       for (const k of keys) {
-        insSlot.run([k, exp, jid]);
+        insSlot.run(["job:" + jid + ":" + k, k, "job:" + jid, 1, now, exp]);
       }
     }
     const attempt = (
@@ -690,16 +745,17 @@ export function chargeRuntime(db: Database, jid: number): void {
 
 export function heartbeat(db: Database, jid: number, owner: string): boolean {
   const exp = Date.now() / 1000 + LEASE_S;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const cur = qRun(db, "UPDATE jobs SET lease_expires_at=? WHERE id=? AND status='running' AND lease_owner=?", [exp, jid, owner]);
   if (cur.changes > 0) {
     qRun(db, "UPDATE concurrency_slots SET lease_expires_at=? WHERE job_id=?", [exp, jid]);
+    qRun(db, "UPDATE leases SET lease_expires_at=? WHERE owner_id=?", [exp, "job:" + jid]);
   }
   return cur.changes > 0;
 }
 
 export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null, exitCode: number | null = null): string | null {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   qRun(db, "UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?", [
     status,
@@ -708,13 +764,14 @@ export function finish(db: Database, jid: number, owner: string, status: string,
     owner,
   ]);
   let event: string | null = null;
-  const slots = qAll(db, "SELECT key FROM concurrency_slots WHERE job_id=? AND key LIKE 'tool:%'", [jid]) as KeyRow[];
+  const slots = qAll(db, "SELECT key FROM leases WHERE owner_id=? AND key LIKE 'tool:%'", ["job:" + jid]) as KeyRow[];
   for (const s of slots) {
     if (event === null) {
       event = s.key;
     }
   }
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
+  qRun(db, "DELETE FROM leases WHERE owner_id=?", ["job:" + jid]);
   const data: Record<string, unknown> = { status };
   if (outcome !== null) {
     data["outcome"] = outcome;
@@ -749,7 +806,7 @@ function killOrphans(db: Database, pgid: number | null, _pidfile: string | null)
 
 export function reap(db: Database): number[] {
   const now = Date.now() / 1000;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const expired = qAll(db, "SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?", [now]) as IdRow[];
   for (const row of expired) {
     chargeRuntime(db, row.id);
@@ -781,6 +838,7 @@ export function reap(db: Database): number[] {
     });
   }
   db.exec("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')");
+  db.exec("DELETE FROM leases WHERE owner_id IN (SELECT 'job:' || id FROM jobs WHERE status<>'running')");
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
@@ -789,7 +847,7 @@ export function reap(db: Database): number[] {
 }
 
 export function waitOn(db: Database, jid: number, event: string): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -797,6 +855,7 @@ export function waitOn(db: Database, jid: number, event: string): boolean {
     [event, jid],
   );
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=?", [jid]);
+  qRun(db, "DELETE FROM leases WHERE owner_id=?", ["job:" + jid]);
   if (cur.changes > 0) {
     emit(db, jid, "parked", { waiting_on: event });
   }
@@ -818,7 +877,7 @@ export function release(db: Database, event: string): number[] {
 }
 
 export function cancel(db: Database, jid: number): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -826,6 +885,7 @@ export function cancel(db: Database, jid: number): boolean {
     [jid],
   );
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND cost>0", [jid]);
+  qRun(db, "DELETE FROM leases WHERE owner_id=?", ["job:" + jid]);
   if (cur.changes > 0) {
     emit(db, jid, "cancelled", { recorded_as: "failed" });
   }
@@ -875,7 +935,7 @@ export function expiredRunning(db: Database): { id: number; kind: string; payloa
 }
 
 export function finalizeTimedOut(db: Database, jid: number, outcome: string): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -883,10 +943,332 @@ export function finalizeTimedOut(db: Database, jid: number, outcome: string): bo
     [outcome, jid],
   );
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
+  qRun(db, "DELETE FROM leases WHERE owner_id=?", ["job:" + jid]);
   if (cur.changes > 0) {
     emit(db, jid, "timed_out", { outcome });
   }
   return cur.changes > 0;
+}
+
+// --- surfaces primitives: entities, weighted semaphore leases, FIFO waits ---
+// Design: .agents/docs/surfaces-design.md. Jobs hold their slots through the
+// same leases table (owner 'job:<id>'), so external sessions and queue jobs
+// share one accounting space.
+
+export interface Entity {
+  id: string;
+  kind: string;
+  device: string;
+  heartbeat_ts: number | null;
+  meta: string;
+  created_at: number;
+  expires_at: number | null;
+}
+
+export interface Lease {
+  grant_id: string;
+  key: string;
+  owner_id: string;
+  cost: number;
+  acquired_at: number;
+  lease_expires_at: number;
+}
+
+export interface Wait {
+  id: number;
+  key: string;
+  owner_id: string;
+  cost: number;
+  enqueued_at: number;
+  deadline_at: number | null;
+  state: string;
+  grant_id: string | null;
+}
+
+let grantCounter = 0;
+
+function newGrantId(prefix: string): string {
+  grantCounter += 1;
+  return prefix + ":" + process.pid + ":" + Date.now().toString(36) + ":" + grantCounter;
+}
+
+// Upsert an entity. ttlS null means no expiry backstop; job entities outlive
+// their leases because the job row is their liveness source.
+export function registerEntity(db: Database, id: string, kind: string, ttlS: number | null): void {
+  const now = Date.now() / 1000;
+  qRun(
+    db,
+    "INSERT INTO entities(id,kind,device,heartbeat_ts,created_at,expires_at) VALUES(?,?,?,?,?,?) " +
+      "ON CONFLICT(id) DO UPDATE SET heartbeat_ts=excluded.heartbeat_ts, expires_at=excluded.expires_at",
+    [id, kind, MACHINE, now, now, ttlS === null ? null : now + ttlS],
+  );
+}
+
+export function heartbeatEntity(db: Database, id: string, ttlS: number | null): boolean {
+  const now = Date.now() / 1000;
+  const cur = qRun(db, "UPDATE entities SET heartbeat_ts=?, expires_at=? WHERE id=?", [
+    now,
+    ttlS === null ? null : now + ttlS,
+    id,
+  ]);
+  return cur.changes > 0;
+}
+
+export function getEntity(db: Database, id: string): Entity | null {
+  return qOne(db, "SELECT * FROM entities WHERE id=?", [id]) as Entity | null;
+}
+
+// Liveness probe for pid entities. kill(pid, 0) delivers no signal; EPERM means
+// the process exists but belongs to someone else, which is still alive.
+function pidAlive(pid: number): boolean {
+  if (pid <= 1) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
+// Liveness by owner kind: jobs defer to their job row, processes probe the pid,
+// everything else trusts the entity row's expiry backstop.
+export function ownerIsAlive(db: Database, ownerId: string): boolean {
+  if (ownerId.startsWith("job:")) {
+    const row = qOne(db, "SELECT status FROM jobs WHERE id=?", [Number(ownerId.slice(4))]) as { status: string } | null;
+    return row !== null && (row.status === "queued" || row.status === "running" || row.status === "waiting");
+  }
+  if (ownerId.startsWith("pid:")) {
+    return pidAlive(Number(ownerId.slice(4)));
+  }
+  const ent = getEntity(db, ownerId);
+  if (ent === null) {
+    return false;
+  }
+  if (ent.expires_at !== null && ent.expires_at < Date.now() / 1000) {
+    return false;
+  }
+  return true;
+}
+
+// Reap dead owners: release their leases and cancel their queued waits, so a
+// killed tool run or a Ctrl-C'd shim can never wedge capacity behind it.
+// Returns the freed keys so the caller can drain waiters.
+export function reapEntities(db: Database): string[] {
+  const owners: string[] = [];
+  for (const r of qAll(db, "SELECT DISTINCT owner_id AS o FROM leases", []) as { o: string }[]) {
+    owners.push(r.o);
+  }
+  for (const r of qAll(db, "SELECT DISTINCT owner_id AS o FROM waits WHERE state='queued'", []) as { o: string }[]) {
+    if (owners.indexOf(r.o) === -1) {
+      owners.push(r.o);
+    }
+  }
+  const freed: string[] = [];
+  for (const o of owners) {
+    if (ownerIsAlive(db, o)) {
+      continue;
+    }
+    // Select every column: compiled binaries check the cast against the row at
+    // run time, so a partial select typed as Lease throws and kills the daemon.
+    for (const l of qAll(db, "SELECT * FROM leases WHERE owner_id=?", [o]) as Lease[]) {
+      qRun(db, "DELETE FROM leases WHERE grant_id=?", [l.grant_id]);
+      emit(db, null, "lease_reaped", { grant_id: l.grant_id, key: l.key, owner: o });
+      if (freed.indexOf(l.key) === -1) {
+        freed.push(l.key);
+      }
+    }
+    for (const w of qAll(db, "SELECT id FROM waits WHERE owner_id=? AND state='queued'", [o]) as { id: number }[]) {
+      qRun(db, "UPDATE waits SET state='cancelled' WHERE id=?", [w.id]);
+      emit(db, null, "wait_cancelled", { wait_id: w.id, owner: o, reason: "owner dead" });
+    }
+  }
+  // GC entity rows: terminal jobs and expired entities.
+  qRun(
+    db,
+    "DELETE FROM entities WHERE id LIKE 'job:%' AND CAST(substr(id,5) AS INTEGER) IN (SELECT id FROM jobs WHERE status IN ('done','failed','dead','timed_out'))",
+    [],
+  );
+  qRun(db, "DELETE FROM entities WHERE expires_at IS NOT NULL AND expires_at<?", [Date.now() / 1000]);
+  return freed;
+}
+
+// Drop expired leases. Returns the keys that freed capacity.
+export function expireLeases(db: Database): string[] {
+  const now = Date.now() / 1000;
+  const rows = qAll(db, "SELECT DISTINCT key AS k FROM leases WHERE lease_expires_at<?", [now]) as { k: string }[];
+  if (rows.length > 0) {
+    qRun(db, "DELETE FROM leases WHERE lease_expires_at<?", [now]);
+  }
+  const out: string[] = [];
+  for (const r of rows) {
+    out.push(r.k);
+  }
+  return out;
+}
+
+export function leaseUsedCost(db: Database, key: string): number {
+  const now = Date.now() / 1000;
+  const row = qOne(db, "SELECT COALESCE(SUM(cost),0) AS c FROM leases WHERE key=? AND lease_expires_at>=?", [key, now]) as {
+    c: number;
+  } | null;
+  return row === null ? 0 : row.c;
+}
+
+// Wake jobs parked on this key (the legacy waitOn/release path) only when
+// capacity might fit; waking on a saturated key just makes jobs respawn,
+// fail the acquire and park again, which is churn without progress.
+function wakeParkedJobs(db: Database, key: string): void {
+  if (leaseUsedCost(db, key) < cfg.slotLimit(key)) {
+    release(db, key);
+  }
+}
+
+// Grant queued waits for one key in strict FIFO order. The head can always fit
+// eventually because oversized costs are refused before enqueue, so smaller
+// waiters never need to jump ahead: free units return monotonically and the
+// head consumes them.
+export function drainWaits(db: Database, key: string): void {
+  const limit = cfg.slotLimit(key);
+  const now = Date.now() / 1000;
+  for (;;) {
+    const head = qOne(db, "SELECT * FROM waits WHERE key=? AND state='queued' ORDER BY id LIMIT 1", [key]) as Wait | null;
+    if (head === null) {
+      break;
+    }
+    if (head.deadline_at !== null && head.deadline_at < now) {
+      qRun(db, "UPDATE waits SET state='expired' WHERE id=?", [head.id]);
+      emit(db, null, "wait_expired", { wait_id: head.id, key, owner: head.owner_id });
+      continue;
+    }
+    if (leaseUsedCost(db, key) + head.cost > limit) {
+      break;
+    }
+    const grantId = newGrantId("g");
+    qRun(db, "INSERT INTO leases(grant_id,key,owner_id,cost,acquired_at,lease_expires_at) VALUES(?,?,?,?,?,?)", [
+      grantId,
+      key,
+      head.owner_id,
+      head.cost,
+      now,
+      now + LEASE_S,
+    ]);
+    qRun(db, "UPDATE waits SET state='granted', grant_id=? WHERE id=?", [grantId, head.id]);
+    emit(db, null, "lease_granted", { grant_id: grantId, key, owner: head.owner_id, cost: head.cost, wait_id: head.id });
+  }
+}
+
+// Capacity maintenance shared by every path that can free or consume units:
+// expire TTLs, reap dead owners, drain the waiters of every affected key and
+// wake legacy parked jobs. Safe to call inside an outer transaction.
+export function maintainLeases(db: Database, keys: string[]): void {
+  const affected: string[] = [];
+  for (const k of expireLeases(db)) {
+    if (affected.indexOf(k) === -1) {
+      affected.push(k);
+    }
+  }
+  for (const k of reapEntities(db)) {
+    if (affected.indexOf(k) === -1) {
+      affected.push(k);
+    }
+  }
+  for (const k of keys) {
+    if (affected.indexOf(k) === -1) {
+      affected.push(k);
+    }
+  }
+  // Capacity freed by job finish/park/cancel does not surface through expire or
+  // reap, so always consider keys that have queued waiters; draining a key with
+  // no free units is a no-op.
+  for (const r of qAll(db, "SELECT DISTINCT key AS k FROM waits WHERE state='queued'", []) as { k: string }[]) {
+    if (affected.indexOf(r.k) === -1) {
+      affected.push(r.k);
+    }
+  }
+  for (const k of affected) {
+    drainWaits(db, k);
+    wakeParkedJobs(db, k);
+  }
+}
+
+// Try an immediate grant with no barging: queued waiters for the key mean the
+// caller must queue behind them even when units are free. Returns the grant id
+// or null. Caller checks cost against slotLimit first (a cost above the limit
+// can never grant and is a config error, not contention).
+export function acquireLease(db: Database, key: string, owner: string, cost: number): string | null {
+  using _tx = writeTx(db);
+  maintainLeases(db, [key]);
+  const queued = qOne(db, "SELECT COUNT(*) AS c FROM waits WHERE key=? AND state='queued'", [key]) as { c: number };
+  if (queued.c === 0 && leaseUsedCost(db, key) + cost <= cfg.slotLimit(key)) {
+    const now = Date.now() / 1000;
+    const grantId = newGrantId("g");
+    qRun(db, "INSERT INTO leases(grant_id,key,owner_id,cost,acquired_at,lease_expires_at) VALUES(?,?,?,?,?,?)", [
+      grantId,
+      key,
+      owner,
+      cost,
+      now,
+      now + LEASE_S,
+    ]);
+    emit(db, null, "lease_granted", { grant_id: grantId, key, owner, cost });
+    return grantId;
+  }
+  return null;
+}
+
+export function enqueueWait(db: Database, key: string, owner: string, cost: number, deadlineAt: number | null): number {
+  const r = qRun(db, "INSERT INTO waits(key,owner_id,cost,enqueued_at,deadline_at) VALUES(?,?,?,?,?)", [
+    key,
+    owner,
+    cost,
+    Date.now() / 1000,
+    deadlineAt,
+  ]);
+  const id = Number(r.lastInsertRowid);
+  emit(db, null, "wait_enqueued", { wait_id: id, key, owner, cost });
+  return id;
+}
+
+export function releaseLease(db: Database, grantId: string): boolean {
+  using _tx = writeTx(db);
+  const row = qOne(db, "SELECT key FROM leases WHERE grant_id=?", [grantId]) as { key: string } | null;
+  if (row === null) {
+    return false;
+  }
+  qRun(db, "DELETE FROM leases WHERE grant_id=?", [grantId]);
+  emit(db, null, "lease_released", { grant_id: grantId, key: row.key });
+  maintainLeases(db, [row.key]);
+  return true;
+}
+
+// Extend a grant's TTL. Holders heartbeat through this; a lease nobody
+// refreshes evaporates after LEASE_S, which is the backstop for volatile runs.
+export function refreshLease(db: Database, grantId: string): boolean {
+  const cur = qRun(db, "UPDATE leases SET lease_expires_at=? WHERE grant_id=?", [Date.now() / 1000 + LEASE_S, grantId]);
+  return cur.changes > 0;
+}
+
+export function cancelWait(db: Database, waitId: number): boolean {
+  const cur = qRun(db, "UPDATE waits SET state='cancelled' WHERE id=? AND state='queued'", [waitId]);
+  if (cur.changes > 0) {
+    emit(db, null, "wait_cancelled", { wait_id: waitId, reason: "explicit" });
+  }
+  return cur.changes > 0;
+}
+
+export function getWait(db: Database, waitId: number): Wait | null {
+  return qOne(db, "SELECT * FROM waits WHERE id=?", [waitId]) as Wait | null;
+}
+
+export function listLeases(db: Database): Lease[] {
+  return qAll(db, "SELECT * FROM leases ORDER BY key, acquired_at", []) as Lease[];
+}
+
+export function listWaits(db: Database): Wait[] {
+  return qAll(db, "SELECT * FROM waits WHERE state='queued' ORDER BY key, id", []) as Wait[];
 }
 
 // Persist the ACP session id into the payload (port of queue.py set_session): the next

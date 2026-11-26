@@ -48,6 +48,9 @@ coordinate dead retry JOB_ID   # --all requeues every failed and dead job, cance
 coordinate cap show                # {"machine_cap":N,"repo_cap":N,"running":N}
 coordinate cap set --machine-cap N [--repo-cap N] [--force]
 coordinate daemon               # claim loop; run under tmux/service, one per machine
+coordinate lease acquire KEY [--cost N] [--wait 60s] [--owner ID]  # grant JSON on stdout
+coordinate lease release GRANT_ID / lease refresh GRANT_ID / lease cancel WAIT_ID
+coordinate lease list / lease waits   # live state as NDJSON
 ```
 
 - `enqueue --shell` takes ONE quoted string run through the platform shell (`/bin/sh`, `cmd.exe` on Windows); without it args are exec'd directly.
@@ -67,6 +70,27 @@ Queue jobs outlive your turn. After enqueueing work you must follow up on, arm a
 - **Same device**: `forward --exec` can page a sink you control (chat webhook, `t3 thread send` to a thread on the same T3 environment, a status file your monitor tails).
 - **Remote device**: you cannot push events across environments (`t3 thread send` only reaches threads on its own T3 environment). The reliable pattern is **pull**: arm a scheduled task/interval watchdog that ssh-checks `coordinate stats`/`status` on the remote, acts on terminal transitions (merge the worktree branch, `dead retry`, re-dispatch), and disables itself when the queue is clear.
 - Ending a turn with queued/running jobs and no armed watchdog is a process bug — the workstream's completion will go unnoticed.
+
+## Tool leases
+
+`coordinate lease acquire` meters any scarce resource, job or no job: heavy tool runs (vitest, tsc, cargo), deploys, devices. The key is a weighted semaphore sized by `[slots]` in config.toml; saturated keys queue waiters in a durable FIFO so every run is eventually granted. Use it for any heavy command you run yourself, enqueued or not:
+
+```
+grant=$(coordinate lease acquire tool:tsc:$(git rev-parse --git-common-dir 2>/dev/null || pwd) --cost 2 --wait 120s | jq -r .grant_id) || exit $?
+# ... run the heavy command ...
+coordinate lease release "$grant"
+```
+
+The easier path is `coordinate run`, which classifies, acquires, babysits and releases in one wrapper — use it for every heavy command you run yourself, inside or outside the queue:
+
+```
+coordinate run -- vitest run
+coordinate run -- pnpm tsc --noEmit
+```
+
+It exits with the tool's own code, passes unmatched commands straight through, and prints `waiting for <key>` on stderr when it queues. Default heavy classes (vitest/jest/playwright, tsc/vite, cargo, docker, package-manager installs) serialize per project out of the box; raise parallelism in `config.toml` `[slots]`, e.g. `"tool:vitest:*" = 4`. Heavy runs inside enqueued jobs are already leased by the daemon at spawn — do not wrap those again.
+
+Exit 3 means the wait timed out, exit 4 cancelled or ungrantable. Stay alive while the tool runs: the default owner is your parent process, and dead owners are reaped (leases released, waits cancelled). The TTL (`COORDINATE_LEASE_S`, 30s) is the backstop; long runs heartbeat with `lease refresh`.
 
 ## ACP agent sessions
 

@@ -15,7 +15,8 @@ import { Database } from "@cutils/sqlite";
 import * as q from "./queue.ts";
 import type { AcpHandle } from "./acp.ts";
 import { acpPayloadOf, startAcpJob } from "./acp.ts";
-import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, toolClasses, validateConfig } from "./config.ts";
+import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, validateConfig } from "./config.ts";
+import { matchToolClass, projectKey, shlexSplit, toolSlotKey, which } from "./toolclass.ts";
 // Effect v4 for the daemon's async machinery: the claim loop, the backoff
 // sleep, the stop contract and the singleton-takeover probe. Deep module paths
 // keep the static build small (each Effect module compiles on its own) and the
@@ -66,93 +67,8 @@ class Parked {
   }
 }
 
-function matchToolClass(argv0: string): { cls: string; cost: number } | null {
-  const norm = path.normalize(argv0);
-  const parts = norm.split(path.sep).filter((p) => p !== "");
-  const names: Record<string, boolean> = {};
-  names[path.basename(argv0)] = true;
-  for (const p of parts) {
-    names[p] = true;
-  }
-  for (const cls of Object.keys(toolClasses())) {
-    const spec = toolClasses()[cls];
-    for (const m of spec.match) {
-      if (names[m] === true) {
-        return { cls, cost: spec.cost };
-      }
-    }
-  }
-  return null;
-}
 
-function which(name: string): string | null {
-  if (name.includes(path.sep)) {
-    try {
-      fs.accessSync(name, fs.constants.X_OK);
-      return name;
-    } catch {
-      return null;
-    }
-  }
-  const p = process.env["PATH"] || "";
-  for (const d of p.split(path.delimiter)) {
-    const full = path.join(d, name);
-    try {
-      fs.accessSync(full, fs.constants.X_OK);
-      return full;
-    } catch {
-      // keep looking
-    }
-  }
-  return null;
-}
 
-function projectKey(cwd: string | null): string {
-  const start = path.resolve(cwd === null || cwd === undefined || cwd === "" ? process.cwd() : cwd);
-  let d = start;
-  for (;;) {
-    const dot = path.join(d, ".git");
-    if (fs.existsSync(dot)) {
-      try {
-        if (fs.statSync(dot).isDirectory()) {
-          return d;
-        }
-        // .git file: worktree; resolve gitdir + commondir
-        const text = fs.readFileSync(dot, "utf8");
-        let gitdir: string | null = null;
-        for (const line of text.split("\n")) {
-          if (line.startsWith("gitdir:")) {
-            gitdir = path.resolve(d, line.slice(7).trim());
-            break;
-          }
-        }
-        if (gitdir !== null) {
-          const common = fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
-          return path.dirname(path.resolve(gitdir, common));
-        }
-      } catch {
-        // fall through to git probe
-      }
-      try {
-        const out = cp.execFileSync("git", ["-C", d, "rev-parse", "--git-common-dir"], { timeout: 2000, encoding: "utf8" }).trim();
-        if (out !== "") {
-          const p = path.resolve(d, out);
-          if (path.basename(p) === ".git") {
-            return path.dirname(p);
-          }
-          return fs.existsSync(path.join(p, ".git")) ? p : path.dirname(p);
-        }
-      } catch {
-        // not resolvable
-      }
-    }
-    const parent = path.dirname(d);
-    if (parent === d) {
-      return start;
-    }
-    d = parent;
-  }
-}
 
 function auditSpawn(db: Database, jid: number, argv0: string, cls: string, proj: string): void {
   q.qRun(db, "INSERT INTO spawn_audit(ts,job_id,argv0,tool_class,project) VALUES(?,?,?,?,?)", [
@@ -164,28 +80,8 @@ function auditSpawn(db: Database, jid: number, argv0: string, cls: string, proj:
   ]);
 }
 
-function toolSlotKey(cls: string, proj: string): string {
-  return "tool:" + cls + ":" + proj;
-}
-
 function acquireToolLease(db: Database, jid: number, key: string, cost: number): boolean {
-  using _tx = db.transaction();
-  db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + Date.now() / 1000);
-  let used = 0;
-  const rows = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number }[];
-  for (const r of rows) {
-    used = r.c;
-  }
-  if (used + cost > slotLimit(key)) {
-    return false;
-  }
-  q.qRun(db, "INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)", [
-    key,
-    Date.now() / 1000 + q.LEASE_S,
-    jid,
-    cost,
-  ]);
-  return true;
+  return q.acquireLease(db, key, "job:" + jid, cost) !== null;
 }
 
 interface DeadlineRow {
@@ -240,74 +136,6 @@ function jobEnv(jid: number, deadlineAt: string, attempt: string, maxAttempts: s
 // A shlex.split-style splitter for the scriptc subset: POSIX-style single and double quotes,
 // backslash escapes outside single quotes. Like shlex.split, an unterminated quote returns
 // null (Python raises ValueError); the caller then treats the string as unmatched.
-function shlexSplit(s: string): string[] | null {
-  const toks: string[] = [];
-  let cur = "";
-  let started = false;
-  let i = 0;
-  while (i < s.length) {
-    const ch = s[i];
-    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
-      if (started) {
-        toks.push(cur);
-        cur = "";
-        started = false;
-      }
-      i = i + 1;
-      continue;
-    }
-    if (ch === "'") {
-      started = true;
-      i = i + 1;
-      while (i < s.length && s[i] !== "'") {
-        cur = cur + s[i];
-        i = i + 1;
-      }
-      if (i >= s.length) {
-        return null;
-      }
-      i = i + 1;
-      continue;
-    }
-    if (ch === '"') {
-      started = true;
-      i = i + 1;
-      while (i < s.length && s[i] !== '"') {
-        if (s[i] === "\\" && i + 1 < s.length) {
-          const n = s[i + 1];
-          if (n === '"' || n === "\\" || n === "$" || n === "`") {
-            cur = cur + n;
-            i = i + 2;
-            continue;
-          }
-        }
-        cur = cur + s[i];
-        i = i + 1;
-      }
-      if (i >= s.length) {
-        return null;
-      }
-      i = i + 1;
-      continue;
-    }
-    if (ch === "\\") {
-      if (i + 1 >= s.length) {
-        return null;
-      }
-      cur = cur + s[i + 1];
-      started = true;
-      i = i + 2;
-      continue;
-    }
-    cur = cur + ch;
-    started = true;
-    i = i + 1;
-  }
-  if (started) {
-    toks.push(cur);
-  }
-  return toks;
-}
 
 function argv0Of(kind: string, payload: q.Payload): string | null {
   if (kind !== "cmd") {
@@ -671,6 +499,13 @@ export async function run(): Promise<void> {
 
     if (now - lastReap >= q.LEASE_S / 3) {
       q.reap(db);
+      // Generalized lease maintenance: expire TTLs, reap dead pid owners and
+      // drain FIFO waiters, so grants land even when no acquirer is polling
+      // (async consumers such as parked jobs depend on this).
+      {
+        using _tx = q.writeTx(db);
+        q.maintainLeases(db, []);
+      }
       lastReap = now;
     }
 

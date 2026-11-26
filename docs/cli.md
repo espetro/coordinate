@@ -31,6 +31,12 @@ coordinate <verb> [args]
 | `logs <id> [--attempt N] [--json] [--follow]` | Prints the captured output of the job's attempts. Without `--attempt` it prints the newest attempt's stdout and stderr files with a header; `--attempt N` reads that attempt, `--json` emits one machine record per attempt (paths and byte counts, no output), `--follow` tails new output |
 | `why <id> [--json]` | Explains the job's live state from the current rows: the state, the blockers (waiting event, saturated caps, spent budget), the next step and the log pointers. `--json` emits the machine record |
 | `health [--json]` | Emits one fixed summary object: daemon liveness, caps, per-state job counts, oldest queued age and slot usage. `--json` is the machine form (one JSON object); without it the same data prints as short lines |
+| `lease acquire <key> [--cost N] [--wait DUR] [--owner ID]` | Acquires units of a weighted semaphore key, waiting in a durable FIFO queue when the key is saturated. Prints the grant as JSON on stdout. Exit 3 on wait timeout, 4 when cancelled or ungrantable. No daemon needed |
+| `lease release <grant-id>` | Releases a grant early; the next FIFO waiter is drained immediately |
+| `lease refresh <grant-id>` | Extends a grant's TTL (holders heartbeat through this; unrefreshed leases expire after `COORDINATE_LEASE_S`) |
+| `lease cancel <wait-id>` | Cancels a queued wait |
+| `lease list` / `lease waits` | Prints live leases or queued waits as NDJSON |
+| `run [--wait DUR] [--key KEY] [--cost N] -- <cmd...>` | Runs a command wrapped in a tool lease: classifies the binary against the same table the daemon uses, waits in the FIFO when the key is saturated, babysits the grant for the whole run and releases it at exit. Commands that match no heavy class pass through with no lease round-trip |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
 | `tui` | Runs the interactive triage screen. One screen, keyboard only, over the same read model as `jobs`; needs a terminal on stdout and fails with a clear message when there is none |
 
@@ -89,6 +95,16 @@ w = "codex open {id} --cwd {cwd}"
 ```
 
 The hook inherits the terminal, its stderr lands in the TUI's status line (first 400 characters, with the exit code), and each invocation gets a 30s timeout. There is no plugin loader and no in-process API: foreign code always runs in its own process, the same boundary `forward --exec` uses.
+
+## Tool and resource leases
+
+`lease` is the generalized concurrency primitive behind `--slot` (design: `.agents/docs/surfaces-design.md`). Keys are weighted semaphores: `[slots]` in `config.toml` sets the unit limit per key (`"tool:vitest:*" = 4` covers every project), a grant costs `--cost` units, and at most the limit is ever granted at once. Jobs and ordinary processes share one accounting space, so an interactive session can meter heavy tool runs against the same keys the queue uses.
+
+```
+coordinate lease acquire tool:vitest:myproject --cost 2 --wait 60s
+```
+
+The acquirer polls the database itself, so grants work with no daemon running; a running daemon additionally drains waiters in the background. When capacity is saturated the wait is durable and FIFO: every waiter is eventually granted, in order, unless it times out (`--wait`), is cancelled (`lease cancel`) or its owner dies. The owner defaults to the parent process of the CLI call — keep the calling shim or shell alive for the duration of the tool run, or pass `--owner` explicitly. Dead owners are reaped: their leases are released and their waits cancelled, so a killed tool run can never wedge capacity. The final backstop is the lease TTL.
 
 ## enqueue options
 
