@@ -24,7 +24,7 @@ coordinate <verb> [args]
 | `wait-on <id> <event>` | Parks a job until the event is released |
 | `release <event>` | Queues every job parked on the event |
 | `cancel <id>` | Cancels a job |
-| `dead retry [id]` | Puts failed and dead jobs back in the queue |
+| `dead retry <id>` / `dead retry --all` | Puts one failed or dead job back in the queue. `--all` requeues every one of them, including cancelled jobs, so it must be asked for explicitly |
 | `cap show` | Prints the effective machine cap, repo cap, running-job count and machine name as JSON. The machine name is the one the daemon recorded in the queue DB on claim, so it is the daemon's identity even when this CLI process has no `COORDINATE_MACHINE` in its env (the common case over ssh) |
 | `cap set --machine-cap N --repo-cap N [--force]` | Writes the runtime cap into the queue DB; the daemon re-reads it each claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count |
 | `events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT]` | Prints the event log, or follows it. The filters are applied server-side |

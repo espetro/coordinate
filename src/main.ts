@@ -14,7 +14,7 @@ import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as c
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], tui, daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry <id>|--all, logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], tui, daemon, doctor, service install [--force]|uninstall|status\n" +
     "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--json] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
     "logs <id> prints the newest captured stdout and stderr; --attempt N reads that attempt, --json emits paths and byte counts, --follow tails new output\n" +
     "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
@@ -258,6 +258,11 @@ async function main(): Promise<void> {
     }
     if (valuePart.length > 0 && valuePart[0] === "--") {
       valuePart = valuePart.slice(1);
+    }
+    // Without an explicit `--`, a leading dash is a mistyped or unsupported
+    // option (`enqueue --help`), never a program to run.
+    if (dashed < 0 && valuePart.length > 0 && valuePart[0].startsWith("-")) {
+      fail("enqueue: unknown option " + valuePart[0] + " (put -- before a command that starts with a dash)");
     }
     for (let i = 0; i < flagPart.length; i++) {
       const t = flagPart[i];
@@ -831,7 +836,12 @@ async function main(): Promise<void> {
     if (action !== "retry") {
       fail("dead: action must be retry");
     }
-    const ids = q.retryDead(db, rest.length > 1 ? Number(rest[1]) : null);
+    // A bulk retry revives every failed job, cancelled ones included, so it has
+    // to be asked for by name: a bare `dead retry` refuses.
+    if (rest.length !== 2) {
+      fail("dead retry: give one job id, or --all to requeue every failed and dead job");
+    }
+    const ids = q.retryDead(db, rest[1] === "--all" ? null : parseIntArg(rest[1], "dead retry"));
     if (ids.length > 0) {
       process.stdout.write(ids.join("\n") + "\n");
     }
