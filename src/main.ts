@@ -88,9 +88,32 @@ function printLogFile(p: string | null, stream: string): void {
 function jobView(job: q.Job): Record<string, unknown> {
   // Single-job detail stays pretty-printed for human readers; the canonical
   // machine record is the v1 record from readmodel.ts (see docs/machine-schema.md).
-  const rec = jobRecord(job) as unknown as Record<string, unknown>;
-  delete rec["v"];
-  return rec;
+  // Build the detail object rather than deleting `v`: the windows scriptc
+  // runtime treats record fields as non-configurable, so `delete` throws there.
+  const rec = jobRecord(job);
+  return {
+    id: rec.id,
+    kind: rec.kind,
+    status: rec.status,
+    payload: rec.payload,
+    priority: rec.priority,
+    run_at: rec.run_at,
+    lease_owner: rec.lease_owner,
+    lease_expires_at: rec.lease_expires_at,
+    waiting_on: rec.waiting_on,
+    attempts: rec.attempts,
+    max_attempts: rec.max_attempts,
+    created_at: rec.created_at,
+    max_runtime_s: rec.max_runtime_s,
+    runtime_used_s: rec.runtime_used_s,
+    runtime_remaining_s: rec.runtime_remaining_s,
+    deadline_at: rec.deadline_at,
+    deadline_in_s: rec.deadline_in_s,
+    claim_at: rec.claim_at,
+    outcome: rec.outcome,
+    pgid: rec.pgid,
+    pidfile: rec.pidfile,
+  };
 }
 
 // Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
