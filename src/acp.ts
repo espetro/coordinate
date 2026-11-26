@@ -405,6 +405,9 @@ export function startAcpJob(
   const registry = loadRegistry(payload.registry);
   const spec = registry[payload.agent];
   if (spec === undefined) {
+    if (stderrFd !== null) {
+      fs.closeSync(stderrFd);
+    }
     throw new Error("unknown acp agent: " + payload.agent);
   }
   const cmd = agentCommand(spec);
@@ -415,8 +418,6 @@ export function startAcpJob(
   } catch {
     // not there
   }
-  // stderr goes to the attempt's log file when the daemon captured one; the
-  // agent's stdout stays a pipe because it carries the JSON-RPC stream.
   // stderr goes to the attempt's log file when the daemon captured one; the
   // agent's stdout stays a pipe because it carries the JSON-RPC stream. The
   // two spawn forms stay separate: scriptc lowers each stdio literal form.
