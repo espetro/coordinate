@@ -8,13 +8,14 @@ import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
 import { jobRecord, queryJobs, queryEvents, whyJob, health, jobLogs, type JobQuery, type SortKey } from "./readmodel.ts";
+import { renderJobsTable } from "./format-table.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
     "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], daemon, doctor, service install [--force]|uninstall|status\n" +
-    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
+    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
     "logs <id> prints the captured stdout and stderr paths of the job's attempts; --attempt N reads that attempt, --follow tails new output\n" +
     "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
     "health emits one fixed v1 summary object (--json is the default and only form)\n" +
@@ -341,15 +342,14 @@ async function main(): Promise<void> {
       }
       process.stdout.write(JSON.stringify(jobView(job), null, 2) + "\n");
     } else {
-      const rows = q.qAll(db, "SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id", []) as Record<string, unknown>[];
-      for (const r of rows) {
-        const cells = [r["id"], r["status"], r["attempts"], r["max_attempts"], r["waiting_on"], r["payload"]];
-        const line = cells.map((v) => (v === null || v === undefined ? "" : String(v))).join("\t");
-        process.stdout.write(line + "\n");
-      }
+      // The legacy no-id TSV rows become the same human table as `coordinate
+      // jobs` (without --watch); agents use `jobs --json` instead.
+      process.stdout.write(renderJobsTable(queryJobs(db, { sort: "id", asc: false })));
     }
   } else if (verb === "jobs") {
     const query: JobQuery = { sort: "id", asc: false };
+    let asJson = false;
+    let watch = false;
     const parseList = (v: string): string[] => v.split(",").map((s) => s.trim()).filter((s) => s !== "");
     for (let i = 0; i < rest.length; i++) {
       const t = rest[i];
@@ -384,12 +384,40 @@ async function main(): Promise<void> {
           fail("jobs --limit: must be a non-negative integer");
         }
         query.limit = n;
+      } else if (name === "--json") {
+        asJson = true;
+      } else if (name === "--watch") {
+        watch = true;
       } else {
         fail("jobs: unknown argument " + t);
       }
     }
-    for (const rec of queryJobs(db, query)) {
-      process.stdout.write(JSON.stringify(rec) + "\n");
+    if (asJson && watch) {
+      fail("jobs: --json and --watch cannot be combined");
+    }
+    const emitRecords = (): void => {
+      for (const rec of queryJobs(db, query)) {
+        process.stdout.write(JSON.stringify(rec) + "\n");
+      }
+    };
+    if (asJson) {
+      // Machine surface: the canonical v1 NDJSON records, one per line.
+      emitRecords();
+    } else if (!watch) {
+      // Human surface: the table is presentation only, never the contract.
+      process.stdout.write(renderJobsTable(queryJobs(db, query)));
+    } else {
+      // Non-interactive watch: poll and repaint with plain ANSI cursor moves.
+      // Scripting stays on --json; this is for a human watching a terminal.
+      const repaint = (): void => {
+        process.stdout.write("\x1b[H\x1b[2J");
+        process.stdout.write(renderJobsTable(queryJobs(db, query)));
+      };
+      repaint();
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 1000));
+        repaint();
+      }
     }
   } else if (verb === "logs") {
     // The captured output of a job's attempts. The files live in the state
