@@ -19,6 +19,7 @@ function usage(): string {
     "logs <id> prints the captured stdout and stderr paths of the job's attempts; --attempt N reads that attempt, --follow tails new output\n" +
     "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
     "health emits one fixed v1 summary object (--json is the default and only form)\n" +
+    "tui runs the interactive triage screen (needs a TTY on stdout); hooks come from [tui] in config.toml\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
@@ -778,6 +779,23 @@ async function main(): Promise<void> {
     } else {
       fail("cap: action must be show or set");
     }
+  } else if (verb === "tui") {
+    // The interactive triage surface. It must never emit escape sequences into
+    // a pipe: without a TTY on stdout fail with a clear message instead.
+    if (process.stdout.isTTY !== true) {
+      fail("tui: stdout is not a terminal; use coordinate jobs (or jobs --json) instead");
+    }
+    const { tuiHooks, runTui } = await import("./tui.ts");
+    let hooks;
+    try {
+      hooks = tuiHooks();
+    } catch (e) {
+      if (e instanceof ConfigError) {
+        fail("coordinate: " + e.message);
+      }
+      throw e;
+    }
+    runTui(db, hooks);
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
   } else if (verb === "dead") {
