@@ -366,8 +366,15 @@ test("two concurrent heavy runs serialize on the semaphore", async () => {
   const a = spawnRun("a");
   await new Promise((res) => setTimeout(res, 400));
   const b = spawnRun("b");
-  await new Promise((res) => setTimeout(res, 300));
-  assert.match(b.err(), /waiting for tool:vitest/, "the second run waits instead of double-booking");
+  // Poll for the waiting marker instead of a fixed window: node startup on a
+  // loaded machine can exceed any fixed delay (M: flaky at 300ms with two ACP
+  // agent jobs running on the host).
+  let sawWait = false;
+  for (let i = 0; i < 40 && !sawWait; i++) {
+    await new Promise((res) => setTimeout(res, 100));
+    sawWait = /waiting for tool:vitest/.test(b.err());
+  }
+  assert.ok(sawWait, "the second run waits instead of double-booking");
   const ca = await a.done;
   const cb = await b.done;
   assert.equal(ca, 0);

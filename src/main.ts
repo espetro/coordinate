@@ -1020,6 +1020,32 @@ async function main(): Promise<void> {
     } else {
       fail("agent: action must be register, heartbeat, list or unregister");
     }
+  } else if (verb === "upgrade") {
+    // coordinate upgrade [--version vX.Y.Z | --file PATH] [--no-restart] [--rollback]
+    let file: string | null = null;
+    let version: string | null = null;
+    let dest: string | null = null;
+    let restart = true;
+    let rollback = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--file") file = rest[++i];
+      else if (t === "--dest") dest = rest[++i];
+      else if (t === "--version") version = rest[++i];
+      else if (t === "--no-restart") restart = false;
+      else if (t === "--rollback") rollback = true;
+      else fail("upgrade: unknown argument " + t);
+    }
+    const { upgrade } = await import("./upgrade.ts");
+    await upgrade({
+      db,
+      dest,
+      file,
+      version,
+      restart,
+      rollback,
+      log: (step, detail) => process.stdout.write(JSON.stringify({ step, detail }) + "\n"),
+    });
   } else if (verb === "events") {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;

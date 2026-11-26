@@ -76,7 +76,17 @@ VERIFY="$(cd "$TMP" && sha256sum -c -- "$NAME.sha256" 2>/dev/null)" || VERIFY="$
 echo "${VERIFY:-checksum verified}"
 
 mkdir -p "$PREFIX"
-install -m 0755 "$TMP/$NAME" "$PREFIX/coordinate"
+# Never overwrite the binary in place: macOS SIGKILLs new execs of a binary
+# whose pages are rewritten while a running process still has it mapped.
+# Copy the old binary aside for rollback, then swap in the new one with an
+# atomic rename from the same directory.
+if [ -x "$PREFIX/coordinate" ]; then
+  OLDVER="$("$PREFIX/coordinate" --version 2>/dev/null | sed 's/^coordinate //' | tr -c 'A-Za-z0-9._-' '_' || true)"
+  cp "$PREFIX/coordinate" "$PREFIX/coordinate-${OLDVER:-unknown}.bak" 2>/dev/null || true
+fi
+cp "$TMP/$NAME" "$PREFIX/.coordinate.staged.$$"
+chmod 0755 "$PREFIX/.coordinate.staged.$$"
+mv -f "$PREFIX/.coordinate.staged.$$" "$PREFIX/coordinate"
 echo "installed: $PREFIX/coordinate"
 
 "$PREFIX/coordinate" --help >/dev/null
