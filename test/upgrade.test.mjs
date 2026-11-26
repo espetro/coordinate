@@ -79,3 +79,20 @@ test("restartDaemon SIGTERMs the recorded daemon and starts a replacement", asyn
   const check = spawnSync("ps", ["-p", String(fakePid)], { encoding: "utf8" });
   assert.equal(check.status !== 0 || !check.stdout.includes("sleep"), true, "old daemon is gone");
 });
+
+test("restartDaemon never signals the pid of a stale daemon row", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-db3-"));
+  process.env["COORDINATE_DB"] = path.join(dir, "queue.db");
+  process.env["COORDINATE_MACHINE"] = "bench";
+  const q = await import("../src/queue.ts");
+  const { restartDaemon } = await import("../src/upgrade.ts");
+  const db = q.connect();
+  // an unrelated live process that happens to own the recorded pid
+  const sp = spawnSync("sh", ["-c", "sleep 5 </dev/null >/dev/null 2>&1 & echo $!"], { encoding: "utf8" });
+  const bystander = Number(sp.stdout.trim());
+  q.qRun(db, "INSERT OR REPLACE INTO daemon(id,pid,heartbeat_ts) VALUES(1,?,?)", [bystander, Date.now() / 1000 - 3600]);
+  const r = restartDaemon(db, "/bin/true");
+  assert.equal(r.action, "no-daemon");
+  assert.equal(r.newPid, null);
+  assert.doesNotThrow(() => process.kill(bystander, 0), "bystander is still alive");
+});

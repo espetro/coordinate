@@ -68,11 +68,12 @@ export function swapBinary(src: string, dest: string): { backup: string | null }
 // Restart the daemon recorded in the daemon table, if any. SIGTERM is safe by
 // design (children detach, the queue is durable). Returns a status object.
 export function restartDaemon(db: Database, bin: string): { action: string; oldPid: number | null; newPid: number | null } {
-  const row = q.qOne(db, "SELECT pid FROM daemon WHERE id=1", []) as { pid: number } | null;
-  if (row === null || !pidAlive(row.pid)) {
-    return { action: "no-daemon", oldPid: row === null ? null : row.pid, newPid: null };
+  // Only a fresh heartbeat proves the recorded pid is still our daemon: a
+  // stale row may name a pid the OS has since given to an unrelated process.
+  const oldPid = q.liveDaemonPid(db);
+  if (oldPid === null || !pidAlive(oldPid)) {
+    return { action: "no-daemon", oldPid: oldPid, newPid: null };
   }
-  const oldPid = row.pid;
   try {
     process.kill(oldPid, "SIGTERM");
   } catch {
