@@ -546,7 +546,10 @@ export function claim(db: Database, owner: string): Parsed | null {
         insSlot.run([k, exp, jid]);
       }
     }
-    emit(db, jid, "claimed", { owner });
+    const attempt = (
+      qOne(db, "SELECT attempts FROM jobs WHERE id=?", [jid]) as { attempts: number } | null
+    )?.attempts;
+    emit(db, jid, "claimed", { owner, attempt: attempt === undefined ? null : attempt });
     return { jid, kind: row.kind, payload };
   }
   return null;
@@ -584,7 +587,7 @@ export function finish(db: Database, jid: number, owner: string, status: string,
     }
   }
   qRun(db, "DELETE FROM concurrency_slots WHERE job_id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status<>'running')", [jid, jid]);
-  emit(db, jid, status === "done" ? "done" : status, { status });
+  emit(db, jid, status === "done" ? "done" : status, { status, outcome });
   return event;
 }
 
@@ -634,7 +637,13 @@ export function reap(db: Database): number[] {
   ) as IdRow[];
   for (const r of rows) {
     const st = (qOne(db, "SELECT status FROM jobs WHERE id=?", [r.id]) as { status: string } | null)?.status;
-    emit(db, r.id, st === "queued" ? "requeued" : "dead", { reason: "lease expired" });
+    const attempt = (
+      qOne(db, "SELECT attempts FROM jobs WHERE id=?", [r.id]) as { attempts: number } | null
+    )?.attempts;
+    emit(db, r.id, st === "queued" ? "requeued" : "dead", {
+      reason: "lease expired",
+      attempt: attempt === undefined ? null : attempt,
+    });
   }
   db.exec("DELETE FROM concurrency_slots WHERE job_id IN (SELECT id FROM jobs WHERE status<>'running')");
   const out: number[] = [];
@@ -698,7 +707,7 @@ export function retryDead(db: Database, jid: number | null): number[] {
   const out: number[] = [];
   for (const r of rows) {
     out.push(r.id);
-    emit(db, r.id, "requeued", { reason: "dead retry" });
+    emit(db, r.id, "requeued", { reason: "dead retry", attempt: 0 });
   }
   return out;
 }

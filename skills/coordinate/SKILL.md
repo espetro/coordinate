@@ -30,9 +30,12 @@ Binary lands in `~/.local/bin/coordinate`. Per-device DB defaults to `$XDG_STATE
 coordinate enqueue [--cwd DIR] [--repo KEY] [--priority N] [--slot NAME]
                    [--wait-on EVENT] [--max-attempts N] [--max-runtime 90s]
                    [--run-at 15m] [--shell] -- <cmd...>
-coordinate status [JOB_ID]      # rows: id, state, attempts, max, payload
+coordinate status [JOB_ID]      # one job as JSON, payload decoded
+coordinate jobs                # canonical v1 machine records, one JSON object per line
+                               # flags: --status a,b --kind a,b --search TEXT
+                               #        --sort id|created|priority|status|runtime --asc|--desc --limit N
 coordinate stats                # {"queued":N,...}
-coordinate events [--follow] [--since ID]
+coordinate events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT]
 coordinate forward --exec '<cmd>' [--kinds k1,k2] [--interval S] [--once]
 coordinate wait-on JOB_ID EVENT / release EVENT
 coordinate cancel JOB_ID
@@ -45,6 +48,7 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 - `enqueue --shell` takes ONE quoted string run through the platform shell (`/bin/sh`, `cmd.exe` on Windows); without it args are exec'd directly.
 - Higher `--priority` claims first, then the older job. Without aging a high-priority backlog can starve low priorities; `config.toml` `[scheduler] aging = "linear"` (off by default) boosts waiting jobs up to `aging_ceiling`. `--run-at 15m` or `--run-at 2026-11-23T18:00:00Z` holds a job until that time (it does not raise its priority). `--repo` serializes jobs touching the same repo; an empty `--repo ""` skips the repo key, and the default key is the working directory.
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
+- `jobs` is the machine surface: one v1 JSON record per line, with the payload decoded once and epoch-second timestamps, so `jq` and `while read` consume it directly. `docs/machine-schema.md` is the published contract.
 - Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.
 - The concurrency caps are runtime-adjustable: `coordinate cap set --machine-cap N` writes the value into the queue DB and the daemon re-reads it on every claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count.
 

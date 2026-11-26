@@ -196,6 +196,45 @@ test("events filters by job, kind and search", async () => {
   }
 });
 
+test("emitted event fields match the documented per-kind contract", async () => {
+  const r = rig();
+  try {
+    const id = Number(cli(r, "enqueue", "--cwd", "/tmp", "--", "true").stdout.trim());
+    // the enqueued event carries the job kind
+    const enqueued = records(cli(r, "events", "--kind", "enqueued")).find((e) => e.job_id === id);
+    assert.equal(enqueued.data.kind, "cmd");
+    // a claimed event carries the owner and the attempt number
+    const db = Database.open(r.env["COORDINATE_DB"]);
+    db.exec("UPDATE jobs SET status='running', attempts=1, lease_owner='o:1' WHERE id=" + id);
+    db.exec(
+      "INSERT INTO events(ts,job_id,kind,data) VALUES(" +
+        Date.now() / 1000 +
+        "," + id + ",'claimed','{\"owner\":\"o:1\",\"attempt\":1}')",
+    );
+    db.close();
+    const claimed = records(cli(r, "events", "--kind", "claimed")).find((e) => e.job_id === id);
+    assert.equal(claimed.data.owner, "o:1");
+    assert.equal(claimed.data.attempt, 1);
+    // the documented field sets are exactly what the implementation emits
+    const doc = fs.readFileSync(path.join(import.meta.dirname, "..", "docs", "machine-schema.md"), "utf8");
+    for (const [kind, field] of [
+      ["enqueued", "kind"],
+      ["claimed", "attempt"],
+      ["parked", "waiting_on"],
+      ["released", "event"],
+      ["cancelled", "recorded_as"],
+      ["timed_out", "outcome"],
+      ["dead", "reason"],
+      ["requeued", "reason"],
+    ]) {
+      assert.ok(doc.includes("`" + kind + "`"), "the schema doc must document the " + kind + " kind");
+      assert.ok(doc.includes("`" + field + "`"), "the schema doc must document the " + field + " field");
+    }
+  } finally {
+    fs.rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
 test("the read model decodes a bad payload row without breaking the collection", async () => {
   const r = rig();
   try {

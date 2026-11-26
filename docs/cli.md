@@ -17,8 +17,9 @@ coordinate <verb> [args]
 | `doctor` | Prints a health report (version, DB, config, daemon liveness via the heartbeat row, queue stats); exits non-zero on failed checks |
 | `enqueue [options] -- <command...>` | Adds a job and prints its id |
 | `enqueue --acp <agent> --cwd <dir> --prompt <text>` | Adds an ACP agent-session job; the daemon spawns the agent and drives one turn |
-| `status [id]` | Lists jobs, or shows one |
+| `status [id]` | Shows one job as pretty-printed JSON with the payload decoded. Without an id it still prints the historical tab-separated rows |
 | `status --self` | Shows the job whose id is in `COORDINATE_JOB_ID` |
+| `jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id\|created\|priority\|status\|runtime] [--asc\|--desc] [--limit N]` | Lists jobs as the canonical v1 machine records, one JSON object per line. This is the surface agents and scripts should read |
 | `stats` | Prints the job count per state as JSON |
 | `wait-on <id> <event>` | Parks a job until the event is released |
 | `release <event>` | Queues every job parked on the event |
@@ -26,12 +27,20 @@ coordinate <verb> [args]
 | `dead retry [id]` | Puts failed and dead jobs back in the queue |
 | `cap show` | Prints the effective machine cap, repo cap, running-job count and machine name as JSON. The machine name is the one the daemon recorded in the queue DB on claim, so it is the daemon's identity even when this CLI process has no `COORDINATE_MACHINE` in its env (the common case over ssh) |
 | `cap set --machine-cap N --repo-cap N [--force]` | Writes the runtime cap into the queue DB; the daemon re-reads it each claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count |
-| `events [--follow] [--since ID]` | Prints the event log, or follows it |
+| `events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT]` | Prints the event log, or follows it. The filters are applied server-side |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
 
 ## Watching dispatched jobs
 
 A job outlives the turn that enqueued it, so pair every dispatch with a wake-up: `forward --exec` reaches sinks on the same machine (a failed `--exec` stalls the cursor at that event — verify the sink works once), and for remote machines pull `stats`/`status` over ssh from a local watchdog rather than pushing (event sinks are not routable across environments). See `skills/coordinate/SKILL.md` for the full pattern.
+
+## Machine output
+
+`coordinate jobs` prints one v1 record per line, so `jq` and `while read` consume it directly. The payload is decoded once (an object, not a string with JSON inside) and timestamps stay epoch seconds. The full field list and the query semantics are in [Machine output schema](machine-schema.md).
+
+```sh
+coordinate jobs --status queued,running --sort priority --limit 20 | jq -c '[.id,.status,.payload.cmd]'
+```
 
 ## enqueue options
 

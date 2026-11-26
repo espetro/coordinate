@@ -18,11 +18,11 @@ Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSO
 | Kind | `data` fields |
 | --- | --- |
 | `enqueued` | `kind` (the job kind, `cmd` or `acp`) |
-| `claimed` | `owner` (the daemon's lease owner string) |
-| `done`, `failed` | `status` (the terminal status) |
+| `claimed` | `owner`, `attempt` (the attempt number just started, 1-based) |
+| `done`, `failed` | `status`; `outcome` when the exit carried one |
 | `timed_out` | `outcome` (why the budget or deadline ended the job) |
 | `cancelled` | `recorded_as` (always `"failed"`) |
-| `dead`, `requeued` | `reason` (e.g. `"lease expired"`, `"dead retry"`) |
+| `dead`, `requeued` | `reason` (e.g. `"lease expired"`, `"dead retry"`), `attempt` when known |
 | `parked` | `waiting_on` (the event id the job waits for) |
 | `released` | `event` (the released event id) |
 

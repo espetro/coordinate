@@ -29,8 +29,9 @@ coordinate enqueue --shell -- 'pnpm test && pnpm build'
 Watch it run.
 
 ```sh
-coordinate status        # every job
-coordinate status 1      # one job
+coordinate status        # every job (historical TSV)
+coordinate status 1      # one job as JSON, payload decoded
+coordinate jobs          # canonical v1 machine records, one JSON object per line
 coordinate stats         # counts per state
 coordinate events --follow
 ```
