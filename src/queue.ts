@@ -320,6 +320,7 @@ export function connect(): Database {  const p = dbPath();
   ensureParentDir(p);
   if (fs.existsSync(p)) {
     const db0 = Database.open(p);
+    db0.exec("PRAGMA busy_timeout=5000");
     const row = qOne(db0, "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'", []) as
       | { sql: string }
       | null;

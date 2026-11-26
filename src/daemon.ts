@@ -459,6 +459,32 @@ function killGroup(proc: cp.ChildProcess): void {
   }
 }
 
+// Startup can race another process that is still initializing or checkpointing
+// the queue database. That lock is transient, just like lock loss inside the
+// claim loop, so the daemon retries it instead of exiting before the first turn.
+async function retryStartup<T>(op: () => T): Promise<T> {
+  let last: unknown = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      return op();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/locked|busy/i.test(msg)) {
+        throw e;
+      }
+      last = e;
+      if (i < 4) {
+        await runPromise(sleep(durationMillis(150 + i * 100)));
+      }
+    }
+  }
+  throw last;
+}
+
+async function connectWithRetry(): Promise<Database> {
+  return retryStartup(() => q.connect());
+}
+
 export async function run(): Promise<void> {
   try {
     validateConfig();
@@ -470,7 +496,7 @@ export async function run(): Promise<void> {
     }
     process.exit(1);
   }
-  const db = q.connect();
+  const db = await connectWithRetry();
   const owner = os.hostname() + ":" + process.pid;
   // Singleton: only one dispatcher per DB. The claim is atomic against the
   // daemon table row (SQLite-only, no flock/pgrep); a stale heartbeat from a
@@ -479,7 +505,7 @@ export async function run(): Promise<void> {
   // so on conflict this start briefly probes the row: a heartbeat that stops
   // advancing belongs to a dead daemon and is taken over instead.
   const conflict: { v: number | null } = { v: null };
-  if (!q.claimDaemon(db, process.pid, conflict)) {
+  if (!(await retryStartup(() => q.claimDaemon(db, process.pid, conflict)))) {
     const ts0 = q.daemonHeartbeatTs(db);
     let takenOver = false;
     // The takeover probe waits a second per attempt and gives up early when
@@ -497,7 +523,7 @@ export async function run(): Promise<void> {
         if (signal === "interrupt") {
           break;
         }
-        if (q.claimDaemon(db, process.pid, conflict)) {
+        if (await retryStartup(() => q.claimDaemon(db, process.pid, conflict))) {
           takenOver = true;
           break;
         }
