@@ -30,9 +30,17 @@ Binary lands in `~/.local/bin/coordinate`. Per-device DB defaults to `$XDG_STATE
 coordinate enqueue [--cwd DIR] [--repo KEY] [--priority N] [--slot NAME]
                    [--wait-on EVENT] [--max-attempts N] [--max-runtime 90s]
                    [--run-at 15m] [--shell] -- <cmd...>
-coordinate status [JOB_ID]      # rows: id, state, attempts, max, payload
+coordinate status [JOB_ID]      # one job as JSON, payload decoded
+coordinate logs JOB_ID [--attempt N] [--json] [--follow]
+                               # the captured stdout/stderr of the job's attempts
+coordinate why JOB_ID [--json] # live state, blockers, next step, log pointers
+coordinate health [--json]     # one fixed summary object (daemon, caps, counts)
+coordinate jobs                # human table by default; --json for the machine records
+                               # --watch repaints the table every second
+                               # flags: --status a,b --kind a,b --search TEXT
+                               #        --sort id|created|priority|status|runtime --asc|--desc --limit N
 coordinate stats                # {"queued":N,...}
-coordinate events [--follow] [--since ID]
+coordinate events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT]
 coordinate forward --exec '<cmd>' [--kinds k1,k2] [--interval S] [--once]
 coordinate wait-on JOB_ID EVENT / release EVENT
 coordinate cancel JOB_ID
@@ -45,6 +53,10 @@ coordinate daemon               # claim loop; run under tmux/service, one per ma
 - `enqueue --shell` takes ONE quoted string run through the platform shell (`/bin/sh`, `cmd.exe` on Windows); without it args are exec'd directly.
 - Higher `--priority` claims first, then the older job. Without aging a high-priority backlog can starve low priorities; `config.toml` `[scheduler] aging = "linear"` (off by default) boosts waiting jobs up to `aging_ceiling`. `--run-at 15m` or `--run-at 2026-11-23T18:00:00Z` holds a job until that time (it does not raise its priority). `--repo` serializes jobs touching the same repo; an empty `--repo ""` skips the repo key, and the default key is the working directory.
 - `forward` calls `--exec '<cmd>'` once per event: event JSON on stdin, `{message}` in the command substituted with a one-line summary. Cursor file under `$XDG_STATE_HOME/coordinate/forward-cursor` makes restarts resume without replaying.
+- `coordinate jobs --json` is the machine surface: one v1 JSON record per line, with the payload decoded once and epoch-second timestamps, so `jq` and `while read` consume it directly. The default output is a human table, which is not the machine contract. `docs/machine-schema.md` is the published contract.
+- Every cmd attempt's stdout and stderr are captured into files under the state directory (`logs/<job>-<attempt>.*.log`); the durable `job_logs` table links job, attempt and paths. `coordinate logs JOB_ID` reads them, `--json` gives paths and byte counts without the output. Events carry the paths, never the output.
+- `coordinate why JOB_ID` explains a job from the live rows: what holds it (waiting event, saturated cap, spent budget), the next step and the log pointers. `coordinate health --json` gives scripts and panels one fixed summary object.
+- `coordinate tui` is the human triage screen (arrows move, `/` filters, `s` sort, `f` state, enter details, `x` cancel, `R` retry, `e` release, `q` quit). It needs a terminal and refuses a pipe. Agents should not scrape it: the machine surfaces above are the contract.
 - Daemon claims `cmd` jobs, heartbeats leases and reaps dead owners. Only an expired lease is retried, up to `--max-attempts`, then the job is `dead`. A job that exits non-zero goes to `failed` and stays there until `dead retry` revives it.
 - The concurrency caps are runtime-adjustable: `coordinate cap set --machine-cap N` writes the value into the queue DB and the daemon re-reads it on every claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count.
 
@@ -58,7 +70,7 @@ Queue jobs outlive your turn. After enqueueing work you must follow up on, arm a
 
 ## ACP agent sessions
 
-The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally enqueued `--acp AGENT --cwd DIR --prompt TEXT` jobs (daemon-hosted ACP session with resume support). The TS binary is cmd-only; the ACP lane TS port is pending, so agent-session enqueue is currently unavailable.
+`enqueue --acp <agent> --cwd <dir> --prompt <text>` enqueues an ACP agent-session job: the daemon spawns the agent, speaks Agent Client Protocol over its stdio, and drives one turn. The `sessionId` is persisted into the job payload as soon as it exists, so a daemon that dies mid-turn and restarts resumes the SAME session via `session/load` instead of starting over. The agent comes from the registry (`--registry FILE`, JSON `{"<name>": {"command": ..., "args": [...]}}`; default `bench/agents.stub.json` relative to the daemon's cwd), or from `COORDINATE_ACP_CMD` which overrides the registry with one full command line for every `--acp` job.
 
 ## Verified platforms
 

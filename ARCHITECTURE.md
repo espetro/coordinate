@@ -45,11 +45,13 @@ flowchart TB
 | Dispatcher | Start, prompt, cancel, resume a session on a harness | shell jobs built; ACP agent-session lane built (`src/acp.ts`: the daemon speaks the protocol itself over the agent's stdio, no `fleet-acp` wrapper); tmux fallback (D) | `start`, `prompt`, `cancel`, `load`, `export_context` |
 | Workspace | Give a job a working directory and release it | (D) T3 default, pass-through standalone | `prepare`, `release`, `describe` |
 | Connector | Reach other devices, publish device state, delegate | T3 linked environments | `connect`, `publish_state`, `delegate`, `read_remote` |
-| Observability | Events, alerts, `why`, notifications | (D) `research/observability.md` | `emit`, `query`, `alert` |
+| Observability | Events, alerts, `why`, `health`, per-job output capture, notifications | events table built, `why`/`health`/`logs` built, alerts (D) `research/observability.md` | `emit`, `query`, `alert` |
 | Telemetry | Pseudonymous usage insights for the author, PostHog EU | (D) `research/telemetry.md` | `record`, `flush`, `status` |
 | Context | Shared notes and handoffs across harnesses and devices | git, T3 threads; (D) beads-style append-only files | `append`, `read`, `handoff` |
 | Improver | Tune config, prompts and plugins against the bench | (D) `research/self-improving-stack.md` | `propose`, `evaluate`, `promote`, `revert` |
 | Control panel | Human view and control | T3 Code, Orca, the CLI | consumes the modules above |
+
+The human side of the CLI includes `coordinate tui` (2026-11-26): a single-screen, keyboard-only triage view over the shared read model (`src/tui.ts`). It renders with the same table code as `coordinate jobs`, explains with the same `why` computation and mutates through the same queue operations as the CLI verbs, so its events are identical to the CLI's. Hooks are external commands from `[tui]` in config.toml with the selected job JSON on stdin and `{id}`, `{cwd}`, `{repo}`, `{status}` substitutions; there is no plugin loader. Without a TTY on stdout it fails with a clear message rather than emitting escapes into a pipe (M, verified against the static binary in a pty).
 
 Worktrees are not ours to enforce, because T3 and Orca already create them. Repo leases key on the repository and not on the worktree path. `project_key` resolves a worktree's `.git` file through its gitdir and commondir (or `git rev-parse --git-common-dir` with a 2s timeout), so every worktree of one repo shares the repo key.
 
@@ -61,7 +63,7 @@ XDG locations on Linux and macOS alike (the convention CLI tools such as uv and 
 |---|---|
 | Config | `~/.config/coordinate/config.toml` |
 | Queue, mailbox, events, telemetry outbox | `~/.local/state/coordinate/queue.db` |
-| Logs | `~/.local/state/coordinate/logs/` |
+| Logs | `~/.local/state/coordinate/logs/` (`<job>-<attempt>.stdout.log`, `<job>-<attempt>.stderr.log`) |
 | Runtime (pid files, locks, sockets) | `$XDG_RUNTIME_DIR/coordinate/`, else `~/.local/state/coordinate/run/` |
 
 The queue is state, not data or cache. It matters across restarts, it is not a user document, and a TTL bounds its size. The Python version also read the legacy `~/.fleet/` files when the new ones were missing and copied them with `coordinate migrate`; the TypeScript port does not do this yet.
@@ -89,6 +91,8 @@ stateDiagram-v2
 ```
 
 The `jobs` row carries everything needed after a kill -9: `status`, `priority`, `run_at`, `lease_owner`, `lease_expires_at`, `waiting_on`, `attempts`, `max_attempts`, `max_runtime_s`, `runtime_used_s`, `deadline_at`, `claim_at`, `outcome`, `pgid`, `pidfile`, and the payload (including the durable ACP session id). `concurrency_slots` holds leases with a cost (machine, repo, `tool:<class>`). Parked time does not consume a job's runtime budget.
+
+Each cmd attempt's stdout and stderr are captured into files under the state directory (`logs/<job>-<attempt>.stdout.log` and `logs/<job>-<attempt>.stderr.log`), and the `job_logs` table links job, attempt and the two paths. The daemon hands the descriptors to the child, so nothing is buffered in the daemon. ACP jobs keep stdout for the protocol stream and capture stderr only. Events carry the paths as pointers, never the output. `coordinate logs ID` reads the files, `coordinate why ID` explains the job's live state from the current rows, and `coordinate health --json` emits one fixed summary object.
 
 A `settings` table (`key TEXT PRIMARY KEY, value TEXT NOT NULL`) holds the runtime-adjustable knobs. The machine and repo caps live there, written by `coordinate cap set` and read at claim time, so a cap change takes effect on the daemon's next claim with no daemon restart. Precedence at claim time is the stored setting, then `COORDINATE_CAP` / `COORDINATE_REPO_CAP`, then the built-in default.
 

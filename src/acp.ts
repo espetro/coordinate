@@ -394,7 +394,14 @@ export interface AcpHandle {
 // promise. The sessionId is persisted into the job payload the moment it exists
 // (q.setSession) so a restarted dispatcher resumes the SAME session via session/load.
 // Completion is the prompt response (stopReason); `settled` flips when the turn ends.
-export function startAcpJob(db: Database, jid: number, owner: string, payload: AcpPayload, jobEnv: Record<string, string>): AcpHandle {
+export function startAcpJob(
+  db: Database,
+  jid: number,
+  owner: string,
+  payload: AcpPayload,
+  jobEnv: Record<string, string>,
+  stderrFd: number | null = null,
+): AcpHandle {
   const registry = loadRegistry(payload.registry);
   const spec = registry[payload.agent];
   if (spec === undefined) {
@@ -408,12 +415,29 @@ export function startAcpJob(db: Database, jid: number, owner: string, payload: A
   } catch {
     // not there
   }
-  const proc = cp.spawn(cmd[0], cmd.slice(1), {
-    cwd: payload.cwd,
-    detached: true,
-    env: jobEnv,
-    stdio: ["pipe", "pipe", "inherit"],
-  });
+  // stderr goes to the attempt's log file when the daemon captured one; the
+  // agent's stdout stays a pipe because it carries the JSON-RPC stream.
+  // stderr goes to the attempt's log file when the daemon captured one; the
+  // agent's stdout stays a pipe because it carries the JSON-RPC stream. The
+  // two spawn forms stay separate: scriptc lowers each stdio literal form.
+  const proc =
+    stderrFd === null
+      ? cp.spawn(cmd[0], cmd.slice(1), {
+          cwd: payload.cwd,
+          detached: true,
+          env: jobEnv,
+          stdio: ["pipe", "pipe", "inherit"],
+        })
+      : cp.spawn(cmd[0], cmd.slice(1), {
+          cwd: payload.cwd,
+          detached: true,
+          env: jobEnv,
+          stdio: ["pipe", "pipe", stderrFd],
+        });
+  if (stderrFd !== null) {
+    // The parent's copy closes right after the spawn; the child holds its own.
+    fs.closeSync(stderrFd);
+  }
   if (proc.pid === undefined || proc.pid === null) {
     throw new Error("acp agent spawn failed: " + cmd[0]);
   }

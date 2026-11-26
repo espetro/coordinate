@@ -3,15 +3,23 @@
 // mirrors argparse semantics (REMAINDER after `--`), because @cutils/cli owns the
 // subcommand seam only and cannot express positional remainder commands in-subset.
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { env } from "./env.ts";
 import * as q from "./queue.ts";
+import { jobRecord, queryJobs, queryEvents, whyJob, health, jobLogs, type JobQuery, type SortKey } from "./readmodel.ts";
+import { renderJobsTable } from "./format-table.ts";
 import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as cfgValidate } from "./config.ts";
 
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], daemon, doctor, service install [--force]|uninstall|status\n" +
+    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
+    "logs <id> prints the captured stdout and stderr paths of the job's attempts; --attempt N reads that attempt, --follow tails new output\n" +
+    "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
+    "health emits one fixed v1 summary object (--json is the default and only form)\n" +
+    "tui runs the interactive triage screen (needs a TTY on stdout); hooks come from [tui] in config.toml\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +
     "  --cwd DIR           working directory for the job\n" +
@@ -34,27 +42,55 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-// Add the derived timecap fields an agent needs: remaining budget and deadline delta (cli.py:24-31).
-function jobView(job: q.Job): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const keys: (keyof q.Job)[] = [
-    "id", "kind", "payload", "status", "priority", "run_at", "lease_owner", "lease_expires_at",
-    "waiting_on", "attempts", "max_attempts", "created_at", "max_runtime_s", "runtime_used_s",
-    "deadline_at", "claim_at", "outcome", "pgid", "pidfile",
-  ];
-  for (const k of keys) {
-    out[k] = job[k];
+// The size of a log file, or 0 when it is gone.
+function fileSizeOf(p: string): number {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
   }
-  const cap = job.max_runtime_s;
-  const used = job.runtime_used_s;
-  out["runtime_remaining_s"] = cap === null || cap <= 0 ? null : round3(Math.max(0, cap - used));
-  const dl = job.deadline_at;
-  out["deadline_in_s"] = dl === null || dl <= 0 ? null : round3(dl - Date.now() / 1000);
-  return out;
 }
 
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
+// A slice of a log file, from byte offset to the current end.
+function readFrom(p: string, offset: number, size: number): string {
+  try {
+    const fd = fs.openSync(p, "r");
+    try {
+      const buf = Buffer.alloc(size - offset);
+      const read = fs.readSync(fd, buf, 0, buf.length, offset);
+      return buf.slice(0, read).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+// Print a captured log file to stdout, with a header naming the stream.
+function printLogFile(p: string | null, stream: string): void {
+  if (p === null) {
+    return;
+  }
+  let text = "";
+  try {
+    text = fs.readFileSync(p, "utf8");
+  } catch {
+    text = "";
+  }
+  process.stdout.write("--- " + stream + " (" + p + ") ---\n");
+  process.stdout.write(text);
+  if (text !== "" && text.charAt(text.length - 1) !== "\n") {
+    process.stdout.write("\n");
+  }
+}
+
+function jobView(job: q.Job): Record<string, unknown> {
+  // Single-job detail stays pretty-printed for human readers; the canonical
+  // machine record is the v1 record from readmodel.ts (see docs/machine-schema.md).
+  const rec = jobRecord(job) as unknown as Record<string, unknown>;
+  delete rec["v"];
+  return rec;
 }
 
 // Resolve the execution-time cap: explicit flag wins, else [defaults] max_runtime.
@@ -307,11 +343,269 @@ async function main(): Promise<void> {
       }
       process.stdout.write(JSON.stringify(jobView(job), null, 2) + "\n");
     } else {
+      // Compatibility: the historical no-id rows stay tab-separated. The
+      // human table lives on `jobs`; agents should use `jobs --json`.
       const rows = q.qAll(db, "SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id", []) as Record<string, unknown>[];
       for (const r of rows) {
         const cells = [r["id"], r["status"], r["attempts"], r["max_attempts"], r["waiting_on"], r["payload"]];
         const line = cells.map((v) => (v === null || v === undefined ? "" : String(v))).join("\t");
         process.stdout.write(line + "\n");
+      }
+    }
+  } else if (verb === "jobs") {
+    const query: JobQuery = { sort: "id", asc: false };
+    let asJson = false;
+    let watch = false;
+    const parseList = (v: string): string[] => v.split(",").map((s) => s.trim()).filter((s) => s !== "");
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      const eq = t.indexOf("=");
+      const name = eq === -1 ? t : t.slice(0, eq);
+      const inline = eq === -1 ? null : t.slice(eq + 1);
+      const need = (): string => {
+        if (inline !== null) return inline;
+        i = i + 1;
+        if (i >= rest.length) fail("jobs: argument " + name + ": expected one value");
+        return rest[i];
+      };
+      if (name === "--status") {
+        query.status = parseList(need());
+      } else if (name === "--kind") {
+        query.kind = parseList(need());
+      } else if (name === "--search") {
+        query.search = need();
+      } else if (name === "--sort") {
+        const v = need() as SortKey;
+        if (["id", "created", "priority", "status", "runtime"].indexOf(v) === -1) {
+          fail("jobs --sort: must be one of id, created, priority, status, runtime");
+        }
+        query.sort = v;
+      } else if (name === "--asc") {
+        query.asc = true;
+      } else if (name === "--desc") {
+        query.asc = false;
+      } else if (name === "--limit") {
+        const n = Number(need());
+        if (!Number.isInteger(n) || n < 0) {
+          fail("jobs --limit: must be a non-negative integer");
+        }
+        query.limit = n;
+      } else if (name === "--json") {
+        asJson = true;
+      } else if (name === "--watch") {
+        watch = true;
+      } else {
+        fail("jobs: unknown argument " + t);
+      }
+    }
+    if (asJson && watch) {
+      fail("jobs: --json and --watch cannot be combined");
+    }
+    const emitRecords = (): void => {
+      for (const rec of queryJobs(db, query)) {
+        process.stdout.write(JSON.stringify(rec) + "\n");
+      }
+    };
+    if (asJson) {
+      // Machine surface: the canonical v1 NDJSON records, one per line.
+      emitRecords();
+    } else if (!watch) {
+      // Human surface: the table is presentation only, never the contract.
+      process.stdout.write(renderJobsTable(queryJobs(db, query)));
+    } else {
+      // Non-interactive watch: poll and repaint with plain ANSI cursor moves.
+      // Scripting stays on --json; this is for a human watching a terminal.
+      const repaint = (): void => {
+        process.stdout.write("\x1b[H\x1b[2J");
+        process.stdout.write(renderJobsTable(queryJobs(db, query)));
+      };
+      repaint();
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 1000));
+        repaint();
+      }
+    }
+  } else if (verb === "logs") {
+    // The captured output of a job's attempts. The files live in the state
+    // directory; the metadata that links job, attempt and paths is durable.
+    let jidText: string | null = null;
+    let attemptFilter: number | null = null;
+    let follow = false;
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--attempt") {
+        attemptFilter = Number(rest[++i]);
+        if (!Number.isInteger(attemptFilter)) {
+          fail("logs --attempt: must be an integer");
+        }
+      } else if (t === "--follow") {
+        follow = true;
+      } else if (t === "--json") {
+        asJson = true;
+      } else if (t.startsWith("--")) {
+        fail("logs: unknown argument " + t);
+      } else {
+        jidText = t;
+      }
+    }
+    if (jidText === null) {
+      fail("logs: a job id is required");
+    }
+    const jid = Number(jidText);
+    if (!Number.isInteger(jid)) {
+      fail("logs: job id must be an integer");
+    }
+    if (q.getJob(db, jid) === null) {
+      fail("no job " + jidText);
+    }
+    if (asJson && follow) {
+      fail("logs: --json and --follow cannot be combined");
+    }
+    const attempts = jobLogs(db, jid);
+    if (attempts.length === 0) {
+      fail("job " + jidText + " has no captured output");
+    }
+    const selected =
+      attemptFilter === null
+        ? [attempts[attempts.length - 1]]
+        : attempts.filter((a) => a.attempt === attemptFilter);
+    if (selected.length === 0) {
+      fail("job " + jidText + " has no captured attempt " + String(attemptFilter));
+    }
+    if (asJson) {
+      for (const a of selected) {
+        process.stdout.write(
+          JSON.stringify({
+            v: 1,
+            job_id: jid,
+            attempt: a.attempt,
+            stdout: a.stdout,
+            stderr: a.stderr,
+            stdout_bytes: a.stdout_bytes,
+            stderr_bytes: a.stderr_bytes,
+            created_at: a.created_at,
+          }) + "\n",
+        );
+      }
+    } else {
+      for (const a of selected) {
+        printLogFile(a.stdout, "stdout");
+        printLogFile(a.stderr, "stderr");
+      }
+    }
+    if (follow) {
+      // Tail the selected attempt's files: the same shape as `events --follow`.
+      const target = selected[selected.length - 1];
+      const offsets: Record<string, number> = {};
+      for (const p of [target.stdout, target.stderr]) {
+        if (p !== null) {
+          offsets[p] = fileSizeOf(p);
+        }
+      }
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 500));
+        for (const p of Object.keys(offsets)) {
+          const size = fileSizeOf(p);
+          if (size > offsets[p]) {
+            const chunk = readFrom(p, offsets[p], size);
+            offsets[p] = size;
+            process.stdout.write(chunk);
+          }
+        }
+      }
+    }
+  } else if (verb === "why") {
+    // Explain the job's live state from the current rows, not from history.
+    let jidText: string | null = null;
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--json") {
+        asJson = true;
+      } else if (t.startsWith("--")) {
+        fail("why: unknown argument " + t);
+      } else {
+        jidText = t;
+      }
+    }
+    if (jidText === null) {
+      fail("why: a job id is required");
+    }
+    const rec = whyJob(db, Number(jidText));
+    if (rec === null) {
+      fail("no job " + jidText);
+    }
+    if (asJson) {
+      process.stdout.write(JSON.stringify(rec) + "\n");
+    } else {
+      process.stdout.write("job " + String(rec.id) + ": " + rec.state + "\n");
+      process.stdout.write("  " + rec.detail + "\n");
+      if (rec.blockers.length > 0) {
+        for (const b of rec.blockers) {
+          process.stdout.write("  blocker: " + b.reason + " (" + b.detail + ")\n");
+        }
+      } else {
+        process.stdout.write("  blocker: none\n");
+      }
+      if (rec.next !== null) {
+        process.stdout.write("  next: " + rec.next + "\n");
+      }
+      for (const a of rec.logs) {
+        process.stdout.write(
+          "  attempt " +
+            String(a.attempt) +
+            ": stdout " +
+            (a.stdout === null ? "none" : a.stdout + " (" + String(a.stdout_bytes) + " bytes)") +
+            ", stderr " +
+            (a.stderr === null ? "none" : a.stderr + " (" + String(a.stderr_bytes) + " bytes)") +
+            "\n",
+        );
+      }
+    }
+  } else if (verb === "health") {
+    // One fixed summary object for scripts and panels.
+    let asJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--json") {
+        asJson = true;
+      } else {
+        fail("health: unknown argument " + rest[i]);
+      }
+    }
+    const rec = health(db);
+    if (asJson) {
+      process.stdout.write(JSON.stringify(rec) + "\n");
+    } else {
+      process.stdout.write(
+        "machine " +
+          rec.machine +
+          "  daemon " +
+          (rec.daemon.running ? "up (pid " + String(rec.daemon.pid) + ")" : "not running") +
+          "\n",
+      );
+      process.stdout.write(
+        "queued " +
+          String(rec.queued) +
+          "  running " +
+          String(rec.running) +
+          "  waiting " +
+          String(rec.waiting) +
+          "  done " +
+          String(rec.done) +
+          "  failed " +
+          String(rec.failed) +
+          "  dead " +
+          String(rec.dead) +
+          "  timed_out " +
+          String(rec.timed_out) +
+          "\n",
+      );
+      process.stdout.write(
+        "caps: machine " + String(rec.machine_cap) + ", repo " + String(rec.repo_cap) + "\n",
+      );
+      for (const s of rec.slots) {
+        process.stdout.write("slot " + s.key + ": " + String(s.cost) + "/" + String(s.limit) + "\n");
       }
     }
   } else if (verb === "wait-on") {
@@ -333,11 +627,20 @@ async function main(): Promise<void> {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;
     let since = 0;
+    let jobFilter: number | null = null;
+    let kinds: string | null = null;
+    let search: string | null = null;
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--follow") {
         follow = true;
       } else if (rest[i] === "--since") {
         since = Number(rest[++i]);
+      } else if (rest[i] === "--job") {
+        jobFilter = Number(rest[++i]);
+      } else if (rest[i] === "--kind") {
+        kinds = rest[++i];
+      } else if (rest[i] === "--search") {
+        search = rest[++i];
       } else {
         fail("events: unknown argument " + rest[i]);
       }
@@ -350,11 +653,13 @@ async function main(): Promise<void> {
         process.stdout.write(JSON.stringify(line) + "\n");
       }
     };
-    printRows(q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never);
+    const fetchRows = (): { id: number; ts: number; job_id: number | null; kind: string; data: string }[] => {
+      const recs = queryEvents(db, { job: jobFilter, kind: kinds === null ? null : kinds.split(",").map((s) => s.trim()).filter((s) => s !== ""), sinceId: last, search: search });
+      return recs.map((rec) => ({ id: rec.id, ts: rec.ts, job_id: rec.job_id, kind: rec.kind, data: JSON.stringify(rec.data) }));
+    };
+    printRows(fetchRows());
     while (follow) {
-      printRows(
-        q.qAll(db, "SELECT id,ts,job_id,kind,data FROM events WHERE id>? ORDER BY id", [last]) as never,
-      );
+      printRows(fetchRows());
       await new Promise((res) => setTimeout(res, 500));
     }
   } else if (verb === "forward") {
@@ -479,6 +784,23 @@ async function main(): Promise<void> {
     } else {
       fail("cap: action must be show or set");
     }
+  } else if (verb === "tui") {
+    // The interactive triage surface. It must never emit escape sequences into
+    // a pipe: without a TTY on stdout fail with a clear message instead.
+    if (process.stdout.isTTY !== true) {
+      fail("tui: stdout is not a terminal; use coordinate jobs (or jobs --json) instead");
+    }
+    const { tuiHooks, runTui } = await import("./tui.ts");
+    let hooks;
+    try {
+      hooks = tuiHooks();
+    } catch (e) {
+      if (e instanceof ConfigError) {
+        fail("coordinate: " + e.message);
+      }
+      throw e;
+    }
+    runTui(db, hooks);
   } else if (verb === "stats") {
     process.stdout.write(JSON.stringify(q.stats(db)) + "\n");
   } else if (verb === "dead") {

@@ -17,8 +17,9 @@ coordinate <verb> [args]
 | `doctor` | Prints a health report (version, DB, config, daemon liveness via the heartbeat row, queue stats); exits non-zero on failed checks |
 | `enqueue [options] -- <command...>` | Adds a job and prints its id |
 | `enqueue --acp <agent> --cwd <dir> --prompt <text>` | Adds an ACP agent-session job; the daemon spawns the agent and drives one turn |
-| `status [id]` | Lists jobs, or shows one |
+| `status [id]` | Shows one job as pretty-printed JSON with the payload decoded. Without an id it still prints the historical tab-separated rows |
 | `status --self` | Shows the job whose id is in `COORDINATE_JOB_ID` |
+| `jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id\|created\|priority\|status\|runtime] [--asc\|--desc] [--limit N]` | Lists jobs as the canonical v1 machine records, one JSON object per line. This is the surface agents and scripts should read |
 | `stats` | Prints the job count per state as JSON |
 | `wait-on <id> <event>` | Parks a job until the event is released |
 | `release <event>` | Queues every job parked on the event |
@@ -26,12 +27,68 @@ coordinate <verb> [args]
 | `dead retry [id]` | Puts failed and dead jobs back in the queue |
 | `cap show` | Prints the effective machine cap, repo cap, running-job count and machine name as JSON. The machine name is the one the daemon recorded in the queue DB on claim, so it is the daemon's identity even when this CLI process has no `COORDINATE_MACHINE` in its env (the common case over ssh) |
 | `cap set --machine-cap N --repo-cap N [--force]` | Writes the runtime cap into the queue DB; the daemon re-reads it each claim, so raising the cap starts queued jobs with no daemon restart, and lowering it never interrupts running jobs (claims pause until the count drains). `--force` accepts a decrease below the current running count |
-| `events [--follow] [--since ID]` | Prints the event log, or follows it |
+| `events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT]` | Prints the event log, or follows it. The filters are applied server-side |
+| `logs <id> [--attempt N] [--json] [--follow]` | Prints the captured output of the job's attempts. Without `--attempt` it prints the newest attempt's stdout and stderr files with a header; `--attempt N` reads that attempt, `--json` emits one machine record per attempt (paths and byte counts, no output), `--follow` tails new output |
+| `why <id> [--json]` | Explains the job's live state from the current rows: the state, the blockers (waiting event, saturated caps, spent budget), the next step and the log pointers. `--json` emits the machine record |
+| `health [--json]` | Emits one fixed summary object: daemon liveness, caps, per-state job counts, oldest queued age and slot usage. `--json` is the machine form (one JSON object); without it the same data prints as short lines |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
+| `tui` | Runs the interactive triage screen. One screen, keyboard only, over the same read model as `jobs`; needs a terminal on stdout and fails with a clear message when there is none |
 
 ## Watching dispatched jobs
 
 A job outlives the turn that enqueued it, so pair every dispatch with a wake-up: `forward --exec` reaches sinks on the same machine (a failed `--exec` stalls the cursor at that event — verify the sink works once), and for remote machines pull `stats`/`status` over ssh from a local watchdog rather than pushing (event sinks are not routable across environments). See `skills/coordinate/SKILL.md` for the full pattern.
+
+## Job output capture
+
+The daemon captures every cmd attempt's stdout and stderr into files under the coordinate state directory, next to the queue DB: `logs/<job>-<attempt>.stdout.log` and `logs/<job>-<attempt>.stderr.log`. The durable `job_logs` table links job, attempt and the paths. ACP jobs keep stdout for the protocol stream; only their stderr is captured.
+
+```sh
+coordinate logs 7                  # the newest attempt's output
+coordinate logs 7 --attempt 2      # a specific attempt
+coordinate logs 7 --json | jq -c '[.attempt,.stdout_bytes,.stderr_bytes]'
+coordinate why 7                   # state, blockers, next step, log pointers
+```
+
+Capture is best effort: when the state directory is not writable the job still runs and its output stays with the daemon's own streams, as before. Full-text log search is `rg` over these files; `--search` on jobs and events stays metadata search.
+
+## Machine output
+
+`coordinate jobs --json` prints one v1 record per line, so `jq` and `while read` consume it directly. The payload is decoded once (an object, not a string with JSON inside) and timestamps stay epoch seconds. The full field list and the query semantics are in [Machine output schema](machine-schema.md). Without `--json` the same query renders as a human table (id, state, age, attempts, priority, waiting-on, truncated command); the table is presentation only and not the machine contract.
+
+```sh
+coordinate jobs --json --status queued,running --sort priority --limit 20 | jq -c '[.id,.status,.payload.cmd]'
+coordinate jobs --watch       # repaint the human table every second; Ctrl-C exits
+```
+
+## The triage screen
+
+`coordinate tui` is a small interactive triage UI over the shared read model. It renders the same table as `coordinate jobs`, reads the same `jobs --json` records for the details and mutates through the same queue operations as the CLI verbs, so the emitted events are identical to the CLI's. It fails with `tui: stdout is not a terminal; use coordinate jobs (or jobs --json) instead` when stdout is not a TTY, so escape sequences never reach a pipe.
+
+| Key | Action |
+| --- | --- |
+| arrows or Ctrl-N / Ctrl-P | Move the selection |
+| `/` | Filter jobs by metadata substring (the same search as `jobs --search`) |
+| `s` | Cycle the sort (id, created, priority, status, runtime) |
+| `f` | Cycle the state filter (all, queued, running, waiting, failed, dead, done, timed_out) |
+| enter | Toggle the details pane: decoded metadata, the computed `why`, recent events and the end of the newest stdout |
+| `r` | Refresh |
+| `x` | Cancel the selected job, after a y/n confirmation |
+| `R` | Retry (requeue) the selected failed or dead job, after a y/n confirmation |
+| `e` | Prompt for an event name and release it (the same as `coordinate release EVENT`) |
+| `q` or Ctrl-C | Quit |
+
+The screen repaints about once a second. Scripting stays on `jobs --json` and `events`; the TUI is not the scripting surface.
+
+## TUI hooks
+
+Hooks are external commands only, configured under `[tui]` in `config.toml`. Any key not otherwise bound becomes a hook key: pressing it runs the named command with the selected job's v1 JSON on stdin. Inside the command string, `{id}`, `{cwd}`, `{repo}` and `{status}` are substituted with the shell-quoted job fields, so a value containing spaces or quotes cannot change the command's word structure.
+
+```toml
+[tui]
+w = "codex open {id} --cwd {cwd}"
+```
+
+The hook inherits the terminal, its stderr lands in the TUI's status line (first 400 characters, with the exit code), and each invocation gets a 30s timeout. There is no plugin loader and no in-process API: foreign code always runs in its own process, the same boundary `forward --exec` uses.
 
 ## enqueue options
 

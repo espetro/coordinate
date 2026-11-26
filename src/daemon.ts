@@ -341,8 +341,21 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
 function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[], runningAcp: RunningAcp[]): cp.ChildProcess {
   if (kind === "acp") {
     // ACP lane: no tool-class matching, no shell; the agent gets pipes and JSON-RPC.
+    // Its stdout carries the protocol, so only stderr goes to a log file.
     const att = attemptEnv(db, jid);
-    const handle = startAcpJob(db, jid, owner, acpPayloadOf(payload), jobEnv(jid, deadlineEnv(db, jid), att.attempt, att.maxAttempts));
+    const attempt = Number(att.attempt);
+    const opened = q.openLogFiles(jid, attempt, false);
+    if (opened !== null) {
+      q.recordLogFiles(db, jid, attempt, opened.pair);
+    }
+    const handle = startAcpJob(
+      db,
+      jid,
+      owner,
+      acpPayloadOf(payload),
+      jobEnv(jid, deadlineEnv(db, jid), att.attempt, att.maxAttempts),
+      opened === null ? null : opened.stderrFd,
+    );
     runningAcp.push({ jid, handle, settled: false });
     return handle.proc;
   }
@@ -372,7 +385,19 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
 
 function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
-  const stdio: ("ignore" | "inherit")[] = ["ignore", "inherit", "inherit"];
+  // Output capture: the child's stdout and stderr fds are the attempt's log
+  // files when they open; otherwise the daemon inherits (the old behavior).
+  // The files open only after every parking boundary, so a job that goes back
+  // to waiting_on never gets an empty phantom attempt log.
+  const attemptNow = q.currentAttempt(db, jid);
+  const opened = q.openLogFiles(jid, attemptNow, true);
+  let logFds: { stdoutFd: number; stderrFd: number } | null = null;
+  if (opened !== null) {
+    q.recordLogFiles(db, jid, attemptNow, opened.pair);
+    logFds = { stdoutFd: opened.stdoutFd, stderrFd: opened.stderrFd };
+  }
+  const stdio: ("ignore" | "inherit" | number)[] =
+    logFds === null ? ["ignore", "inherit", "inherit"] : ["ignore", logFds.stdoutFd, logFds.stderrFd];
   const att = attemptEnv(db, jid);
   const opts = { cwd: payload.cwd === null ? undefined : payload.cwd, detached: true, env: jobEnv(jid, deadlineEnv(db, jid), att.attempt, att.maxAttempts), stdio };
   const win = process.platform === "win32";
@@ -382,6 +407,13 @@ function spawnRaw(db: Database, jid: number, owner: string, kind: string, payloa
         ? cp.spawn(SH, ["/c", cmd], opts)
         : cp.spawn(SH, ["-c", cmd], opts)
       : cp.spawn(cmd[0], cmd.slice(1), opts);
+  // The parent's copies of the fds close right after the spawn: the child
+  // holds its own dup2'd copies, and an open parent fd would keep the log
+  // files' contents in the kernel buffer past the child's exit.
+  if (logFds !== null) {
+    fs.closeSync(logFds.stdoutFd);
+    fs.closeSync(logFds.stderrFd);
+  }
   // The handler must be attached before the pid check: on Linux, cp.spawn reports ENOENT
   // with pid already undefined, and the 'error' event still arrives on the next tick. An
   // unhandled 'error' event crashes the whole daemon.
@@ -390,7 +422,7 @@ function spawnRaw(db: Database, jid: number, owner: string, kind: string, payloa
     if (r !== undefined) {
       r.spawnErrored = true;
     }
-    const event = q.finish(db, jid, owner, "failed", "spawn failed: " + err.message);
+    const event = q.finish(db, jid, owner, "failed", "spawn failed: " + err.message, null);
     if (event !== null) {
       q.release(db, event);
     }
@@ -427,6 +459,32 @@ function killGroup(proc: cp.ChildProcess): void {
   }
 }
 
+// Startup can race another process that is still initializing or checkpointing
+// the queue database. That lock is transient, just like lock loss inside the
+// claim loop, so the daemon retries it instead of exiting before the first turn.
+async function retryStartup<T>(op: () => T): Promise<T> {
+  let last: unknown = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      return op();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/locked|busy/i.test(msg)) {
+        throw e;
+      }
+      last = e;
+      if (i < 4) {
+        await runPromise(sleep(durationMillis(150 + i * 100)));
+      }
+    }
+  }
+  throw last;
+}
+
+async function connectWithRetry(): Promise<Database> {
+  return retryStartup(() => q.connect());
+}
+
 export async function run(): Promise<void> {
   try {
     validateConfig();
@@ -438,7 +496,7 @@ export async function run(): Promise<void> {
     }
     process.exit(1);
   }
-  const db = q.connect();
+  const db = await connectWithRetry();
   const owner = os.hostname() + ":" + process.pid;
   // Singleton: only one dispatcher per DB. The claim is atomic against the
   // daemon table row (SQLite-only, no flock/pgrep); a stale heartbeat from a
@@ -447,7 +505,7 @@ export async function run(): Promise<void> {
   // so on conflict this start briefly probes the row: a heartbeat that stops
   // advancing belongs to a dead daemon and is taken over instead.
   const conflict: { v: number | null } = { v: null };
-  if (!q.claimDaemon(db, process.pid, conflict)) {
+  if (!(await retryStartup(() => q.claimDaemon(db, process.pid, conflict)))) {
     const ts0 = q.daemonHeartbeatTs(db);
     let takenOver = false;
     // The takeover probe waits a second per attempt and gives up early when
@@ -465,7 +523,7 @@ export async function run(): Promise<void> {
         if (signal === "interrupt") {
           break;
         }
-        if (q.claimDaemon(db, process.pid, conflict)) {
+        if (await retryStartup(() => q.claimDaemon(db, process.pid, conflict))) {
           takenOver = true;
           break;
         }
@@ -526,7 +584,10 @@ export async function run(): Promise<void> {
   process.on("SIGINT", stop);
 
   const exitProc = (r: Running, code: number | null): void => {
-    const event = q.finish(db, r.jid, owner, code === 0 ? "done" : "failed");
+    // The exit code rides in the job's outcome column, so the live row says
+    // why the attempt failed without reading the event history.
+    const note = code === null ? null : code === 0 ? null : "exit code " + String(code);
+    const event = q.finish(db, r.jid, owner, code === 0 ? "done" : "failed", note, code);
     if (event !== null) {
       q.release(db, event); // D7 wake: released jobs are picked up by the claim loop
     }

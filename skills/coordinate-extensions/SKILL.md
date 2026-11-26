@@ -13,7 +13,22 @@ Every state transition writes one row to the `events` table. Kinds emitted today
 
 `enqueued`, `claimed`, `done`, `failed`, `timed_out`, `cancelled`, `dead`, `requeued`, `parked`, `released`
 
-Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSON object (e.g. `parked` carries `waiting_on`, `claimed`/`requeued` carry `attempt`, `timed_out` carries `outcome`). Event `id` is a monotonic integer — it is the resume cursor.
+Each event is `{id, ts, job_id, kind, data}` where `data` is a kind-specific JSON object. The exact fields emitted today:
+
+| Kind | `data` fields |
+| --- | --- |
+| `enqueued` | `kind` (the job kind, `cmd` or `acp`) |
+| `claimed` | `owner`, `attempt` (the attempt number just started, 1-based) |
+| `done`, `failed` | `status`; `outcome` when the exit carried one; `exit_code` when the attempt exited with a code; `logs` (the stdout/stderr paths of the attempt) when the attempt was captured |
+| `timed_out` | `outcome` (why the budget or deadline ended the job) |
+| `cancelled` | `recorded_as` (always `"failed"`) |
+| `dead`, `requeued` | `reason` (e.g. `"lease expired"`, `"dead retry"`), `attempt` when known |
+| `parked` | `waiting_on` (the event id the job waits for) |
+| `released` | `event` (the released event id) |
+
+Event `id` is a monotonic integer — it is the resume cursor.
+
+Event `data` never carries raw output. The captured stdout and stderr of a cmd attempt live in files under the state directory; the terminal event points at them through `data.logs.stdout` and `data.logs.stderr`, and `coordinate logs <job>` reads them.
 
 ## Shape 1: stateless — `forward --exec`
 
