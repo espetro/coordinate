@@ -503,7 +503,7 @@ export async function run(): Promise<void> {
       // drain FIFO waiters, so grants land even when no acquirer is polling
       // (async consumers such as parked jobs depend on this).
       {
-        using _tx = db.transaction();
+        using _tx = q.writeTx(db);
         q.maintainLeases(db, []);
       }
       lastReap = now;

@@ -384,3 +384,17 @@ test("run --key/--cost bypass classification for unlisted heavy commands", () =>
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /deploying/);
 });
+
+test("writeTx holds the write lock from the first statement", async () => {
+  const r = rig();
+  process.env["COORDINATE_DB"] = r.env["COORDINATE_DB"];
+  const q = await import("../src/queue.ts");
+  const first = q.connect();
+  const second = q.connect();
+  second.exec("PRAGMA busy_timeout=50");
+  const tx = q.writeTx(first);
+  // nothing has been read or written yet, and the lock is already taken
+  assert.throws(() => q.writeTx(second), /locked|busy/i);
+  tx.commit();
+  q.writeTx(second).commit();
+});

@@ -718,7 +718,7 @@ async function main(): Promise<void> {
       for (;;) {
         await new Promise((res) => setTimeout(res, 150));
         {
-          using _tx = db.transaction();
+          using _tx = q.writeTx(db);
           q.maintainLeases(db, [key]);
         }
         const w = q.getWait(db, waitId);
@@ -879,7 +879,7 @@ async function main(): Promise<void> {
       for (;;) {
         await new Promise((res) => setTimeout(res, 150));
         {
-          using _tx = db.transaction();
+          using _tx = q.writeTx(db);
           q.maintainLeases(db, [key]);
         }
         const w = q.getWait(db, waitId);

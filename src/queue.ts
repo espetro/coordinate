@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Database } from "@cutils/sqlite";
+import type { Transaction } from "@cutils/sqlite";
 import type { BindValue, RunResult } from "@cutils/sqlite";
 import { configPath, dbPath, ensureParentDir, env } from "./env.ts";
 import * as cfg from "./config.ts";
@@ -283,6 +284,22 @@ interface KeyRow {
   key: string;
 }
 
+// Open a transaction that holds the write lock from the start. The library
+// issues a deferred BEGIN, and a deferred transaction that reads first cannot
+// take the lock once another process has written: SQLite answers "database is
+// locked" at once, without consulting busy_timeout. A write that matches no row,
+// issued before any read, takes the lock while waiting is still possible.
+export function writeTx(db: Database): Transaction {
+  const tx = db.transaction();
+  try {
+    db.exec("DELETE FROM settings WHERE 0");
+  } catch (e) {
+    tx.rollback();
+    throw e;
+  }
+  return tx;
+}
+
 function migrateJobs(db: Database): void {
   const row = qOne(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'", []) as
     | { sql: string }
@@ -544,7 +561,7 @@ export function liveDaemonPid(db: Database): number | null {
 // now owns row id=1; returns false when a fresh heartbeat from another daemon
 // is present (that daemon's pid is written to *conflictPid).
 export function claimDaemon(db: Database, pid: number, conflictPid: { v: number | null }): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const other = liveDaemonPid(db);
   if (other !== null) {
     conflictPid.v = other;
@@ -635,7 +652,7 @@ function qUsedCost(db: Database, key: string): number {
 
 export function claim(db: Database, owner: string): Parsed | null {
   const now = Date.now() / 1000;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + now);
   db.exec("DELETE FROM leases WHERE lease_expires_at < " + now);
   const used = usedByKey(db);
@@ -728,7 +745,7 @@ export function chargeRuntime(db: Database, jid: number): void {
 
 export function heartbeat(db: Database, jid: number, owner: string): boolean {
   const exp = Date.now() / 1000 + LEASE_S;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const cur = qRun(db, "UPDATE jobs SET lease_expires_at=? WHERE id=? AND status='running' AND lease_owner=?", [exp, jid, owner]);
   if (cur.changes > 0) {
     qRun(db, "UPDATE concurrency_slots SET lease_expires_at=? WHERE job_id=?", [exp, jid]);
@@ -738,7 +755,7 @@ export function heartbeat(db: Database, jid: number, owner: string): boolean {
 }
 
 export function finish(db: Database, jid: number, owner: string, status: string, outcome: string | null = null, exitCode: number | null = null): string | null {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   qRun(db, "UPDATE jobs SET status=?, outcome=COALESCE(?, outcome), lease_owner=NULL, lease_expires_at=NULL, pgid=NULL, pidfile=NULL, claim_at=NULL WHERE id=? AND status='running' AND lease_owner=?", [
     status,
@@ -789,7 +806,7 @@ function killOrphans(db: Database, pgid: number | null, _pidfile: string | null)
 
 export function reap(db: Database): number[] {
   const now = Date.now() / 1000;
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const expired = qAll(db, "SELECT id FROM jobs WHERE status='running' AND lease_expires_at<?", [now]) as IdRow[];
   for (const row of expired) {
     chargeRuntime(db, row.id);
@@ -830,7 +847,7 @@ export function reap(db: Database): number[] {
 }
 
 export function waitOn(db: Database, jid: number, event: string): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -860,7 +877,7 @@ export function release(db: Database, event: string): number[] {
 }
 
 export function cancel(db: Database, jid: number): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -918,7 +935,7 @@ export function expiredRunning(db: Database): { id: number; kind: string; payloa
 }
 
 export function finalizeTimedOut(db: Database, jid: number, outcome: string): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   chargeRuntime(db, jid);
   const cur = qRun(
     db,
@@ -1182,7 +1199,7 @@ export function maintainLeases(db: Database, keys: string[]): void {
 // or null. Caller checks cost against slotLimit first (a cost above the limit
 // can never grant and is a config error, not contention).
 export function acquireLease(db: Database, key: string, owner: string, cost: number): string | null {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   maintainLeases(db, [key]);
   const queued = qOne(db, "SELECT COUNT(*) AS c FROM waits WHERE key=? AND state='queued'", [key]) as { c: number };
   if (queued.c === 0 && leaseUsedCost(db, key) + cost <= cfg.slotLimit(key)) {
@@ -1216,7 +1233,7 @@ export function enqueueWait(db: Database, key: string, owner: string, cost: numb
 }
 
 export function releaseLease(db: Database, grantId: string): boolean {
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const row = qOne(db, "SELECT key FROM leases WHERE grant_id=?", [grantId]) as { key: string } | null;
   if (row === null) {
     return false;
