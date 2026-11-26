@@ -403,7 +403,7 @@ export function connect(): Database {  const p = dbPath();
     }
   }
   const db = Database.open(p);
-  db.exec("PRAGMA busy_timeout=5000");
+  db.exec("PRAGMA busy_timeout=15000");
   // Switching the journal to WAL needs a brief exclusive lock. If another
   // process holds it (a concurrent reader, another daemon starting up), the
   // pragma fails with SQLITE_BUSY and the caller dies before it can retry.

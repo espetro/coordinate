@@ -1,0 +1,29 @@
+{
+  "host": {
+    "host": "kinosmac.local",
+    "platform": "darwin/arm64",
+    "cpus": 10,
+    "loadavg1m": 8.59,
+    "memTotalMb": 24576,
+    "memFreeMb": 363,
+    "date": "2026-11-26T17:59:09.224Z"
+  },
+  "sections": {
+    "lease-latency": {
+      "n": 200,
+      "median": 706.04,
+      "p99": 1775.81,
+      "mean": 742.4,
+      "note": "full CLI round trip incl. node startup"
+    },
+    "lease-fairness": {
+      "waiters": 20,
+      "fifoOrderExact": false,
+      "grantOrder": [
+        19
+      ],
+      "drainS": 105.89,
+      "grantsPerSec": 0
+    }
+  }
+}
