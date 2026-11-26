@@ -382,7 +382,7 @@ function capBlocker(db: Database, job: q.Job, payload: Record<string, unknown>):
   const repoValue = repo !== null && repo !== "" ? repo : cwd;
   const repoKey = repoValue === null || repoValue === "" ? null : "repo:" + path.resolve(repoValue);
   if (repoKey !== null) {
-    const used = q.qAll(db, "SELECT COUNT(*) AS c FROM concurrency_slots WHERE key=?", [repoKey]) as { c: number }[];
+    const used = q.qAll(db, "SELECT COUNT(*) AS c FROM leases WHERE key=?", [repoKey]) as { c: number }[];
     const usedCount = used.length === 0 ? 0 : used[0].c;
     if (usedCount >= q.repoCap(db)) {
       return {
@@ -395,7 +395,7 @@ function capBlocker(db: Database, job: q.Job, payload: Record<string, unknown>):
     if (key.startsWith("machine:") || key.startsWith("repo:")) {
       continue;
     }
-    const used = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number }[];
+    const used = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM leases WHERE key=?", [key]) as { c: number }[];
     const usedCost = used.length === 0 ? 0 : used[0].c;
     const limit = q.slotCapacity(key);
     if (usedCost + 1 > limit) {
@@ -449,7 +449,7 @@ export function health(db: Database): HealthRecord {
   const pid = q.liveDaemonPid(db);
   const hb = q.daemonHeartbeatTs(db);
   const hbAge = hb === null ? null : round3(Date.now() / 1000 - hb);
-  const slotRows = q.qAll(db, "SELECT key, COALESCE(SUM(cost),0) AS c FROM concurrency_slots GROUP BY key ORDER BY key", []) as {
+  const slotRows = q.qAll(db, "SELECT key, COALESCE(SUM(cost),0) AS c FROM leases GROUP BY key ORDER BY key", []) as {
     key: string;
     c: number;
   }[];

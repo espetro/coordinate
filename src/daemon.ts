@@ -169,23 +169,7 @@ function toolSlotKey(cls: string, proj: string): string {
 }
 
 function acquireToolLease(db: Database, jid: number, key: string, cost: number): boolean {
-  using _tx = db.transaction();
-  db.exec("DELETE FROM concurrency_slots WHERE lease_expires_at < " + Date.now() / 1000);
-  let used = 0;
-  const rows = q.qAll(db, "SELECT COALESCE(SUM(cost),0) AS c FROM concurrency_slots WHERE key=?", [key]) as { c: number }[];
-  for (const r of rows) {
-    used = r.c;
-  }
-  if (used + cost > slotLimit(key)) {
-    return false;
-  }
-  q.qRun(db, "INSERT INTO concurrency_slots(key,lease_expires_at,job_id,cost) VALUES(?,?,?,?)", [
-    key,
-    Date.now() / 1000 + q.LEASE_S,
-    jid,
-    cost,
-  ]);
-  return true;
+  return q.acquireLease(db, key, "job:" + jid, cost) !== null;
 }
 
 interface DeadlineRow {
@@ -671,6 +655,13 @@ export async function run(): Promise<void> {
 
     if (now - lastReap >= q.LEASE_S / 3) {
       q.reap(db);
+      // Generalized lease maintenance: expire TTLs, reap dead pid owners and
+      // drain FIFO waiters, so grants land even when no acquirer is polling
+      // (async consumers such as parked jobs depend on this).
+      {
+        using _tx = db.transaction();
+        q.maintainLeases(db, []);
+      }
       lastReap = now;
     }
 

@@ -646,6 +646,130 @@ async function main(): Promise<void> {
     if (!ok) {
       fail("job " + rest[0] + " not cancellable");
     }
+  } else if (verb === "lease") {
+    // Weighted semaphore leases with FIFO waits (surfaces-design.md). Open to
+    // any process on the machine, job or not: the default owner is the parent
+    // process of this CLI call, so a shim or hook that stays alive while the
+    // tool runs keeps the lease; a dead owner is reaped within one poll cycle
+    // of the next acquirer and the TTL is the final backstop.
+    const sub = rest[0];
+    if (sub === "acquire") {
+      let key: string | null = null;
+      let cost = 1;
+      let waitDur: string | null = null;
+      let owner: string | null = null;
+      for (let i = 1; i < rest.length; i++) {
+        const t = rest[i];
+        if (t === "--cost") {
+          cost = parseIntArg(rest[++i], "--cost");
+        } else if (t === "--wait") {
+          waitDur = rest[++i];
+        } else if (t === "--owner") {
+          owner = rest[++i];
+        } else if (t.startsWith("--cost=")) {
+          cost = parseIntArg(t.slice(7), "--cost");
+        } else if (t.startsWith("--wait=")) {
+          waitDur = t.slice(7);
+        } else if (t.startsWith("--owner=")) {
+          owner = t.slice(8);
+        } else if (!t.startsWith("--") && key === null) {
+          key = t;
+        } else {
+          fail("lease acquire: unknown argument " + t);
+        }
+      }
+      if (key === null) {
+        fail("lease acquire: give a lease key, e.g. coordinate lease acquire tool:vitest --cost 2 --wait 60s");
+      }
+      if (cost <= 0) {
+        fail("lease acquire --cost: must be a positive integer");
+      }
+      const { slotLimit } = await import("./config.ts");
+      const limit = slotLimit(key);
+      if (cost > limit) {
+        process.stderr.write(
+          JSON.stringify({ error: "ungrantable", key, cost, limit, detail: "cost exceeds the key limit; raise it in [slots] config" }) + "\n",
+        );
+        process.exit(4);
+      }
+      if (owner === null) {
+        owner = "pid:" + process.ppid;
+      }
+      const kind = owner.startsWith("pid:") ? "process" : owner.startsWith("job:") ? "job" : "agent";
+      q.registerEntity(db, owner, kind, null);
+      const immediate = q.acquireLease(db, key, owner, cost);
+      if (immediate !== null) {
+        const lease = q.qOne(db, "SELECT * FROM leases WHERE grant_id=?", [immediate]) as q.Lease;
+        process.stdout.write(JSON.stringify({ ...lease, wait_id: null }) + "\n");
+        return;
+      }
+      let deadlineAt: number | null = null;
+      if (waitDur !== null) {
+        const secs = parseDurationSecs(waitDur);
+        if (secs === null || secs <= 0) {
+          fail("lease acquire --wait: bad duration " + JSON.stringify(waitDur) + " (use e.g. 30s, 15m)");
+        }
+        deadlineAt = Date.now() / 1000 + secs;
+      }
+      const waitId = q.enqueueWait(db, key, owner, cost, deadlineAt);
+      // Poll loop: every iteration runs the shared maintenance (expire TTLs,
+      // reap dead owners, drain the FIFO), so any active waiter is its own
+      // granter and no daemon is required for fairness.
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 150));
+        {
+          using _tx = db.transaction();
+          q.maintainLeases(db, [key]);
+        }
+        const w = q.getWait(db, waitId);
+        if (w === null) {
+          process.exit(4);
+        }
+        if (w.state === "granted" && w.grant_id !== null) {
+          const lease = q.qOne(db, "SELECT * FROM leases WHERE grant_id=?", [w.grant_id]) as q.Lease | null;
+          if (lease !== null) {
+            process.stdout.write(JSON.stringify({ ...lease, wait_id: waitId }) + "\n");
+            process.exit(0);
+          }
+        }
+        if (w.state === "expired") {
+          process.stderr.write(JSON.stringify({ error: "timeout", key, wait_id: waitId }) + "\n");
+          process.exit(3);
+        }
+        if (w.state === "cancelled") {
+          process.stderr.write(JSON.stringify({ error: "cancelled", key, wait_id: waitId }) + "\n");
+          process.exit(4);
+        }
+      }
+    } else if (sub === "release") {
+      if (rest.length !== 2) {
+        fail("lease release: give one grant id");
+      }
+      if (!q.releaseLease(db, rest[1])) {
+        fail("lease release: no such grant " + rest[1]);
+      }
+    } else if (sub === "cancel") {
+      if (rest.length !== 2) {
+        fail("lease cancel: give one wait id");
+      }
+      if (!q.cancelWait(db, Number(rest[1]))) {
+        fail("lease cancel: no queued wait " + rest[1]);
+      }
+    } else if (sub === "refresh") {
+      if (rest.length !== 2) {
+        fail("lease refresh: give one grant id");
+      }
+      if (!q.refreshLease(db, rest[1])) {
+        fail("lease refresh: no such grant " + rest[1]);
+      }
+    } else if (sub === "list" || sub === "waits") {
+      const rows = sub === "list" ? q.listLeases(db) : q.listWaits(db);
+      for (const r of rows) {
+        process.stdout.write(JSON.stringify(r) + "\n");
+      }
+    } else {
+      fail("lease: action must be acquire, release, cancel, refresh, list or waits");
+    }
   } else if (verb === "events") {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;
