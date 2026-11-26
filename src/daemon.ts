@@ -339,17 +339,6 @@ function argv0Of(kind: string, payload: q.Payload): string | null {
 }
 
 function spawnJob(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[], runningAcp: RunningAcp[]): cp.ChildProcess {
-  // The ACP lane captures its stderr itself (see below); the cmd lane opens
-  // its log fds here, so every branch shares one descriptor.
-  let logFds: { stdoutFd: number; stderrFd: number } | null = null;
-  if (kind !== "acp") {
-    const attemptNow = q.currentAttempt(db, jid);
-    const opened = q.openLogFiles(jid, attemptNow, true);
-    if (opened !== null) {
-      q.recordLogFiles(db, jid, attemptNow, opened.pair);
-      logFds = { stdoutFd: opened.stdoutFd, stderrFd: opened.stderrFd };
-    }
-  }
   if (kind === "acp") {
     // ACP lane: no tool-class matching, no shell; the agent gets pipes and JSON-RPC.
     // Its stdout carries the protocol, so only stderr goes to a log file.
@@ -372,40 +361,41 @@ function spawnJob(db: Database, jid: number, owner: string, kind: string, payloa
   }
   const argv0 = argv0Of(kind, payload);
   if (argv0 === null) {
-    return spawnRaw(db, jid, owner, kind, payload, running, logFds);
+    return spawnRaw(db, jid, owner, kind, payload, running);
   }
   const resolved = which(argv0);
   const m = matchToolClass(resolved === null ? argv0 : resolved);
   if (m === null) {
-    return spawnRaw(db, jid, owner, kind, payload, running, logFds);
+    return spawnRaw(db, jid, owner, kind, payload, running);
   }
   const proj = projectKey(payload.cwd);
   auditSpawn(db, jid, argv0, m.cls, proj);
   const key = toolSlotKey(m.cls, proj);
   if (m.cost > slotLimit(key)) {
     // never grantable: config error, not contention
-    if (logFds !== null) {
-      fs.closeSync(logFds.stdoutFd);
-      fs.closeSync(logFds.stderrFd);
-    }
     q.finish(db, jid, owner, "failed");
     throw new Parked(key);
   }
   if (!acquireToolLease(db, jid, key, m.cost)) {
-    if (logFds !== null) {
-      fs.closeSync(logFds.stdoutFd);
-      fs.closeSync(logFds.stderrFd);
-    }
     q.waitOn(db, jid, key); // D7 park-at-boundary
     throw new Parked(key);
   }
-  return spawnRaw(db, jid, owner, kind, payload, running, logFds);
+  return spawnRaw(db, jid, owner, kind, payload, running);
 }
 
-function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[], logFds: { stdoutFd: number; stderrFd: number } | null): cp.ChildProcess {
+function spawnRaw(db: Database, jid: number, owner: string, kind: string, payload: q.Payload, running: Running[]): cp.ChildProcess {
   const cmd = payload.cmd;
   // Output capture: the child's stdout and stderr fds are the attempt's log
-  // files when they opened; otherwise the daemon inherits (the old behavior).
+  // files when they open; otherwise the daemon inherits (the old behavior).
+  // The files open only after every parking boundary, so a job that goes back
+  // to waiting_on never gets an empty phantom attempt log.
+  const attemptNow = q.currentAttempt(db, jid);
+  const opened = q.openLogFiles(jid, attemptNow, true);
+  let logFds: { stdoutFd: number; stderrFd: number } | null = null;
+  if (opened !== null) {
+    q.recordLogFiles(db, jid, attemptNow, opened.pair);
+    logFds = { stdoutFd: opened.stdoutFd, stderrFd: opened.stderrFd };
+  }
   const stdio: ("ignore" | "inherit" | number)[] =
     logFds === null ? ["ignore", "inherit", "inherit"] : ["ignore", logFds.stdoutFd, logFds.stderrFd];
   const att = attemptEnv(db, jid);
