@@ -102,3 +102,9 @@ test("disk check is skipped with a note", async () => {
   const rep = d.doctor();
   assert.match(byName(rep, "disk").detail, /skipped/);
 });
+
+test("version row reports only the version, with no build-origin claim", async () => {
+  const d = await doctorMod(tmpdir());
+  const v = byName(d.doctor(), "version");
+  assert.match(v.detail, /^coordinate \d+\.\d+\.\d+$/);
+});

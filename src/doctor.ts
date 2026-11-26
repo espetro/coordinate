@@ -56,7 +56,7 @@ function checkDaemon(db: Database): CheckRow {
 
 export function doctor(): Report {
   const rows: CheckRow[] = [];
-  rows.push(row("version", true, "coordinate " + CLI_VERSION + " (source tree; scripts/build-bin.sh stamps release binaries)"));
+  rows.push(row("version", true, "coordinate " + CLI_VERSION));
 
   let db: Database | null = null;
   const p = dbPath();
