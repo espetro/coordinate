@@ -913,6 +913,113 @@ async function main(): Promise<void> {
       q.releaseLease(db, grantId);
     }
     process.exit(code);
+  } else if (verb === "send") {
+    // coordinate send <owner> <message> [--kind K] [--dedupe K] [--at WHEN] [--from F]
+    if (rest.length < 2) {
+      fail("send: usage coordinate send <owner> <message> [--kind K] [--dedupe K] [--at WHEN] [--from F]");
+    }
+    const owner = rest[0];
+    const text = rest[1];
+    let kind = "message";
+    let dedupe: string | null = null;
+    let at: string | null = null;
+    let from: string | null = null;
+    for (let i = 2; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--kind") kind = rest[++i];
+      else if (t === "--dedupe") dedupe = rest[++i];
+      else if (t === "--at") at = rest[++i];
+      else if (t === "--from") from = rest[++i];
+      else fail("send: unknown argument " + t);
+    }
+    const id = q.sendMessage(db, owner, kind, { text }, from, dedupe, runAtSecs(at));
+    if (id === null) {
+      process.stderr.write(JSON.stringify({ error: "dedupe", detail: "a message with this dedupe key already exists" }) + "\n");
+      process.exit(4);
+    }
+    process.stdout.write(String(id) + "\n");
+  } else if (verb === "inbox") {
+    // coordinate inbox [owner] [--self] [--peek] [--all] [--follow]
+    let owner: string | null = null;
+    let peek = false;
+    let includeFuture = false;
+    let followInbox = false;
+    for (let i = 0; i < rest.length; i++) {
+      const t = rest[i];
+      if (t === "--self") {
+        const v = env("JOB_ID");
+        owner = v ? "job:" + v : "pid:" + process.ppid;
+      } else if (t === "--peek") {
+        peek = true;
+      } else if (t === "--all") {
+        includeFuture = true;
+      } else if (t === "--follow") {
+        followInbox = true;
+      } else if (!t.startsWith("--")) {
+        owner = t;
+      } else {
+        fail("inbox: unknown argument " + t);
+      }
+    }
+    if (owner === null) {
+      fail("inbox: give an owner (agent:<name>, job:<id>, pid:<n>) or --self");
+    }
+    const seen: Record<number, boolean> = {};
+    const printMsgs = (): void => {
+      const msgs = q.inboxMessages(db, owner as string, !peek, includeFuture);
+      for (const m of msgs) {
+        if (seen[m.id] === true) {
+          continue;
+        }
+        seen[m.id] = true;
+        process.stdout.write(JSON.stringify({ ...m, payload: JSON.parse(m.payload) }) + "\n");
+      }
+    };
+    printMsgs();
+    while (followInbox) {
+      await new Promise((res) => setTimeout(res, 300));
+      printMsgs();
+    }
+  } else if (verb === "agent") {
+    // coordinate agent register <name> [--ttl S] / heartbeat / list / unregister
+    const sub = rest[0];
+    if (sub === "register") {
+      if (rest.length < 2) {
+        fail("agent register: give a name");
+      }
+      const name = rest[1].startsWith("agent:") ? rest[1] : "agent:" + rest[1];
+      let ttl: number | null = 60;
+      for (let i = 2; i < rest.length; i++) {
+        if (rest[i] === "--ttl") {
+          ttl = Number(rest[++i]);
+        } else {
+          fail("agent register: unknown argument " + rest[i]);
+        }
+      }
+      q.registerEntity(db, name, "agent", ttl);
+      process.stdout.write(name + "\n");
+    } else if (sub === "heartbeat") {
+      if (rest.length < 2) {
+        fail("agent heartbeat: give a name");
+      }
+      const name = rest[1].startsWith("agent:") ? rest[1] : "agent:" + rest[1];
+      if (!q.heartbeatEntity(db, name, 60)) {
+        fail("agent heartbeat: no such agent " + name);
+      }
+    } else if (sub === "list") {
+      const rows = q.qAll(db, "SELECT * FROM entities ORDER BY kind, id", []) as q.Entity[];
+      for (const r of rows) {
+        process.stdout.write(JSON.stringify(r) + "\n");
+      }
+    } else if (sub === "unregister") {
+      if (rest.length < 2) {
+        fail("agent unregister: give a name");
+      }
+      const name = rest[1].startsWith("agent:") ? rest[1] : "agent:" + rest[1];
+      q.qRun(db, "DELETE FROM entities WHERE id=?", [name]);
+    } else {
+      fail("agent: action must be register, heartbeat, list or unregister");
+    }
   } else if (verb === "events") {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;

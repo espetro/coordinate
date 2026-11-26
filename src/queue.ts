@@ -190,6 +190,26 @@ export const SCHEMA = [
   grant_id TEXT
 )`,
   `CREATE INDEX IF NOT EXISTS idx_waits_key ON waits(key, state)`,
+  // Entity-addressed mailbox (surfaces-design.md, actor-model.md): jobs,
+  // agents and endpoints receive durable messages. dedupe_key is unique when
+  // present, so a signal sent before the recipient parks is kept instead of
+  // lost; deliver_at in the future is an alarm. Messages to dead owners are
+  // reaped into state 'dead' rather than dropped.
+  `CREATE TABLE IF NOT EXISTS mailbox(
+  id INTEGER PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'message',
+  payload TEXT NOT NULL DEFAULT '{}',
+  sender TEXT,
+  dedupe_key TEXT,
+  deliver_at REAL NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending'
+    CHECK(state IN ('pending','delivered','dead')),
+  created_at REAL NOT NULL,
+  delivered_at REAL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_mailbox_owner ON mailbox(owner_id, state, deliver_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_mailbox_dedupe ON mailbox(dedupe_key) WHERE dedupe_key IS NOT NULL`,
 ];
 
 // Statement lifecycle: every prepareRaw is tracked for the life of the
@@ -1192,6 +1212,7 @@ export function maintainLeases(db: Database, keys: string[]): void {
     drainWaits(db, k);
     wakeParkedJobs(db, k);
   }
+  reapMailbox(db);
 }
 
 // Try an immediate grant with no barging: queued waiters for the key mean the
@@ -1269,6 +1290,101 @@ export function listLeases(db: Database): Lease[] {
 
 export function listWaits(db: Database): Wait[] {
   return qAll(db, "SELECT * FROM waits WHERE state='queued' ORDER BY key, id", []) as Wait[];
+}
+
+// --- mailbox: durable messages addressed to entities ---
+// deliver_at in the future is an alarm; dedupe_key makes re-sends idempotent;
+// a message to a parked job wakes it, so the wake carries data instead of the
+// pre-park signal being lost (the pre-mailbox release() only matched rows
+// already waiting).
+
+export interface MailMessage {
+  id: number;
+  owner_id: string;
+  kind: string;
+  payload: string;
+  sender: string | null;
+  dedupe_key: string | null;
+  deliver_at: number;
+  state: string;
+  created_at: number;
+  delivered_at: number | null;
+}
+
+// Delivered messages are garbage-collected after this many seconds (bounded
+// storage: the queue is state with a TTL, not an archive).
+export const MAIL_DELIVERED_TTL_S = 7 * 24 * 3600;
+
+// Returns the new message id, or null when the dedupe key already exists.
+export function sendMessage(
+  db: Database,
+  owner: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  sender: string | null,
+  dedupeKey: string | null,
+  deliverAt: number | null,
+): number | null {
+  const now = Date.now() / 1000;
+  const r = qRun(
+    db,
+    "INSERT OR IGNORE INTO mailbox(owner_id,kind,payload,sender,dedupe_key,deliver_at,created_at) VALUES(?,?,?,?,?,?,?)",
+    [owner, kind, JSON.stringify(payload), sender, dedupeKey, deliverAt === null ? now : deliverAt, now],
+  );
+  if (r.changes === 0) {
+    return null;
+  }
+  const id = Number(r.lastInsertRowid);
+  emit(db, null, "message_sent", { message_id: id, owner, kind, sender });
+  // Wake carries data: a parked recipient job is requeued so it can read its
+  // inbox on resume. Running and queued jobs are not interrupted; they read
+  // the mailbox at their own boundary.
+  if (owner.startsWith("job:")) {
+    const jid = Number(owner.slice(4));
+    const cur = qRun(db, "UPDATE jobs SET status='queued', waiting_on=NULL WHERE id=? AND status='waiting'", [jid]);
+    if (cur.changes > 0) {
+      emit(db, jid, "woken", { message_id: id });
+    }
+  }
+  return id;
+}
+
+// Visible messages for an owner: pending and due. mark=true transitions them
+// to delivered in the same transaction (read-and-consume); otherwise peeking.
+export function inboxMessages(db: Database, owner: string, mark: boolean, includeFuture: boolean): MailMessage[] {
+  const now = Date.now() / 1000;
+  const sql = includeFuture
+    ? "SELECT * FROM mailbox WHERE owner_id=? AND state='pending' ORDER BY id"
+    : "SELECT * FROM mailbox WHERE owner_id=? AND state='pending' AND deliver_at<=? ORDER BY id";
+  const binds: BindValue[] = [];
+  binds.push(owner);
+  if (!includeFuture) {
+    binds.push(now);
+  }
+  using _tx = db.transaction();
+  const rows = qAll(db, sql, binds) as MailMessage[];
+  if (mark && rows.length > 0) {
+    using upd = db.prepareRaw("UPDATE mailbox SET state='delivered', delivered_at=? WHERE id=?");
+    for (const m of rows) {
+      upd.run([now, m.id]);
+    }
+  }
+  return rows;
+}
+
+// Dead-letter pending messages whose owner is gone, and GC delivered rows past
+// the TTL. Called from the same maintenance cadence as lease reaping.
+export function reapMailbox(db: Database): void {
+  const owners = qAll(db, "SELECT DISTINCT owner_id AS o FROM mailbox WHERE state='pending'", []) as { o: string }[];
+  for (const r of owners) {
+    if (!ownerIsAlive(db, r.o)) {
+      const cur = qRun(db, "UPDATE mailbox SET state='dead' WHERE owner_id=? AND state='pending'", [r.o]);
+      if (cur.changes > 0) {
+        emit(db, null, "message_dead", { owner: r.o, count: cur.changes });
+      }
+    }
+  }
+  qRun(db, "DELETE FROM mailbox WHERE state='delivered' AND delivered_at<?", [Date.now() / 1000 - MAIL_DELIVERED_TTL_S]);
 }
 
 // Persist the ACP session id into the payload (port of queue.py set_session): the next
