@@ -58,7 +58,7 @@ Queue jobs outlive your turn. After enqueueing work you must follow up on, arm a
 
 ## ACP agent sessions
 
-The Python CLI (`legacy/python` branch, `src/coordinate/cli.py`) additionally enqueued `--acp AGENT --cwd DIR --prompt TEXT` jobs (daemon-hosted ACP session with resume support). The TS binary is cmd-only; the ACP lane TS port is pending, so agent-session enqueue is currently unavailable.
+`enqueue --acp <agent> --cwd <dir> --prompt <text>` enqueues an ACP agent-session job: the daemon spawns the agent, speaks Agent Client Protocol over its stdio, and drives one turn. The `sessionId` is persisted into the job payload as soon as it exists, so a daemon that dies mid-turn and restarts resumes the SAME session via `session/load` instead of starting over. The agent comes from the registry (`--registry FILE`, JSON `{"<name>": {"command": ..., "args": [...]}}`; default `bench/agents.stub.json` relative to the daemon's cwd), or from `COORDINATE_ACP_CMD` which overrides the registry with one full command line for every `--acp` job.
 
 ## Verified platforms
 
