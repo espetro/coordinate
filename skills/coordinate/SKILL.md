@@ -44,7 +44,7 @@ coordinate events [--follow] [--since ID] [--job ID] [--kind a,b] [--search TEXT
 coordinate forward --exec '<cmd>' [--kinds k1,k2] [--interval S] [--once]
 coordinate wait-on JOB_ID EVENT / release EVENT
 coordinate cancel JOB_ID
-coordinate dead retry [JOB_ID]
+coordinate dead retry JOB_ID   # --all requeues every failed and dead job, cancelled ones included
 coordinate cap show                # {"machine_cap":N,"repo_cap":N,"running":N}
 coordinate cap set --machine-cap N [--repo-cap N] [--force]
 coordinate daemon               # claim loop; run under tmux/service, one per machine
