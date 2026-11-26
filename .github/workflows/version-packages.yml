@@ -1,0 +1,47 @@
+name: version packages
+
+# The changesets release flow: changesets accumulate on main from each PR;
+# this action keeps a "Version Packages" PR open that bumps package.json and
+# writes CHANGELOG.md. Merging it runs the publish step, which tags vX.Y.Z —
+# and release.yml builds the binaries for that tag. coordinate is not
+# npm-published; the tag IS the release trigger.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: version-packages-main
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create version PR or tag release
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          publish: pnpm release:tag
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

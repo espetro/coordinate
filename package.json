@@ -1,7 +1,7 @@
 {
   "name": "coordinate",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "scripts": {
@@ -9,7 +9,12 @@
     "build:bin": "sh scripts/build-bin.sh",
     "docs:build": "pnpm -C docs exec docmd build",
     "docs:validate": "pnpm -C docs exec docmd validate",
-    "test": "sh scripts/build-sqlite-shared.sh && node --test"
+    "test": "sh scripts/build-sqlite-shared.sh && node --test",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release:tag": "node scripts/release-tag.mjs",
+    "lint": "oxlint src/ test/ bench/",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cutils/cli": "0.8.0",
@@ -17,13 +22,16 @@
     "effect": "4.1.5"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@docmd/core": "0.10.1",
     "@scriptc/runtime-darwin-arm64": "0.4.16",
     "@scriptc/runtime-darwin-x64": "0.4.16",
     "@scriptc/runtime-win32-x64-msvc": "0.4.16",
     "@types/node": "24.0.0",
     "koffi": "2.14.1",
-    "typescript": "~5.9.0"
+    "oxfmt": "0.79.0",
+    "oxlint": "1.94.0",
+    "typescript": "7.0.2"
   },
   "author": "Joaquin Terrasa & contributors",
   "license": "Apache-2.0"

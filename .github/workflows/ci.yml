@@ -27,3 +27,35 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test
         run: pnpm test
+
+  lint:
+    name: oxlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+
+  typecheck:
+    name: tsc --noEmit (typescript 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck

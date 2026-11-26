@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-underscore-dangle": "off",
+    "unicorn/no-array-sort": "warn",
+    "no-shadow": "warn",
+    "unicorn/consistent-function-scoping": "warn",
+    "preserve-caught-error": "warn"
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/main-elf.ts"
+      ],
+      "rules": {
+        "typescript/triple-slash-reference": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/",
+    "docs/",
+    "node_modules/"
+  ]
+}
