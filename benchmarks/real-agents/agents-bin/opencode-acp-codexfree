@@ -1,3 +1,14 @@
 #!/bin/sh
-export OPENCODE_CONFIG="$(cd "$(dirname "$0")/../opencode-configs" && pwd)/codexfree.json"
-exec opencode acp --standalone
+# Resolve symlinks before locating ../opencode-configs so this wrapper can be
+# linked into ~/.local/bin on machines where coordinate's repo is not on PATH.
+script=$0
+while [ -L "$script" ]; do
+  link=$(readlink "$script")
+  case "$link" in
+    /*) script=$link ;;
+    *) script=$(dirname "$script")/$link ;;
+  esac
+done
+root=$(CDPATH= cd -- "$(dirname "$script")/.." && pwd)
+export OPENCODE_CONFIG="$root/opencode-configs/codexfree.json"
+exec opencode acp
