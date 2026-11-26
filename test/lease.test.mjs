@@ -317,3 +317,70 @@ test("CLI events carry lease lifecycle transitions", () => {
   assert.match(ev.stdout, /lease_granted/);
   assert.match(ev.stdout, /lease_released/);
 });
+
+// --- coordinate run: the enforcement adapter ---
+
+function fakeTool(r, name, body) {
+  const bin = path.join(r.dir, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const p = path.join(bin, name);
+  fs.writeFileSync(p, "#!/bin/sh\n" + body + "\n");
+  fs.chmodSync(p, 0o755);
+  r.env["PATH"] = bin + ":" + r.env["PATH"];
+  return p;
+}
+
+test("run passes unmatched commands through with their exit code", () => {
+  const r = rig();
+  const out = cli(r, "run", "--", "sh", "-c", "exit 3");
+  assert.equal(out.status, 3);
+  const ok = cli(r, "run", "--", "sh", "-c", "echo hi");
+  assert.equal(ok.status, 0);
+  assert.match(ok.stdout, /hi/);
+  // no lease state created
+  assert.equal(cli(r, "lease", "list").stdout.trim(), "");
+});
+
+test("run wraps a heavy tool in a lease and releases it at exit", () => {
+  const r = rig();
+  fs.writeFileSync(path.join(r.dir, "config.toml"), '[slots]\n"tool:vitest:*" = 2\n');
+  fakeTool(r, "vitest", "echo ran-vitest");
+  const out = cli(r, "run", "--", "vitest", "run");
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /ran-vitest/);
+  assert.equal(cli(r, "lease", "list").stdout.trim(), "", "the lease is released when the tool exits");
+});
+
+test("two concurrent heavy runs serialize on the semaphore", async () => {
+  const r = rig();
+  fs.writeFileSync(path.join(r.dir, "config.toml"), '[slots]\n"tool:vitest:*" = 2\n');
+  fakeTool(r, "vitest", "sleep 1; echo done-$1");
+  const spawnRun = (tag) => {
+    const child = spawn(process.execPath, [BIN, "run", "--", "vitest", tag], { env: r.env, encoding: "utf8" });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    return { child, done: new Promise((res) => child.on("exit", res)), out: () => stdout, err: () => stderr };
+  };
+  const a = spawnRun("a");
+  await new Promise((res) => setTimeout(res, 400));
+  const b = spawnRun("b");
+  await new Promise((res) => setTimeout(res, 300));
+  assert.match(b.err(), /waiting for tool:vitest/, "the second run waits instead of double-booking");
+  const ca = await a.done;
+  const cb = await b.done;
+  assert.equal(ca, 0);
+  assert.equal(cb, 0);
+  assert.match(a.out(), /done-a/);
+  assert.match(b.out(), /done-b/);
+  assert.equal(cli(r, "lease", "list").stdout.trim(), "", "no lease leaks after both runs");
+}, { timeout: 20000 });
+
+test("run --key/--cost bypass classification for unlisted heavy commands", () => {
+  const r = rig();
+  fs.writeFileSync(path.join(r.dir, "config.toml"), '[slots]\n"deploy:prod" = 1\n');
+  const out = cli(r, "run", "--key", "deploy:prod", "--cost", "1", "--", "sh", "-c", "echo deploying");
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /deploying/);
+});
