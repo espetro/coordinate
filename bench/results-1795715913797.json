@@ -1,0 +1,31 @@
+{
+  "host": {
+    "host": "kinosmac.local",
+    "platform": "darwin/arm64",
+    "cpus": 10,
+    "loadavg1m": 6.57,
+    "memTotalMb": 24576,
+    "memFreeMb": 884,
+    "date": "2026-11-26T17:57:51.711Z"
+  },
+  "sections": {
+    "enqueue": {
+      "n": 60,
+      "median": 245.45,
+      "p99": 808.22,
+      "mean": 272.89,
+      "totalS": 16.37,
+      "perSec": 4
+    },
+    "mailbox": {
+      "send": {
+        "n": 100,
+        "median": 235.3,
+        "p99": 562.8,
+        "mean": 252.33
+      },
+      "sendPerSec": 4,
+      "inboxRead100Ms": 218.39
+    }
+  }
+}
