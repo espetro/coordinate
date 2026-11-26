@@ -259,6 +259,11 @@ async function main(): Promise<void> {
     if (valuePart.length > 0 && valuePart[0] === "--") {
       valuePart = valuePart.slice(1);
     }
+    // Without an explicit `--`, a leading dash is a mistyped or unsupported
+    // option (`enqueue --help`), never a program to run.
+    if (dashed < 0 && valuePart.length > 0 && valuePart[0].startsWith("-")) {
+      fail("enqueue: unknown option " + valuePart[0] + " (put -- before a command that starts with a dash)");
+    }
     for (let i = 0; i < flagPart.length; i++) {
       const t = flagPart[i];
       const eq = t.indexOf("=");

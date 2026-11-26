@@ -59,3 +59,18 @@ test("dead retry rejects extra or non-numeric arguments", () => {
   }
   assert.equal(JSON.parse(cli(r, "stats").stdout).failed, 2);
 });
+
+test("enqueue refuses an unknown leading option instead of queueing it", () => {
+  const r = rig();
+  for (const flag of ["--help", "--nope", "-h"]) {
+    const out = cli(r, "enqueue", flag);
+    assert.notEqual(out.status, 0, flag);
+    assert.match(out.stderr, /unknown option/);
+  }
+  assert.equal(JSON.parse(cli(r, "stats").stdout).queued ?? 0, 0);
+});
+
+test("enqueue still accepts a dash-leading command after --", () => {
+  const r = rig();
+  assert.equal(cli(r, "enqueue", "--", "-odd-binary").status, 0);
+});
