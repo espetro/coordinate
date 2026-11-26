@@ -343,9 +343,14 @@ async function main(): Promise<void> {
       }
       process.stdout.write(JSON.stringify(jobView(job), null, 2) + "\n");
     } else {
-      // The legacy no-id TSV rows become the same human table as `coordinate
-      // jobs` (without --watch); agents use `jobs --json` instead.
-      process.stdout.write(renderJobsTable(queryJobs(db, { sort: "id", asc: false })));
+      // Compatibility: the historical no-id rows stay tab-separated. The
+      // human table lives on `jobs`; agents should use `jobs --json`.
+      const rows = q.qAll(db, "SELECT id, status, attempts, max_attempts, waiting_on, payload FROM jobs ORDER BY id", []) as Record<string, unknown>[];
+      for (const r of rows) {
+        const cells = [r["id"], r["status"], r["attempts"], r["max_attempts"], r["waiting_on"], r["payload"]];
+        const line = cells.map((v) => (v === null || v === undefined ? "" : String(v))).join("\t");
+        process.stdout.write(line + "\n");
+      }
     }
   } else if (verb === "jobs") {
     const query: JobQuery = { sort: "id", asc: false };

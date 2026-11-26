@@ -123,14 +123,14 @@ test("the table truncates long commands", async () => {
   }
 });
 
-test("the no-id status verb prints the same table instead of TSV rows", async () => {
+test("the no-id status verb keeps the historical TSV rows", async () => {
   const r = rig();
   try {
     cli(r, "enqueue", "--cwd", "/tmp", "--shell", "--", "echo hi");
     const out = cli(r, "status");
     assert.equal(out.status, 0, out.stderr);
-    assert.ok(lines(out.stdout)[0].startsWith("ID"), "expected the table header");
-    assert.ok(!out.stdout.includes("\t"), "no raw TSV rows remain");
+    assert.ok(out.stdout.includes("\t"), "the compatibility rows stay tab-separated");
+    assert.match(out.stdout, /^1\tqueued\t0\t3\t\t/, "id, state, attempts, max, waiting_on, payload");
     // `status ID` stays pretty JSON
     const one = JSON.parse(cli(r, "status", "1").stdout);
     assert.equal(one.id, 1);
