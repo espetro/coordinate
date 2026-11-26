@@ -1054,7 +1054,9 @@ export function reapEntities(db: Database): string[] {
     if (ownerIsAlive(db, o)) {
       continue;
     }
-    for (const l of qAll(db, "SELECT grant_id, key FROM leases WHERE owner_id=?", [o]) as Lease[]) {
+    // Select every column: compiled binaries check the cast against the row at
+    // run time, so a partial select typed as Lease throws and kills the daemon.
+    for (const l of qAll(db, "SELECT * FROM leases WHERE owner_id=?", [o]) as Lease[]) {
       qRun(db, "DELETE FROM leases WHERE grant_id=?", [l.grant_id]);
       emit(db, null, "lease_reaped", { grant_id: l.grant_id, key: l.key, owner: o });
       if (freed.indexOf(l.key) === -1) {
