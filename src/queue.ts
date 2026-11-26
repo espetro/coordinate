@@ -1361,7 +1361,7 @@ export function inboxMessages(db: Database, owner: string, mark: boolean, includ
   if (!includeFuture) {
     binds.push(now);
   }
-  using _tx = db.transaction();
+  using _tx = writeTx(db);
   const rows = qAll(db, sql, binds) as MailMessage[];
   if (mark && rows.length > 0) {
     using upd = db.prepareRaw("UPDATE mailbox SET state='delivered', delivered_at=? WHERE id=?");
