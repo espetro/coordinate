@@ -31,7 +31,7 @@ Watch it run.
 ```sh
 coordinate status        # every job (historical TSV)
 coordinate status 1      # one job as JSON, payload decoded
-coordinate jobs          # canonical v1 machine records, one JSON object per line
+coordinate jobs --json   # canonical v1 machine records, one JSON object per line
 coordinate stats         # counts per state
 coordinate events --follow
 ```

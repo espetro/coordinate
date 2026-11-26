@@ -6,7 +6,7 @@ title: Machine output schema
 
 coordinate's machine output is newline-delimited JSON. This page is the published contract for the v1 records. Additive fields are allowed within v1; renames and type changes require a new version number.
 
-The human table printed by `coordinate jobs` without `--json` (and by the no-id `coordinate status`) is presentation only: it is explicitly **not the machine contract**. Its columns, truncation and age formats can change at any time without a version bump. Scripts and agents must read `coordinate jobs --json`.
+The human table printed by `coordinate jobs` without `--json` is presentation only: it is explicitly **not the machine contract**. Its columns, truncation and age formats can change at any time without a version bump. Scripts and agents must read `coordinate jobs --json`. The historical no-id `coordinate status` output remains tab-separated for compatibility and is not the machine contract either.
 
 ## Rules
 
