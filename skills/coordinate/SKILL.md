@@ -81,6 +81,15 @@ grant=$(coordinate lease acquire tool:tsc:$(git rev-parse --git-common-dir 2>/de
 coordinate lease release "$grant"
 ```
 
+The easier path is `coordinate run`, which classifies, acquires, babysits and releases in one wrapper — use it for every heavy command you run yourself, inside or outside the queue:
+
+```
+coordinate run -- vitest run
+coordinate run -- pnpm tsc --noEmit
+```
+
+It exits with the tool's own code, passes unmatched commands straight through, and prints `waiting for <key>` on stderr when it queues. Default heavy classes (vitest/jest/playwright, tsc/vite, cargo, docker, package-manager installs) serialize per project out of the box; raise parallelism in `config.toml` `[slots]`, e.g. `"tool:vitest:*" = 4`. Heavy runs inside enqueued jobs are already leased by the daemon at spawn — do not wrap those again.
+
 Exit 3 means the wait timed out, exit 4 cancelled or ungrantable. Stay alive while the tool runs: the default owner is your parent process, and dead owners are reaped (leases released, waits cancelled). The TTL (`COORDINATE_LEASE_S`, 30s) is the backstop; long runs heartbeat with `lease refresh`.
 
 ## ACP agent sessions

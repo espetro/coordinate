@@ -36,6 +36,7 @@ coordinate <verb> [args]
 | `lease refresh <grant-id>` | Extends a grant's TTL (holders heartbeat through this; unrefreshed leases expire after `COORDINATE_LEASE_S`) |
 | `lease cancel <wait-id>` | Cancels a queued wait |
 | `lease list` / `lease waits` | Prints live leases or queued waits as NDJSON |
+| `run [--wait DUR] [--key KEY] [--cost N] -- <cmd...>` | Runs a command wrapped in a tool lease: classifies the binary against the same table the daemon uses, waits in the FIFO when the key is saturated, babysits the grant for the whole run and releases it at exit. Commands that match no heavy class pass through with no lease round-trip |
 | `forward --exec <command> [--once] [--since ID] [--kinds a,b] [--cursor FILE]` | Runs a command for each event |
 | `tui` | Runs the interactive triage screen. One screen, keyboard only, over the same read model as `jobs`; needs a terminal on stdout and fails with a clear message when there is none |
 
