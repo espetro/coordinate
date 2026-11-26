@@ -462,6 +462,14 @@ export function slotLimit(key: string): number {
       if (wl !== undefined) {
         return wl;
       }
+      // Unconfigured tool classes serialize: the fallback limit is the cost of
+      // exactly one run of the class, never below 1. A flat fallback of 1
+      // would make every cost-2 class (vitest, tsc, cargo, docker) ungrantable
+      // out of the box.
+      const spec = toolClasses()[parts[1]];
+      if (spec !== undefined && spec.cost > 1) {
+        return spec.cost;
+      }
     }
   }
   return 1;
