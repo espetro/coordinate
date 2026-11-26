@@ -388,13 +388,17 @@ export function renderDetails(job: JobRecord, db: Database, cols: number): strin
 // clear. Returns when the user presses q or Ctrl-C. Caller has already
 // verified stdout is a TTY.
 export function runTui(db: Database, hooks: TuiHooks): void {
-  const stdin = process.stdin;
+  // scriptc lowers the keypress surface only on process.stdin itself; a
+  // stream alias defeats the lowering (SC2020), so this loop spells
+  // process.stdin out at every call site.
   const stdout = process.stdout;
-  readline.emitKeypressEvents(stdin);
-  if (stdin.isTTY === true) {
-    stdin.setRawMode(true);
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY === true) {
+    process.stdin.setRawMode(true);
+    // raw mode already switches the stream into flowing; an explicit
+    // .resume() has no scriptc lowering on the native stdin stream (SC2020 at
+    // runtime) and is not needed under a TTY.
   }
-  stdin.resume();
   const st = initialState();
   let quit = false;
   let pending: KeyResult | null = null;
@@ -403,16 +407,17 @@ export function runTui(db: Database, hooks: TuiHooks): void {
     const cols = typeof stdout.columns === "number" ? stdout.columns : 80;
     stdout.write("\x1b[H\x1b[2J" + renderScreen(st, rows, db, cols, hooks));
   };
-  const onKey = (_ch: string, key: readline.Key): void => {
+  const onKey = (ch: string | undefined, key: readline.Key): void => {
     if (key === undefined) {
       return;
     }
+    void ch;
     pending = handleKey(st, key, db, hooks);
     if (pending.quit === true) {
       quit = true;
     }
   };
-  stdin.on("keypress", onKey);
+  process.stdin.on("keypress", onKey);
   const sleepMs = (ms: number): { promise: Promise<void>; cancel: () => void } => {
     let t: ReturnType<typeof setTimeout> | null = null;
     const promise = new Promise<void>((res) => {
@@ -444,11 +449,12 @@ export function runTui(db: Database, hooks: TuiHooks): void {
   const done = loop();
   // On exit restore cooked mode so the shell is usable.
   const cleanup = (): void => {
-    stdin.removeListener("keypress", onKey);
-    if (stdin.isTTY === true) {
-      stdin.setRawMode(false);
+    if (process.stdin.isTTY === true) {
+      process.stdin.setRawMode(false);
     }
-    stdin.pause();
+    // removeListener and pause() have no scriptc lowering on the native stdin
+    // stream (SC2020 at runtime); with raw mode off and the process about to
+    // exit the listener causes no further input handling.
   };
   void done.then(cleanup);
 }
