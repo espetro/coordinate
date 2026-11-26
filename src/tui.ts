@@ -447,14 +447,15 @@ export function runTui(db: Database, hooks: TuiHooks): void {
       return loop();
     });
   const done = loop();
-  // On exit restore cooked mode so the shell is usable.
+  // On exit restore cooked mode so the shell is usable, then exit explicitly:
+  // removeListener and pause() have no scriptc lowering on the native stdin
+  // stream (SC2020 at runtime), so the still-attached keypress listener would
+  // otherwise keep the process alive after q.
   const cleanup = (): void => {
     if (process.stdin.isTTY === true) {
       process.stdin.setRawMode(false);
     }
-    // removeListener and pause() have no scriptc lowering on the native stdin
-    // stream (SC2020 at runtime); with raw mode off and the process about to
-    // exit the listener causes no further input handling.
+    process.exit(0);
   };
   void done.then(cleanup);
 }
