@@ -54,6 +54,16 @@ function rows(r, sql) {
   }
 }
 
+function fakeBin(r, name, body) {
+  const bin = path.join(r.dir, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const f = path.join(bin, name);
+  fs.writeFileSync(f, `#!/bin/sh\n${body}\n`);
+  fs.chmodSync(f, 0o755);
+  r.env.PATH = bin + path.delimiter + r.env.PATH;
+  return bin;
+}
+
 function startDaemon(r) {
   const logPath = path.join(r.dir, "daemon.log");
   const fd = fs.openSync(logPath, "w");
@@ -180,6 +190,26 @@ test("logs rejects an unknown job and an attempt without capture", async () => {
     assert.match(noCapture.stderr, /no captured output/);
   } finally {
     fs.rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test("a job parked at a tool boundary records no phantom attempt log", { timeout: 60000 }, async () => {
+  const r = rig();
+  try {
+    fakeBin(r, "vitest", "sleep 5");
+    fs.writeFileSync(r.env.COORDINATE_CONFIG, "[slots]\n'tool:vitest:*' = 2\n");
+    cli(r, "enqueue", "--cwd", r.dir, "--repo", "a", "--", "vitest", "run");
+    const second = Number(cli(r, "enqueue", "--cwd", r.dir, "--repo", "b", "--", "vitest", "run").stdout.trim());
+    startDaemon(r);
+    const parked = await waitFor(
+      () => rows(r, "SELECT COUNT(*) AS n FROM jobs WHERE id=" + second + " AND status='waiting'")[0].n >= 1,
+      20000,
+    );
+    assert.ok(parked, "the second cost-2 vitest job never parked at the full tool slot");
+    const meta = rows(r, "SELECT COUNT(*) AS n FROM job_logs WHERE job_id=" + second);
+    assert.equal(meta[0].n, 0, "a job that never spawned must not point at an empty attempt log");
+  } finally {
+    await cleanup(r);
   }
 });
 
