@@ -1,19 +1,55 @@
 {
+  "devin": {
+    "command": "devin",
+    "args": [
+      "--permission-mode",
+      "dangerous",
+      "acp",
+      "--process-model",
+      "in-process"
+    ],
+    "class": "plan",
+    "cap": 1
+  },
+  "agy": {
+    "command": "agy",
+    "args": [
+      "acp",
+      "--dangerously-skip-permissions"
+    ],
+    "class": "free",
+    "cap": 1
+  },
   "maki-glm45air": {
     "command": "maki",
-    "args": ["acp", "-m", "bifrost/zai-coding-plan/glm-4.5-air", "--yolo"],
+    "args": [
+      "acp",
+      "-m",
+      "bifrost/zai-coding-plan/glm-4.5-air",
+      "--yolo"
+    ],
     "class": "plan",
     "cap": 3
   },
   "maki-m2": {
     "command": "maki",
-    "args": ["acp", "-m", "bifrost/minimax-coding-plan/MiniMax-M2", "--yolo"],
+    "args": [
+      "acp",
+      "-m",
+      "bifrost/minimax-coding-plan/MiniMax-M2",
+      "--yolo"
+    ],
     "class": "plan",
     "cap": 3
   },
   "maki-codexfree": {
     "command": "maki",
-    "args": ["acp", "-m", "bifrost/codex-free", "--yolo"],
+    "args": [
+      "acp",
+      "-m",
+      "bifrost/codex-free",
+      "--yolo"
+    ],
     "class": "free",
     "cap": 1
   },
