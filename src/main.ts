@@ -14,11 +14,11 @@ import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as c
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], daemon, doctor, service install [--force]|uninstall|status\n" +
-    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
-    "logs <id> prints the captured stdout and stderr paths of the job's attempts; --attempt N reads that attempt, --follow tails new output\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry [id], logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], tui, daemon, doctor, service install [--force]|uninstall|status\n" +
+    "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--json] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
+    "logs <id> prints the newest captured stdout and stderr; --attempt N reads that attempt, --json emits paths and byte counts, --follow tails new output\n" +
     "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
-    "health emits one fixed v1 summary object (--json is the default and only form)\n" +
+    "health prints a fixed queue summary; --json emits the one-object v1 machine record\n" +
     "tui runs the interactive triage screen (needs a TTY on stdout); hooks come from [tui] in config.toml\n" +
     "enqueue --acp <agent> --cwd <dir> --prompt <text> enqueues an acp job for the agent (registry via --registry)\n" +
     "enqueue options:\n" +

@@ -19,7 +19,7 @@ coordinate <verb> [args]
 | `enqueue --acp <agent> --cwd <dir> --prompt <text>` | Adds an ACP agent-session job; the daemon spawns the agent and drives one turn |
 | `status [id]` | Shows one job as pretty-printed JSON with the payload decoded. Without an id it still prints the historical tab-separated rows |
 | `status --self` | Shows the job whose id is in `COORDINATE_JOB_ID` |
-| `jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id\|created\|priority\|status\|runtime] [--asc\|--desc] [--limit N]` | Lists jobs as the canonical v1 machine records, one JSON object per line. This is the surface agents and scripts should read |
+| `jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id\|created\|priority\|status\|runtime] [--asc\|--desc] [--limit N] [--json] [--watch]` | Lists jobs as a human table by default. With `--json` it prints the canonical v1 machine records, one JSON object per line; that is the surface agents and scripts should read |
 | `stats` | Prints the job count per state as JSON |
 | `wait-on <id> <event>` | Parks a job until the event is released |
 | `release <event>` | Queues every job parked on the event |
