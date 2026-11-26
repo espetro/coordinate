@@ -17,30 +17,7 @@ function mkbin(dir, ver) {
   return p;
 }
 
-test("swapBinary installs atomically and keeps a versioned backup", async () => {
-  const { swapBinary } = await import("../src/upgrade.ts");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-"));
-  const dest = mkbin(dir, "0.1.4");
-  const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-src-"));
-  const src = path.join(srcDir, "new-bin");
-  fs.writeFileSync(src, "#!/bin/sh\necho coordinate 0.2.0\n");
-  fs.chmodSync(src, 0o755);
-  const { backup } = swapBinary(src, dest);
-  assert.equal(execSync(dest).toString().trim(), "coordinate 0.2.0");
-  assert.ok(backup !== null && backup.includes("0.1.4"), "backup carries the old version");
-  assert.equal(execSync(backup).toString().trim(), "coordinate 0.1.4");
-  assert.equal(fs.readdirSync(dir).filter((f) => f.includes("staged")).length, 0, "no staged leftovers");
-});
 
-test("findBackup picks the newest backup", async () => {
-  const { findBackup } = await import("../src/upgrade.ts");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-find-"));
-  const dest = mkbin(dir, "0.2.0");
-  assert.equal(findBackup(dest), null);
-  fs.writeFileSync(dest + "-0.1.4.bak", "x");
-  const found = findBackup(dest);
-  assert.ok(found !== null && found.endsWith("0.1.4.bak"));
-});
 
 test("restartDaemon reports no-daemon when none is running", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-db-"));
@@ -95,4 +72,45 @@ test("restartDaemon never signals the pid of a stale daemon row", async () => {
   assert.equal(r.action, "no-daemon");
   assert.equal(r.newPid, null);
   assert.doesNotThrow(() => process.kill(bystander, 0), "bystander is still alive");
+});
+
+test("binFingerprint detects atomic-rename swaps and content rewrites", async () => {
+  const { binFingerprint, sameFingerprint } = await import("../src/upgrade.ts");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-fp-"));
+  const p = path.join(dir, "coordinate");
+  fs.writeFileSync(p, "v1-binary");
+  const a = binFingerprint(p);
+  assert.ok(a !== null);
+  assert.ok(sameFingerprint(a, binFingerprint(p)), "unchanged file compares equal");
+  // atomic rename swap: write elsewhere in the same dir, rename over
+  const staged = path.join(dir, "staged");
+  fs.writeFileSync(staged, "v2-binary");
+  fs.renameSync(staged, p);
+  const b = binFingerprint(p);
+  assert.ok(!sameFingerprint(a, b), "rename swap changes the fingerprint");
+  // in-place rewrite with identical size
+  fs.writeFileSync(p, "v3-binary");
+  const c = binFingerprint(p);
+  assert.ok(!sameFingerprint(b, c), "in-place rewrite changes the fingerprint");
+  assert.equal(binFingerprint(path.join(dir, "missing")), null);
+});
+
+test("restartDaemon spawns the replacement before signalling the old daemon", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-order-"));
+  process.env["COORDINATE_DB"] = path.join(dir, "queue.db");
+  process.env["COORDINATE_MACHINE"] = "bench";
+  const q = await import("../src/queue.ts");
+  const { restartDaemon } = await import("../src/upgrade.ts");
+  const db = q.connect();
+  const sp = spawnSync("sh", ["-c", "sleep 30 </dev/null >/dev/null 2>&1 & echo $!"], { encoding: "utf8" });
+  const fakePid = Number(sp.stdout.trim());
+  q.qRun(db, "INSERT INTO daemon(id,pid,heartbeat_ts) VALUES(1,?,?)", [fakePid, Date.now() / 1000]);
+  const bindir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-up-bin2-"));
+  const bin = path.join(bindir, "coordinate");
+  fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(bin, 0o755);
+  const r = restartDaemon(db, bin);
+  assert.equal(r.action, "restarted");
+  assert.ok(r.newPid !== null && r.newPid > 0, "gap-free ordering: replacement exists before the SIGTERM returns");
+  spawnSync("kill", [String(fakePid)]);
 });

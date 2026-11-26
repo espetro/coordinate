@@ -14,7 +14,7 @@ import { ConfigError, defaultMaxRuntimeS, parseDurationSecs, validateConfig as c
 function usage(): string {
   return (
     "usage: coordinate <verb> [args]\n" +
-    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry <id>|--all, logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], tui, daemon, doctor, service install [--force]|uninstall|status\n" +
+    "verbs: enqueue, status [--self], jobs, wait-on <id> <event>, release <event>, cancel <id>, stats, cap [show|set --machine-cap N|--repo-cap N] [--force], events [--follow] [--since ID], forward [--exec CMD] [--once], dead retry <id>|--all, logs <id> [--attempt N] [--follow], why <id> [--json], health [--json], tui, daemon [restart], doctor, service install [--force]|uninstall|status\n" +
     "jobs [--status a,b] [--kind a,b] [--search TEXT] [--sort id|created|priority|status|runtime] [--asc|--desc] [--limit N] [--json] [--watch] prints a human table; --json emits one v1 job JSON object per line (see docs/machine-schema.md)\n" +
     "logs <id> prints the newest captured stdout and stderr; --attempt N reads that attempt, --json emits paths and byte counts, --follow tails new output\n" +
     "why <id> explains the job's live state: blockers, next step, log pointers (--json for the machine record)\n" +
@@ -212,6 +212,17 @@ async function main(): Promise<void> {
   const rest = argv.slice(1);
 
   if (verb === "daemon") {
+    if (rest[0] === "restart") {
+      // Explicit upgrade handoff: spawn a replacement daemon from this binary,
+      // then SIGTERM the running one. Safe at any time by the durability
+      // contract; the implicit surface (binary-change auto-swap in the daemon)
+      // covers package-manager upgrades with no command at all.
+      const db2 = q.connect();
+      const { restartDaemon } = await import("./upgrade.ts");
+      const r = restartDaemon(db2, process.execPath);
+      process.stdout.write(JSON.stringify(r) + "\n");
+      process.exit(r.action === "restarted" ? 0 : 1);
+    }
     // dynamic import keeps daemon deps out of CLI-only startup
     import("./daemon.ts").then((d) => d.run()).catch((e) => fail(String(e)));
     return;
@@ -1025,32 +1036,6 @@ async function main(): Promise<void> {
     } else {
       fail("agent: action must be register, heartbeat, list or unregister");
     }
-  } else if (verb === "upgrade") {
-    // coordinate upgrade [--version vX.Y.Z | --file PATH] [--no-restart] [--rollback]
-    let file: string | null = null;
-    let version: string | null = null;
-    let dest: string | null = null;
-    let restart = true;
-    let rollback = false;
-    for (let i = 0; i < rest.length; i++) {
-      const t = rest[i];
-      if (t === "--file") file = rest[++i];
-      else if (t === "--dest") dest = rest[++i];
-      else if (t === "--version") version = rest[++i];
-      else if (t === "--no-restart") restart = false;
-      else if (t === "--rollback") rollback = true;
-      else fail("upgrade: unknown argument " + t);
-    }
-    const { upgrade } = await import("./upgrade.ts");
-    await upgrade({
-      db,
-      dest,
-      file,
-      version,
-      restart,
-      rollback,
-      log: (step, detail) => process.stdout.write(JSON.stringify({ step, detail }) + "\n"),
-    });
   } else if (verb === "events") {
     // JSONL event tail: list once, or poll MAX(id) with --follow (matches Python CLI).
     let follow = false;

@@ -17,6 +17,7 @@ import type { AcpHandle } from "./acp.ts";
 import { acpPayloadOf, startAcpJob } from "./acp.ts";
 import { ConfigError, DEFAULT_TOOL_CLASSES, slotLimit, validateConfig } from "./config.ts";
 import { matchToolClass, projectKey, shlexSplit, toolSlotKey, which } from "./toolclass.ts";
+import * as up from "./upgrade.ts";
 // Effect v4 for the daemon's async machinery: the claim loop, the backoff
 // sleep, the stop contract and the singleton-takeover probe. Deep module paths
 // keep the static build small (each Effect module compiles on its own) and the
@@ -373,6 +374,16 @@ export async function run(): Promise<void> {
   let delay = BACKOFF_MIN;
   let lastHb = 0.0;
   let lastReap = 0.0;
+  // Implicit upgrade surface: when this daemon runs a compiled coordinate
+  // binary (not the node shim), watch the binary file itself. A package
+  // manager swap (mise/brew/install.sh) changes the inode or contents; once
+  // the change is stable across two checks the daemon spawns its replacement
+  // and exits through the normal stop path — so `mise upgrade` alone is the
+  // whole upgrade procedure. Safe by the durability contract. Opt out with
+  // COORDINATE_NO_AUTO_UPGRADE=1.
+  const selfBin = path.basename(process.execPath).startsWith("coordinate") ? process.execPath : null;
+  const fp0 = selfBin === null ? null : up.binFingerprint(selfBin);
+  let fpPending: up.BinFingerprint | null = null;
   // Stop contract (ARCHITECTURE.md, durability): agents keep working when the orchestrator
   // stops. SIGTERM/SIGINT stop the claim loop and exit cleanly; running children are detached
   // (handles unref'd) and left alive. The next daemon start reaps their expired leases (X3).
@@ -498,6 +509,22 @@ export async function run(): Promise<void> {
     }
 
     if (now - lastReap >= q.LEASE_S / 3) {
+      if (selfBin !== null && fp0 !== null && process.env["COORDINATE_NO_AUTO_UPGRADE"] !== "1") {
+        const fpNow = up.binFingerprint(selfBin);
+        if (fpNow !== null && !up.sameFingerprint(fp0, fpNow)) {
+          if (fpPending !== null && up.sameFingerprint(fpPending, fpNow)) {
+            // Stable across two checks: the swap is complete. Hand off.
+            q.emit(db, null, "upgrade_detected", { bin: selfBin, pid: process.pid });
+            process.stderr.write("coordinate: binary changed on disk, spawning replacement daemon\n");
+            up.spawnDaemon(selfBin);
+            stop();
+          } else {
+            fpPending = fpNow;
+          }
+        } else {
+          fpPending = null;
+        }
+      }
       q.reap(db);
       // Generalized lease maintenance: expire TTLs, reap dead pid owners and
       // drain FIFO waiters, so grants land even when no acquirer is polling
@@ -577,6 +604,10 @@ export async function run(): Promise<void> {
   // closing the DB here is safe. The statement-tracking helpers in queue.ts
   // keep the tracked list short, so this close is milliseconds, not seconds.
   try {
+    // A cleanly stopped daemon holds no claim: releasing the row lets a
+    // replacement (auto-upgrade or `daemon restart`) take over at once
+    // instead of waiting out the staleness probe.
+    q.qRun(db, "DELETE FROM daemon WHERE id=1 AND pid=?", [process.pid]);
     db.close();
   } catch {
     // already closed by a concurrent turn
