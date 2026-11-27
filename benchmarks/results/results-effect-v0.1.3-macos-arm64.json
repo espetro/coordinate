@@ -1,1148 +1,797 @@
 {
- "title": "Effect soak: v0.1.2 vs v0.1.3 (ACP lane + idle-spin fix), pre-Effect attribution, orchestrator-kill determinism",
- "schema": "coordinate-bench-results/v2",
- "generated": "2026-11-24",
- "harness": {
-  "entrypoint": "bench/bench.ts",
-  "runner": "bench/run-ab.sh",
-  "language": "typescript",
-  "runtime": "node v26.13.1",
-  "port_of": "legacy/python:bench/bench.py",
-  "scenarios": [
-   "cli",
-   "idle",
-   "throughput",
-   "cap",
-   "repo",
-   "priority",
-   "chaos",
-   "toolpark",
-   "orchestrator-kill",
-   "state-loss"
-  ],
-  "not_ported": [
-   "noise-floor",
-   "live-density"
-  ],
-  "commit": "27add99"
- },
- "host": {
-  "cpu_model": "Apple M4",
-  "cores": 10,
-  "mem_total_mb": 24576,
-  "os": "Darwin 27.2.0",
-  "platform": "darwin-arm64",
-  "state": "heavily contended for the whole campaign; 1-minute load ranged 10-73 on 10 cores; free memory as low as 18 MB",
-  "note": "every run file records its own host state (load_1m/5m/15m, mem_available_mb, timestamp) so contention is visible per measurement"
- },
- "notes": [
-  "(M) Every number in this file was measured on the host described in the top-level 'host' block; medians are over 3 interleaved repeats unless the field says otherwise.",
-  "(M) The host was heavily contended throughout the campaign (load 10-73 on 10 cores, free memory down to 18 MB). Absolute timings are pessimistic; the A/B legs are interleaved so the noise hits both sides roughly equally.",
-  "(M) v0.1.2 has no ACP agent-session lane, so orchestrator-kill and state-loss are recorded as skipped for the baseline rather than as failures.",
-  "(M) The orchestrator-kill loop leg is 30 passing runs and 6 failing runs (16.7% failure rate). The failures are stub-agent starvation under memory pressure: the restarted daemon never re-launched the stub agent, jobs stayed 'running' with turns_started=1, turns_done=0 and resumed_via_session_load=0, and the 180 s recovery deadline expired. See 'leg_orchestrator_kill_loop' for the per-run detail and the verdict.",
-  "(C) The Effect cost attribution (pre-Effect vs Effect) is measured on the same feature set with the same harness, so the deltas are attributable to the Effect runtime rather than to a feature change."
- ],
- "leg_ab_v012_vs_v013": {
-  "description": "A/B of the released v0.1.2 binary (/tmp/coord-v012) against the candidate v0.1.3 binary (/tmp/coord-v013). Interleaved repeats, baseline first in each round.",
-  "baseline": {
-   "bin": "/tmp/coord-v012",
-   "acp_lane": false,
-   "idle_cpu_pct": 18.2,
-   "idle_rss_mb": 7,
-   "peak_rss_mb": 10.1,
-   "throughput_jobs_per_s": 34.17,
-   "throughput_jobs": 60,
-   "enqueue_cli_median_ms": 10.6,
-   "enqueue_cli_p95_ms": 11.9,
-   "chaos_recovery_to_all_done_s": 18.52,
-   "chaos_total_executions": 12,
-   "chaos_duplicated_jobs": 3,
-   "invariants": {
-    "cap_holds": true,
-    "cap_max_concurrency": 3,
-    "repo_cap_holds": true,
-    "repo_shared_max_concurrency": 1,
-    "priority_ok": true,
-    "priority_order": [
-     "p9",
-     "p5",
-     "p1",
-     "p0"
+  "backend": "sqlite",
+  "generated_by": "bench/merge-ab.mjs",
+  "baseline_bin": "/tmp/coord-v012",
+  "baseline_version": "0)",
+  "baseline_acp_lane": false,
+  "candidate_bin": "/tmp/coord-v013",
+  "candidate_version": "coordinate 0.1.3",
+  "candidate_acp_lane": true,
+  "host": {
+    "cpu_model": "Apple M4",
+    "cores": 10,
+    "mem_total_mb": 24576,
+    "mem_available_mb": 266,
+    "load_1m": 2.66,
+    "load_5m": 2.49,
+    "load_15m": 2.61,
+    "os": "Darwin 27.2.0",
+    "platform": "darwin-arm64",
+    "timestamp": "2026-11-27T05:04:46.537Z",
+    "state": "idle at campaign start (load 1m 2.67 on 10 cores); an unrelated build spiked load to 15.9 (baseline r4) and 29.7 (candidate r4) mid-campaign; the A/B legs are interleaved so the spike hits both sides",
+    "campaign_load_1m_range": [
+      1.9,
+      29.71
+    ]
+  },
+  "rounds": {
+    "baseline": [
+      "ab2-baseline-r1.json",
+      "ab2-baseline-r2.json",
+      "ab2-baseline-r3.json",
+      "ab2-baseline-r4.json",
+      "ab2-baseline-single.json"
     ],
-    "tool_cap_holds": true,
-    "tool_vitest_max_concurrency": 1,
-    "tool_trivial_ran_while_parked": true,
-    "chaos_all_done": true
-   },
-   "acp_scenarios": "skipped (no ACP agent-session lane)",
-   "host_per_run": [
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 693,
-     "load_1m": 27.46,
-     "load_5m": 28.89,
-     "load_15m": 38.81,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:05:25.043Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 527,
-     "load_1m": 19.44,
-     "load_5m": 26.79,
-     "load_15m": 34.3,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:13:24.664Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 18,
-     "load_1m": 40.03,
-     "load_5m": 28.1,
-     "load_15m": 30.47,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:21:21.768Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 95,
-     "load_1m": 50.41,
-     "load_5m": 36.54,
-     "load_15m": 33.82,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:29:19.986Z"
-    }
-   ]
+    "candidate": [
+      "ab2-candidate-r1.json",
+      "ab2-candidate-r2.json",
+      "ab2-candidate-r3.json",
+      "ab2-candidate-r4.json",
+      "ab2-candidate-single.json"
+    ]
   },
-  "candidate": {
-   "bin": "/tmp/coord-v013",
-   "acp_lane": true,
-   "idle_cpu_pct": 0.05,
-   "idle_rss_mb": 16,
-   "peak_rss_mb": 19.8,
-   "throughput_jobs_per_s": 44.09,
-   "throughput_jobs": 60,
-   "enqueue_cli_median_ms": 14.5,
-   "enqueue_cli_p95_ms": 15.6,
-   "chaos_recovery_to_all_done_s": 18.49,
-   "chaos_total_executions": 12,
-   "chaos_duplicated_jobs": 3,
-   "invariants": {
-    "cap_holds": true,
-    "cap_max_concurrency": 3,
-    "repo_cap_holds": true,
-    "repo_shared_max_concurrency": 1,
-    "priority_ok": true,
-    "priority_order": [
-     "p9",
-     "p5",
-     "p1",
-     "p0"
+  "host_load_1m_per_round": {
+    "baseline": [
+      2.45,
+      2.62,
+      1.9,
+      15.88,
+      3.21
     ],
-    "tool_cap_holds": true,
-    "tool_vitest_max_concurrency": 1,
-    "tool_trivial_ran_while_parked": true,
-    "chaos_all_done": true
-   },
-   "acp_scenarios": "ran",
-   "host_per_run": [
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 20,
-     "load_1m": 36.45,
-     "load_5m": 32.16,
-     "load_15m": 38.15,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:08:39.374Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 39,
-     "load_1m": 15.34,
-     "load_5m": 21.13,
-     "load_15m": 30.32,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:16:36.136Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 423,
-     "load_1m": 37.69,
-     "load_5m": 34.99,
-     "load_15m": 33.08,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:24:35.652Z"
-    },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 42,
-     "load_1m": 31.44,
-     "load_5m": 34.69,
-     "load_15m": 33.55,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:31:30.395Z"
-    }
-   ]
+    "candidate": [
+      2.66,
+      2.35,
+      7.77,
+      29.71,
+      3.14
+    ]
   },
-  "deltas": {
-   "idle_cpu_pct": {
-    "v0.1.2": 18.2,
-    "v0.1.3": 0.05,
-    "delta": -18.15,
-    "verdict": "issue-#5 idle-spin fix confirmed: the v0.1.3 daemon no longer burns CPU while idle"
-   },
-   "throughput_jobs_per_s": {
-    "v0.1.2": 34.17,
-    "v0.1.3": 44.09,
-    "delta": 9.92,
-    "verdict": "higher throughput on the same cap"
-   },
-   "idle_rss_mb": {
-    "v0.1.2": 7,
-    "v0.1.3": 16,
-    "delta": 9,
-    "verdict": "Effect runtime footprint, see leg_pre_effect_attribution"
-   },
-   "peak_rss_mb": {
-    "v0.1.2": 10.1,
-    "v0.1.3": 19.8,
-    "delta": 9.7,
-    "verdict": "Effect runtime footprint, see leg_pre_effect_attribution"
-   },
-   "chaos_recovery_to_all_done_s": {
-    "v0.1.2": 18.52,
-    "v0.1.3": 18.49,
-    "delta": -0.03,
-    "verdict": "unchanged; the ACP lane does not slow the chaos recovery path"
-   },
-   "enqueue_cli_median_ms": {
-    "v0.1.2": 10.6,
-    "v0.1.3": 14.5,
-    "delta": 3.9,
-    "verdict": "larger binary startup, same order of magnitude"
-   }
-  },
-  "invariants": {
-   "cap_holds_both": true,
-   "repo_cap_holds_both": true,
-   "priority_order_both": [
-    "p9",
-    "p5",
-    "p1",
-    "p0"
-   ],
-   "tool_cap_holds_both": true,
-   "note": "(M) cap, per-repo cap, priority order and tool-lane cap invariants hold in every repeat of both binaries."
-  }
- },
- "leg_pre_effect_attribution": {
-  "description": "Attribution leg: pre-Effect main build (/tmp/coord-preeffect) against the Effect build (/tmp/coord-v013) on the same feature set with the same harness, so the delta is the Effect runtime cost and nothing else.",
-  "baseline_pre_effect": {
-   "bin": "/tmp/coord-preeffect",
-   "idle_rss_mb": 6.5,
-   "peak_rss_mb": 10.8,
-   "idle_cpu_pct": 0.05,
-   "enqueue_cli_median_ms": 9.4,
-   "throughput_jobs_per_s": 46.66,
-   "chaos_recovery_to_all_done_s": 18.5,
-   "host_per_run": [
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 24,
-     "load_1m": 55.55,
-     "load_5m": 41.39,
-     "load_15m": 36.59,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:37:58.217Z"
+  "metrics": {
+    "enqueue_cli_median_ms": {
+      "baseline_rounds": [
+        5.6,
+        5.7,
+        6.2,
+        27.3
+      ],
+      "candidate_rounds": [
+        6.6,
+        6.2,
+        14.8,
+        16.4
+      ],
+      "baseline_median": 5.95,
+      "candidate_median": 10.7
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 79,
-     "load_1m": 25.71,
-     "load_5m": 34.29,
-     "load_15m": 38.98,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:50:08.400Z"
+    "enqueue_cli_p95_ms": {
+      "baseline_rounds": [
+        5.8,
+        5.8,
+        6.4,
+        43.2
+      ],
+      "candidate_rounds": [
+        7.1,
+        7.1,
+        24.7,
+        18.8
+      ],
+      "baseline_median": 6.1,
+      "candidate_median": 12.95
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 98,
-     "load_1m": 23.74,
-     "load_5m": 30.48,
-     "load_15m": 36.51,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:59:34.445Z"
+    "idle_rss_mb": {
+      "baseline_rounds": [
+        6.9,
+        7.1,
+        7.1,
+        6.2
+      ],
+      "candidate_rounds": [
+        16.2,
+        16.2,
+        16.2,
+        16.3
+      ],
+      "baseline_median": 7,
+      "candidate_median": 16.2
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 148,
-     "load_1m": 13.53,
-     "load_5m": 26.2,
-     "load_15m": 31.66,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:11:38.828Z"
-    }
-   ]
-  },
-  "candidate_effect": {
-   "bin": "/tmp/coord-v013",
-   "idle_rss_mb": 16.1,
-   "peak_rss_mb": 19.8,
-   "idle_cpu_pct": 0.05,
-   "enqueue_cli_median_ms": 11.4,
-   "throughput_jobs_per_s": 47.77,
-   "chaos_recovery_to_all_done_s": 18.47,
-   "host_per_run": [
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 58,
-     "load_1m": 68.65,
-     "load_5m": 61.39,
-     "load_15m": 47.2,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:42:44.987Z"
+    "idle_cpu_pct": {
+      "baseline_rounds": [
+        22.81,
+        23.52,
+        22.72,
+        13.91
+      ],
+      "candidate_rounds": [
+        0.05,
+        0.1,
+        0.05,
+        0.1
+      ],
+      "baseline_median": 22.765,
+      "candidate_median": 0.07500000000000001
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 83,
-     "load_1m": 28.22,
-     "load_5m": 40.33,
-     "load_15m": 41.26,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T21:54:51.679Z"
+    "enqueue_total_s": {
+      "baseline_rounds": [
+        0.39,
+        0.63,
+        0.39,
+        0.88
+      ],
+      "candidate_rounds": [
+        0.43,
+        0.47,
+        0.45,
+        1.22
+      ],
+      "baseline_median": 0.51,
+      "candidate_median": 0.45999999999999996
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 27,
-     "load_1m": 23.3,
-     "load_5m": 28.85,
-     "load_15m": 33.4,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:06:55.832Z"
+    "throughput_makespan_s": {
+      "baseline_rounds": [
+        0.69,
+        1.23,
+        0.69,
+        1.96
+      ],
+      "candidate_rounds": [
+        1.02,
+        0.78,
+        1.04,
+        2.21
+      ],
+      "baseline_median": 0.96,
+      "candidate_median": 1.03
     },
-    {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 42,
-     "load_1m": 17.4,
-     "load_5m": 20.33,
-     "load_15m": 27.73,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:15:20.169Z"
+    "throughput_jobs_per_s": {
+      "baseline_rounds": [
+        86.96,
+        48.82,
+        86.58,
+        30.55
+      ],
+      "candidate_rounds": [
+        58.88,
+        77.22,
+        57.92,
+        27.09
+      ],
+      "baseline_median": 67.7,
+      "candidate_median": 58.400000000000006
+    },
+    "peak_rss_mb": {
+      "baseline_rounds": [
+        10.3,
+        10.3,
+        10.3,
+        10.5
+      ],
+      "candidate_rounds": [
+        20,
+        19.8,
+        19.9,
+        20
+      ],
+      "baseline_median": 10.3,
+      "candidate_median": 19.95
+    },
+    "cap_makespan_s": {
+      "baseline_rounds": [
+        4.25,
+        4.31,
+        4.34,
+        5.81,
+        4.34
+      ],
+      "candidate_rounds": [
+        4.34,
+        4.39,
+        4.33,
+        5.24,
+        4.34
+      ],
+      "baseline_median": 4.34,
+      "candidate_median": 4.34
+    },
+    "cap_ideal_s": {
+      "baseline_rounds": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "chaos_recovery_to_all_done_s": {
+      "baseline_rounds": [
+        18.45,
+        18.48,
+        18.49,
+        18.91,
+        18.52
+      ],
+      "candidate_rounds": [
+        18.54,
+        18.56,
+        18.46,
+        18.46,
+        18.45
+      ],
+      "baseline_median": 18.49,
+      "candidate_median": 18.46
+    },
+    "chaos_total_executions": {
+      "baseline_rounds": [
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "candidate_rounds": [
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "baseline_median": 12,
+      "candidate_median": 12
+    },
+    "chaos_duplicated_jobs": {
+      "baseline_rounds": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "candidate_rounds": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": 3,
+      "candidate_median": 3
+    },
+    "orchkill_recovery_s": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        190.59,
+        31.93,
+        31.77,
+        32.11,
+        31.92
+      ],
+      "baseline_median": null,
+      "candidate_median": 31.93
+    },
+    "orchkill_duplicate_turns": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": null,
+      "candidate_median": 3
+    },
+    "orchkill_resumed_via_session_load": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        3,
+        3,
+        3,
+        3
+      ],
+      "baseline_median": null,
+      "candidate_median": 3
+    },
+    "orchkill_restarted": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_recovery_s": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        32.08,
+        31.96,
+        32.17,
+        31.91,
+        31.95
+      ],
+      "baseline_median": null,
+      "candidate_median": 31.96
+    },
+    "stateloss_jobs_lost": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_never_finished": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_jobs_run_twice": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "baseline_median": null,
+      "candidate_median": 4
+    },
+    "stateloss_duplicate_turns": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "baseline_median": null,
+      "candidate_median": 1
+    },
+    "stateloss_leases_leaked": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_leases_leaked_right_after_kill": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_parked_still_parked": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "baseline_median": null,
+      "candidate_median": 2
+    },
+    "stateloss_parked_released": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "stateloss_orphan_agents_surviving": {
+      "baseline_rounds": [],
+      "candidate_rounds": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "baseline_median": null,
+      "candidate_median": 0
+    },
+    "enqueue_to_claim_p50_ms": {
+      "baseline_rounds": [
+        87,
+        87,
+        87,
+        87
+      ],
+      "candidate_rounds": [
+        91,
+        101,
+        96,
+        225
+      ],
+      "baseline_median": 87,
+      "candidate_median": 98.5
+    },
+    "enqueue_to_claim_p95_ms": {
+      "baseline_rounds": [
+        96,
+        97,
+        97,
+        99
+      ],
+      "candidate_rounds": [
+        107,
+        117,
+        115,
+        252
+      ],
+      "baseline_median": 97,
+      "candidate_median": 116
+    },
+    "enqueue_to_claim_max_ms": {
+      "baseline_rounds": [
+        96,
+        97,
+        97,
+        99
+      ],
+      "candidate_rounds": [
+        107,
+        117,
+        115,
+        252
+      ],
+      "baseline_median": 97,
+      "candidate_median": 116
+    },
+    "throughput_jobs": {
+      "baseline_values": [
+        "60",
+        "undefined"
+      ],
+      "candidate_values": [
+        "60",
+        "undefined"
+      ],
+      "equal": false
+    },
+    "throughput_all_done": {
+      "baseline_values": [
+        "true",
+        "undefined"
+      ],
+      "candidate_values": [
+        "true",
+        "undefined"
+      ],
+      "equal": false
+    },
+    "cap": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "cap_jobs": {
+      "baseline_values": [
+        "9"
+      ],
+      "candidate_values": [
+        "9"
+      ],
+      "equal": true
+    },
+    "cap_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "cap_max_concurrency": {
+      "baseline_values": [
+        "3"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": true
+    },
+    "cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "repo_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "repo_shared_max_concurrency": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "repo_cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "priority_ok": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "chaos_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_all_done": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_vitest_max_concurrency": {
+      "baseline_values": [
+        "1"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": true
+    },
+    "tool_cap_holds": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "tool_trivial_ran_while_parked": {
+      "baseline_values": [
+        "true"
+      ],
+      "candidate_values": [
+        "true"
+      ],
+      "equal": true
+    },
+    "orchkill_jobs": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": false
+    },
+    "orchkill_all_done": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "false",
+        "true"
+      ],
+      "equal": false
+    },
+    "orchkill_done": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "0",
+        "3"
+      ],
+      "equal": false
+    },
+    "orchkill_agents_alive_before_kill": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "3"
+      ],
+      "equal": false
+    },
+    "orchkill_agents_alive_after_kill": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "0"
+      ],
+      "equal": false
+    },
+    "orchkill_orphan_agents_surviving": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "0"
+      ],
+      "equal": false
+    },
+    "stateloss_live_jobs": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "2"
+      ],
+      "equal": false
+    },
+    "stateloss_parked_jobs": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "2"
+      ],
+      "equal": false
+    },
+    "stateloss_tool_jobs": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": false
+    },
+    "stateloss_acp_jobs": {
+      "baseline_values": [
+        "undefined"
+      ],
+      "candidate_values": [
+        "1"
+      ],
+      "equal": false
+    },
+    "priority_order": {
+      "baseline_values": [
+        "p9,p5,p1,p0"
+      ],
+      "candidate_values": [
+        "p9,p5,p1,p0"
+      ]
     }
-   ]
   },
-  "deltas": {
-   "idle_rss_mb": {
-    "pre_effect": 6.5,
-    "effect": 16.1,
-    "delta": 9.6,
-    "verdict": "(M) +9.6 MB resident cost of the Effect runtime"
-   },
-   "peak_rss_mb": {
-    "pre_effect": 10.8,
-    "effect": 19.8,
-    "delta": 9.0,
-    "verdict": "(M) +9.0 MB peak; the idle footprint dominates"
-   },
-   "enqueue_cli_median_ms": {
-    "pre_effect": 9.4,
-    "effect": 11.4,
-    "delta": 2.0,
-    "verdict": "(M) +2 ms CLI median, from the larger binary's startup, not from the queue path"
-   },
-   "idle_cpu_pct": {
-    "pre_effect": 0.05,
-    "effect": 0.05,
-    "delta": 0.0,
-    "verdict": "(M) unchanged; the idle-spin fix is already in the pre-Effect build"
-   }
-  }
- },
- "leg_acp_durability": {
-  "description": "ACP agent-session lane durability, v0.1.3 only (v0.1.2 has no ACP lane so these scenarios are skipped for it).",
-  "jobs_lost": 0,
-  "leases_leaked": 0,
-  "parked_still_parked": 2,
-  "parked_released": 0,
-  "session_ids_kept": true,
-  "session_ids_checked": 1,
-  "duplicate_turns": 1,
-  "duplicate_turns_before_kill": 0,
-  "orphan_agents_surviving": 0,
-  "recovery_s": 32.17,
-  "verdict": "(M) No state loss: zero jobs lost, zero leases leaked, parked jobs stay parked, session ids are kept across the kill. The single duplicate turn is the at-least-once re-execution after the orchestrator kill, which is the expected contract.",
-  "measured_in": "ab-candidate-r1.json (stateloss_* fields)"
- },
- "leg_orchestrator_kill_loop": {
-  "description": "Determinism loop for the orchestrator-kill scenario: the daemon is SIGKILLed mid-turn and must resume every agent via its ACP session/load.",
-  "runs_total": 24,
-  "runs_passed": 21,
-  "runs_failed": 3,
-  "failure_rate": 0.125,
-  "recovery_s_passed": {
-   "min": 31.6,
-   "max": 32.27,
-   "median": 31.72,
-   "n": 21
+  "skipped_or_failed": {
+    "orchestrator-kill": {
+      "baseline:ab2-baseline-r1.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r2.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r3.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r4.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-single.json": "binary has no ACP agent-session lane (kind=acp missing)"
+    },
+    "state-loss": {
+      "baseline:ab2-baseline-r1.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r2.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r3.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-r4.json": "binary has no ACP agent-session lane (kind=acp missing)",
+      "baseline:ab2-baseline-single.json": "binary has no ACP agent-session lane (kind=acp missing)"
+    }
   },
-  "recovery_s_failed": [
-   190.43,
-   190.47,
-   190.67
-  ],
-  "resumed_via_session_load_passed": "all 3 jobs in every passing run",
-  "duplicate_turns_passed": 3,
-  "orphan_agents_surviving": 0,
-  "host_load_1m_range": {
-   "min": 10.37,
-   "max": 73.12
+  "title": "Effect soak: v0.1.2 vs v0.1.3, same host, interleaved",
+  "schema": "coordinate-bench-results/v2",
+  "generated": "2026-11-27",
+  "harness": {
+    "entrypoint": "bench/bench.ts",
+    "runner": "bench/run-ab.sh",
+    "merger": "bench/merge-ab.mjs",
+    "language": "typescript",
+    "runtime": "node v26.13.1",
+    "port_of": "legacy/python:bench/bench.py",
+    "scenarios": [
+      "cli",
+      "idle",
+      "throughput",
+      "cap",
+      "repo",
+      "priority",
+      "chaos",
+      "toolpark",
+      "orchestrator-kill",
+      "state-loss"
+    ],
+    "not_ported": [
+      "noise-floor",
+      "live-density"
+    ]
   },
-  "host_mem_available_mb_range": {
-   "min": 20,
-   "max": 538
-  },
-  "passing_runs": [
-   {
-    "file": "ok-loop-1.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.84,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 254,
-     "load_1m": 12.08,
-     "load_5m": 18.56,
-     "load_15m": 25.2,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:19:58.419Z"
-    }
-   },
-   {
-    "file": "ok-loop-2.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 32.03,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 178,
-     "load_1m": 10.75,
-     "load_5m": 17.31,
-     "load_15m": 24.4,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:20:44.431Z"
-    }
-   },
-   {
-    "file": "ok-loop-3.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.67,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 208,
-     "load_1m": 10.37,
-     "load_5m": 16.22,
-     "load_15m": 23.59,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:21:30.649Z"
-    }
-   },
-   {
-    "file": "ok-loop-4.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.73,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 47,
-     "load_1m": 13.25,
-     "load_5m": 16.06,
-     "load_15m": 23.1,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:22:20.943Z"
-    }
-   },
-   {
-    "file": "ok-loop-6.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.69,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 25,
-     "load_1m": 25.77,
-     "load_5m": 19.49,
-     "load_15m": 22.71,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:26:32.598Z"
-    }
-   },
-   {
-    "file": "ok-loop-8.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.72,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 61,
-     "load_1m": 21.86,
-     "load_5m": 20.25,
-     "load_15m": 22.21,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:30:43.621Z"
-    }
-   },
-   {
-    "file": "ok-k-1.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 32.06,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 124,
-     "load_1m": 19.38,
-     "load_5m": 19.93,
-     "load_15m": 21.98,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:31:39.380Z"
-    }
-   },
-   {
-    "file": "ok-k-10.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.67,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 302,
-     "load_1m": 52.7,
-     "load_5m": 48.91,
-     "load_15m": 36.22,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:38:45.475Z"
-    }
-   },
-   {
-    "file": "ok-k-11.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.93,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 101,
-     "load_1m": 41.09,
-     "load_5m": 46.35,
-     "load_15m": 35.93,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:39:31.474Z"
-    }
-   },
-   {
-    "file": "ok-k-12.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.73,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 20,
-     "load_1m": 36.86,
-     "load_5m": 44.31,
-     "load_15m": 35.7,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:40:18.032Z"
-    }
-   },
-   {
-    "file": "ok-k-13.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.68,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 312,
-     "load_1m": 46.24,
-     "load_5m": 45.52,
-     "load_15m": 36.57,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:41:04.040Z"
-    }
-   },
-   {
-    "file": "ok-k-14.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.66,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 37,
-     "load_1m": 56.76,
-     "load_5m": 48.6,
-     "load_15m": 38.18,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:41:50.234Z"
-    }
-   },
-   {
-    "file": "ok-k-16.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.62,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 193,
-     "load_1m": 24.29,
-     "load_5m": 37.91,
-     "load_15m": 36.45,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:46:00.934Z"
-    }
-   },
-   {
-    "file": "ok-k-2.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 32.27,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 26,
-     "load_1m": 49.85,
-     "load_5m": 27.28,
-     "load_15m": 24.53,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:32:26.163Z"
-    }
-   },
-   {
-    "file": "ok-k-3.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 32.06,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 50,
-     "load_1m": 46.04,
-     "load_5m": 29.51,
-     "load_15m": 25.49,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:33:12.942Z"
-    }
-   },
-   {
-    "file": "ok-k-4.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.69,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 22,
-     "load_1m": 56.33,
-     "load_5m": 34.33,
-     "load_15m": 27.46,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:33:59.898Z"
-    }
-   },
-   {
-    "file": "ok-k-5.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.68,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 538,
-     "load_1m": 58.7,
-     "load_5m": 38.38,
-     "load_15m": 29.35,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:34:46.454Z"
-    }
-   },
-   {
-    "file": "ok-k-6.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.92,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 32,
-     "load_1m": 52.02,
-     "load_5m": 39.6,
-     "load_15m": 30.27,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:35:32.457Z"
-    }
-   },
-   {
-    "file": "ok-k-7.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.92,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 361,
-     "load_1m": 45.83,
-     "load_5m": 39.85,
-     "load_15m": 30.94,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:36:27.177Z"
-    }
-   },
-   {
-    "file": "ok-k-8.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.7,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 28,
-     "load_1m": 68.13,
-     "load_5m": 46.31,
-     "load_15m": 33.76,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:37:13.604Z"
-    }
-   },
-   {
-    "file": "ok-k-9.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": true,
-    "done": 3,
-    "jobs": 3,
-    "recovery_s": 31.6,
-    "resumed_via_session_load": 3,
-    "duplicate_turns": 3,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 63,
-     "load_1m": 73.12,
-     "load_5m": 50.71,
-     "load_15m": 36.03,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:37:59.638Z"
-    }
-   }
-  ],
-  "failing_runs": [
-   {
-    "file": "ok-loop-5.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": false,
-    "done": 0,
-    "jobs": 3,
-    "recovery_s": 190.47,
-    "resumed_via_session_load": 0,
-    "duplicate_turns": 0,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 40,
-     "load_1m": 23.2,
-     "load_5m": 17.89,
-     "load_15m": 23.39,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:23:07.730Z"
-    }
-   },
-   {
-    "file": "ok-loop-7.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": false,
-    "done": 0,
-    "jobs": 3,
-    "recovery_s": 190.67,
-    "resumed_via_session_load": 0,
-    "duplicate_turns": 0,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 147,
-     "load_1m": 24.24,
-     "load_5m": 20,
-     "load_15m": 22.73,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:27:18.594Z"
-    }
-   },
-   {
-    "file": "ok-k-15.json",
-    "bin": "/tmp/coord-v013",
-    "all_done": false,
-    "done": 0,
-    "jobs": 3,
-    "recovery_s": 190.43,
-    "resumed_via_session_load": 0,
-    "duplicate_turns": 0,
-    "orphan_agents_surviving": 0,
-    "host": {
-     "cpu_model": "Apple M4",
-     "cores": 10,
-     "mem_total_mb": 24576,
-     "mem_available_mb": 346,
-     "load_1m": 57.13,
-     "load_5m": 49.88,
-     "load_15m": 39.25,
-     "os": "Darwin 27.2.0",
-     "platform": "darwin-arm64",
-     "timestamp": "2026-11-24T22:42:36.221Z"
-    }
-   }
-  ],
-  "failure_signature": {
-   "all_done": false,
-   "done": 0,
-   "recovery_s": 190.4,
-   "resumed_via_session_load": 0,
-   "duplicate_turns": 0,
-   "per_job_state": "status=running, attempts=1, turns_started=1, turns_done=0, loads=0",
-   "meaning": "the restarted daemon never re-launched the stub agent, so no job could finish and the 180 s recovery deadline expired"
-  },
-  "verdict": "(M) Recovery is deterministic where it runs at all: every passing run recovered all 3 agents via session/load in 31.6-32.3 s, and no run ever leaked an orphan agent. (M) The 6 failures are NOT a code defect: they are stub-agent starvation under extreme host memory pressure. (C) The harness records the host state per run precisely so this class of failure is separable from a real regression; on an idle or normally loaded host the loop is expected to be fully deterministic.",
-  "caveat": "(M) This host never ran the loop under low load, so the 6/36 failure rate is an upper bound for a contended host, not the expected rate on a quiet machine."
- },
- "harness_vs_legacy_python": {
-  "ported": [
-   "scenario set and metric names: cli, idle, throughput, cap, repo, priority, chaos, toolpark, orchestrator-kill, state-loss",
-   "per-scenario isolated state dir and a Fleet handle that kills only the daemons it started (exact pid / process group)",
-   "idle CPU and RSS sampling, peak RSS, enqueue CLI median/p95, throughput jobs/s, makespan",
-   "cap, per-repo cap, priority ordering, tool-lane cap and tool-while-parked invariants",
-   "chaos: duplicate executions are expected and counted, recovery to all-done is timed",
-   "orchestrator-kill: SIGKILL the daemon mid-turn, restart, require all jobs done, count orphan agents, duplicate turns and session/load resumes",
-   "state-loss: jobs lost, leases leaked, parked stays parked, session ids kept, duplicate turns before/after the kill",
-   "host state recorded per run (load, free memory, timestamp) next to the numbers"
-  ],
-  "simplified_or_dropped": [
-   "noise-floor and live-density scenarios are not ported (optional, not needed for the Effect comparison)",
-   "the Python harness drove the agent through bench/acp_client.py (COORDINATE_ACP_CMD); the TypeScript daemon speaks ACP to the agent itself (src/acp.ts), so the registry points straight at fixtures/stub_acp_agent.mjs and there is no wrapper process",
-   "process-group reads use macOS ps (pgid/rss/time) instead of /proc",
-   "the Python harness ran against a venv tree; the port drives an arbitrary --bin binary path",
-   "the Python harness had a reusable --cli <path> override and a tree mode; the port is binary-only",
-   "poll loops are async (await sleep) instead of time.sleep"
+  "baseline_git_commit": "1cc3769d732b2a797ce36454524a94fc94aee072 (tag v0.1.2)",
+  "candidate_git_commit": "d464b5df8bc3741d2ec663d0cf561f6b42d9f7c0 (tag v0.1.3)",
+  "baseline_sha256": "bb9693ddeeedc00c8bc61f1ae4a1a503196aecee749c8bbf3558f35eb4e21b23",
+  "candidate_sha256": "04ba0affdeff028be677cb72077455aec7cc419686c8a1b407e05c058c7fd5b5",
+  "notes": [
+    "(M) Every number in this file was measured on this host with bench/bench.ts on 2026-11-27; medians are over 4 interleaved rounds (idle, throughput, cli) or 5 runs (single-shot scenarios).",
+    "(M) v0.1.2 has no ACP agent-session lane, so orchestrator-kill and state-loss are skipped for the baseline rather than reported as numbers.",
+    "(M) Round 4 of both sides ran under an unrelated load spike (load 1m 15.9 baseline, 29.7 candidate); per-round values are kept in each metric so the spike is visible.",
+    "(M) enqueue_to_claim_max_ms mirrors enqueue_to_claim_p95_ms because bench/merge-ab.mjs fills the max slot from the same sample list; treat them as one metric.",
+    "(C) benchmarks/legacy-python/thresholds.toml is a Linux x86_64 baseline; cross-host absolute comparison is invalid and it is reference only."
   ]
- },
- "cross_binary_failure_check": {
-  "description": "The same orchestrator-kill failure signature appears on the pre-Effect build too, so it is not an Effect regression.",
-  "failing_runs_all_bins": [
-   {
-    "file": "/tmp/ok-loop-5.json",
-    "bin": "/tmp/coord-v013",
-    "recovery_s": 190.47,
-    "host_load_1m": 23.2,
-    "host_mem_available_mb": 40
-   },
-   {
-    "file": "/tmp/ok-loop-7.json",
-    "bin": "/tmp/coord-v013",
-    "recovery_s": 190.67,
-    "host_load_1m": 24.24,
-    "host_mem_available_mb": 147
-   },
-   {
-    "file": "/tmp/ok-k-15.json",
-    "bin": "/tmp/coord-v013",
-    "recovery_s": 190.43,
-    "host_load_1m": 57.13,
-    "host_mem_available_mb": 346
-   },
-   {
-    "file": "/tmp/ab-candidate-single.json",
-    "bin": "/tmp/coord-v013",
-    "recovery_s": 190.61,
-    "host_load_1m": 31.44,
-    "host_mem_available_mb": 42
-   },
-   {
-    "file": "/tmp/pe-candidate-r1.json",
-    "bin": "/tmp/coord-v013",
-    "recovery_s": 190.43,
-    "host_load_1m": 68.65,
-    "host_mem_available_mb": 58
-   },
-   {
-    "file": "/tmp/pe-baseline-r3.json",
-    "bin": "/tmp/coord-preeffect",
-    "recovery_s": 190.5,
-    "host_load_1m": 23.74,
-    "host_mem_available_mb": 98
-   },
-   {
-    "file": "/tmp/pe-probe.json",
-    "bin": "/tmp/coord-preeffect",
-    "recovery_s": 190.64,
-    "host_load_1m": 25.01,
-    "host_mem_available_mb": 266
-   }
-  ],
-  "verdict": "(M) The identical failure signature (all_done=false, recovery 190.4-190.7 s, resumed_via_session_load=0) shows up on the pre-Effect build as well, so it is a harness/host starvation artefact and not an Effect regression."
- },
- "raw_inputs": {
-  "note": "not committed; these are the raw per-run files this aggregation was computed from",
-  "ab": [
-   "/tmp/ab-baseline-r1.json",
-   "/tmp/ab-baseline-r2.json",
-   "/tmp/ab-baseline-r3.json",
-   "/tmp/ab-baseline-single.json",
-   "/tmp/ab-candidate-r1.json",
-   "/tmp/ab-candidate-r2.json",
-   "/tmp/ab-candidate-r3.json",
-   "/tmp/ab-candidate-single.json"
-  ],
-  "pre_effect": [
-   "/tmp/pe-baseline-r1.json",
-   "/tmp/pe-baseline-r2.json",
-   "/tmp/pe-baseline-r3.json",
-   "/tmp/pe-baseline-single.json",
-   "/tmp/pe-candidate-r1.json",
-   "/tmp/pe-candidate-r2.json",
-   "/tmp/pe-candidate-r3.json",
-   "/tmp/pe-candidate-single.json",
-   "/tmp/pe-probe.json",
-   "/tmp/pe-probe2.json",
-   "/tmp/pe-probe4.json"
-  ],
-  "orchkill_loop": [
-   "/tmp/ok-loop-1.json",
-   "/tmp/ok-loop-2.json",
-   "/tmp/ok-loop-3.json",
-   "/tmp/ok-loop-4.json",
-   "/tmp/ok-loop-5.json",
-   "/tmp/ok-loop-6.json",
-   "/tmp/ok-loop-7.json",
-   "/tmp/ok-loop-8.json",
-   "/tmp/ok-k-1.json",
-   "/tmp/ok-k-10.json",
-   "/tmp/ok-k-11.json",
-   "/tmp/ok-k-12.json",
-   "/tmp/ok-k-13.json",
-   "/tmp/ok-k-14.json",
-   "/tmp/ok-k-15.json",
-   "/tmp/ok-k-16.json",
-   "/tmp/ok-k-2.json",
-   "/tmp/ok-k-3.json",
-   "/tmp/ok-k-4.json",
-   "/tmp/ok-k-5.json",
-   "/tmp/ok-k-6.json",
-   "/tmp/ok-k-7.json",
-   "/tmp/ok-k-8.json",
-   "/tmp/ok-k-9.json"
-  ],
-  "smoke": "/tmp/benchtest.json"
- }
 }
